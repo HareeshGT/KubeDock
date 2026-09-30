@@ -338,6 +338,37 @@ def _exec(
     return code, out, err
 
 
+def _parse_json_output(output: str):
+    """Parse kubectl JSON even when the remote shell prepends/appends text.
+
+    Some SSH environments emit shell banners, profile messages, or other
+    stdout text around a command's actual output. That is harmless for a
+    human but breaks json.loads(). Prefer the complete payload first, then
+    recover a JSON object/array embedded in the output.
+    """
+    text = output.lstrip("\ufeff \r\n\t")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "{[":
+            continue
+        try:
+            value, end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        trailing = text[index + end:].strip()
+        if not trailing:
+            return value
+        # Allow harmless text after an otherwise valid JSON payload.
+        return value
+
+    raise json.JSONDecodeError("No JSON object or array found", text, 0)
+
+
 def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
     try:
         code, out, err = _exec(_ssh(), f"kubectl {args}", timeout)
@@ -355,12 +386,13 @@ def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
     if not json_output:
         return out
     try:
-        return json.loads(out)
+        return _parse_json_output(out)
     except json.JSONDecodeError:
         logger.error(
-            "[req=%s] kubectl returned invalid JSON user=%r",
+            "[req=%s] kubectl returned invalid JSON user=%r stdout_prefix=%r",
             _REQUEST_ID.get(),
             _AUTH_USER.get(),
+            out[:1000],
         )
         raise HTTPException(502, "kubectl returned non-JSON output")
 
