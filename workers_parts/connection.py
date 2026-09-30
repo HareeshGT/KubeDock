@@ -208,11 +208,17 @@ class ConnectionHealthWorker(QThread):
 
     INTERVAL       = 10   # seconds between heartbeats
     LOST_THRESHOLD = 3    # consecutive missed heartbeats before declaring it lost
+    # How long one round-trip probe may stay unanswered before it counts as
+    # a miss. Deliberately generous: the probe queues behind any bulk SFTP
+    # traffic on the same transport, and a slow link mid-upload must not be
+    # mistaken for a dead one.
+    PROBE_TIMEOUT  = 20
 
     def __init__(self, ssh):
         super().__init__()
         self.ssh = ssh
         self._stop = threading.Event()
+        self._probe_thread = None
         self.finished.connect(self.deleteLater)
 
     def stop(self):
@@ -221,6 +227,47 @@ class ConnectionHealthWorker(QThread):
         # possibly a stray `lost` signal) after the caller has already
         # torn down the connection on purpose.
         self._stop.set()
+
+    def _probe(self, transport):
+        """Real SSH round trip: True only if the server *answered*.
+
+        ``send_ignore()`` alone only proves the local socket accepted bytes.
+        After a NAT/VPN drop or a laptop sleep/wake the connection is
+        half-open: writes keep "succeeding" into the kernel buffer for many
+        minutes while nothing ever comes back, so the session looked healthy
+        right up until the next real operation hung. A global request needs
+        a reply (OpenSSH answers ``keepalive@openssh.com``; servers that
+        don't know it answer REQUEST_FAILURE — either counts as alive).
+
+        paramiko's ``global_request`` has no timeout of its own, so it runs
+        in a helper thread and is abandoned after PROBE_TIMEOUT. Only one
+        probe is ever outstanding; a still-unanswered previous probe counts
+        as another miss rather than stacking a new request.
+        """
+        prev = self._probe_thread
+        if prev is not None and prev.is_alive():
+            return False
+
+        result = {}
+
+        def _go():
+            try:
+                transport.global_request("keepalive@openssh.com", wait=True)
+                result["ok"] = True
+            except Exception as exc:
+                result["err"] = exc
+
+        t = threading.Thread(target=_go, name="kdb-ssh-probe", daemon=True)
+        self._probe_thread = t
+        t.start()
+        # Poll in short slices so stop() is still honoured promptly.
+        waited = 0.0
+        while t.is_alive() and waited < self.PROBE_TIMEOUT and not self._stop.is_set():
+            t.join(0.25)
+            waited += 0.25
+        if result.get("err") is not None:
+            raise result["err"]
+        return bool(result.get("ok")) and transport.is_active()
 
     def run(self):
         fail_count   = 0
@@ -237,7 +284,15 @@ class ConnectionHealthWorker(QThread):
 
             try:
                 transport.send_ignore()
+                if not self._probe(transport):
+                    if self._stop.is_set():
+                        return
+                    raise RuntimeError(
+                        "No response from server to keepalive within {}s".format(self.PROBE_TIMEOUT)
+                    )
             except Exception as e:
+                if self._stop.is_set():
+                    return
                 fail_count += 1
                 if fail_count >= self.LOST_THRESHOLD:
                     self.lost.emit(str(e))

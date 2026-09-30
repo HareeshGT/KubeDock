@@ -27,6 +27,15 @@ _SSH_MAX_CHANNELS_PER_CONNECTION = 6
 _SSH_GUARD_ATTR = "_kdb_channel_guard"
 _SSH_POOL_ATTR = "_kdb_connection_pool"
 _DEFAULT_SESSION_WAIT = 30
+# paramiko's Transport.open_session() waits up to 3600s (1h) for the server's
+# reply when no timeout is given. On a half-open connection (NAT/VPN drop,
+# laptop sleep/wake) that turns into an hour-long silent hang, so every
+# channel open is bounded explicitly.
+_CHANNEL_OPEN_TIMEOUT = 10
+# After a failed secondary connect, don't let every waiting caller redo the
+# (up to 30s) handshake one after another against a host that is down.
+_CONNECT_RETRY_COOLDOWN = 3.0
+_CONNECT_TIMEOUT = 10
 
 def _configure_host_key_policy(ssh):
     """Require SSH host keys to be known before connecting."""
@@ -71,6 +80,17 @@ class SSHConnectionPool:
     channels. Each secondary connection is independently capped below a
     typical sshd ``MaxSessions`` value, and every channel releases its slot
     when closed.
+
+    Robustness guarantees:
+      * a channel open is always bounded (``_CHANNEL_OPEN_TIMEOUT``); a
+        connection that stops answering is evicted and the acquire is
+        retried once on a fresh connection, transparently to the caller;
+      * a caller's ``timeout`` is honoured in every branch (waiting, and
+        connecting), not only while waiting for a free slot;
+      * after a failed connect, callers fail fast for a short cooldown
+        instead of each repeating the handshake against a dead host;
+      * blocking ``close()`` calls on paramiko clients never run while the
+        pool lock is held, so one slow teardown can't stall every caller.
     """
 
     def __init__(self, host, port, user, pem="", password="", max_connections=_SSH_POOL_MAX_CONNECTIONS):
@@ -83,38 +103,64 @@ class SSHConnectionPool:
         self._slots = []
         self._creating = False
         self._closed = False
+        self._fail_until = 0.0
+        self._fail_exc = None
         self._cond = threading.Condition(threading.RLock())
 
-    def _connect_secondary(self):
+    # ── connection creation ──────────────────────────────────
+    def _connect_secondary(self, budget=None):
         import paramiko
 
+        t = _CONNECT_TIMEOUT if budget is None else max(1.0, min(_CONNECT_TIMEOUT, budget))
         ssh = paramiko.SSHClient()
-        # Keep the same host-key behavior as the existing primary connection
-        # so introducing the pool does not change connection semantics.
-        _configure_host_key_policy(ssh)
-        kw = dict(
-            hostname=self.host,
-            port=self.port,
-            username=self.user,
-            timeout=10,
-            banner_timeout=10,
-            auth_timeout=10,
-        )
-        if self.password:
-            kw["password"] = self.password
-            kw["look_for_keys"] = False
-            kw["allow_agent"] = False
-        elif self.pem:
-            kw["key_filename"] = self.pem
-        elif self.host in ["127.0.0.1", "localhost"]:
-            pass
-        ssh.connect(**kw)
-        _configure_transport(ssh)
-        return ssh
+        try:
+            # Keep the same host-key behavior as the existing primary
+            # connection so introducing the pool does not change semantics.
+            _configure_host_key_policy(ssh)
+            kw = dict(
+                hostname=self.host,
+                port=self.port,
+                username=self.user,
+                timeout=t,
+                banner_timeout=t,
+                auth_timeout=t,
+            )
+            if self.password:
+                kw["password"] = self.password
+                kw["look_for_keys"] = False
+                kw["allow_agent"] = False
+            elif self.pem:
+                kw["key_filename"] = self.pem
+            elif self.host in ["127.0.0.1", "localhost"]:
+                pass
+            ssh.connect(**kw)
+            _configure_transport(ssh)
+            return ssh
+        except BaseException:
+            # A failed connect()/auth leaves paramiko's transport thread and
+            # socket behind unless the client is closed explicitly.
+            try:
+                ssh.close()
+            except Exception:
+                pass
+            raise
 
-    def _discard_dead_slots(self):
-        """Remove pooled SSH connections whose Paramiko transport is inactive."""
-        dead = []
+    @staticmethod
+    def _close_quietly(ssh):
+        try:
+            ssh.close()
+        except Exception:
+            pass
+
+    # ── slot bookkeeping (call with self._cond held) ─────────
+    def _find_slot_with_capacity(self, dead):
+        """Return a live slot with a free channel (reserving it), else None.
+
+        Slots whose Paramiko transport is inactive are removed from the pool
+        and appended to ``dead`` so the caller can close them *after*
+        releasing the lock. A pooled connection can die while KubeDock is
+        idle; never hand out a channel from a stale transport.
+        """
         for slot in list(self._slots):
             try:
                 transport = slot.ssh.get_transport()
@@ -122,32 +168,11 @@ class SSHConnectionPool:
             except Exception:
                 active = False
             if not active:
+                try:
+                    self._slots.remove(slot)
+                except ValueError:
+                    pass
                 dead.append(slot)
-
-        if not dead:
-            return
-
-        for slot in dead:
-            try:
-                self._slots.remove(slot)
-            except ValueError:
-                continue
-            try:
-                slot.ssh.close()
-            except Exception:
-                pass
-
-    def _find_slot_with_capacity(self):
-        # A pooled connection can die while KubeDock is idle. Never hand out
-        # a channel from a stale Paramiko transport; remove it so the normal
-        # connection-creation path can replace it.
-        self._discard_dead_slots()
-        for slot in self._slots:
-            try:
-                transport = slot.ssh.get_transport()
-                if transport is None or not transport.is_active():
-                    continue
-            except Exception:
                 continue
             if slot.sem.acquire(False):
                 return slot
@@ -160,94 +185,118 @@ class SSHConnectionPool:
             except ValueError:
                 return
             self._cond.notify_all()
+        self._close_quietly(slot.ssh)
+
+    def _acquire_slot(self, deadline):
+        """Reserve one channel on some pooled connection (creating one if
+        needed) and return its slot. Raises on timeout/closed/connect error."""
+        dead = []
         try:
-            slot.ssh.close()
-        except Exception:
-            pass
+            while True:
+                with self._cond:
+                    if self._closed:
+                        raise RuntimeError("SSH connection pool is closed")
 
-    def acquire_channel(self, timeout=None):
-        """Return ``(secondary_ssh, channel)`` and reserve one channel slot."""
-        deadline = None if timeout is None else time.monotonic() + timeout
-        while True:
-            with self._cond:
-                if self._closed:
-                    raise RuntimeError("SSH connection pool is closed")
+                    slot = self._find_slot_with_capacity(dead)
+                    if slot is not None:
+                        return slot
 
-                slot = self._find_slot_with_capacity()
-                if slot is not None:
-                    break
+                    now = time.monotonic()
+                    remaining = None if deadline is None else deadline - now
+                    cooling = self._fail_until > now and self._fail_exc is not None
 
-                if len(self._slots) < self.max_connections and not self._creating:
-                    self._creating = True
-                    create = True
-                else:
-                    create = False
-                    remaining = None if deadline is None else max(0, deadline - time.monotonic())
-                    if remaining == 0:
-                        raise RuntimeError("SSH is busy; no pooled session channel is currently available")
-                    self._cond.wait(remaining)
-                    continue
+                    if len(self._slots) < self.max_connections and not self._creating:
+                        if cooling and not self._slots:
+                            # Nothing to wait for and connecting just failed:
+                            # fail fast rather than repeat the handshake.
+                            raise RuntimeError(
+                                "SSH secondary connection failed: {}".format(self._fail_exc)
+                            )
+                        if not cooling:
+                            self._creating = True
+                            create = True
+                        else:
+                            create = False
+                    else:
+                        create = False
 
-            if create:
+                    if not create:
+                        if remaining is not None and remaining <= 0:
+                            raise RuntimeError("SSH is busy; no pooled session channel is currently available")
+                        # Wake at least once a second so the deadline is
+                        # honoured and dead connections are noticed even if
+                        # nobody calls notify().
+                        wait_for = 1.0 if remaining is None else min(1.0, remaining)
+                        self._cond.wait(wait_for)
+                        continue
+
+                # ── create a new secondary connection (lock released) ──
+                budget = None if deadline is None else max(0.0, deadline - time.monotonic())
                 new_slot = None
                 try:
-                    secondary = self._connect_secondary()
+                    secondary = self._connect_secondary(budget=budget)
                     new_slot = _SSHPoolSlot(secondary)
-                    # Reserve the first channel for this caller.
-                    new_slot.sem.acquire()
-                    with self._cond:
-                        if self._closed:
-                            try:
-                                secondary.close()
-                            except Exception:
-                                pass
-                            new_slot = None
-                        else:
-                            self._slots.append(new_slot)
-                            slot = new_slot
-                except Exception:
-                    if new_slot is not None:
-                        try:
-                            new_slot.ssh.close()
-                        except Exception:
-                            pass
+                    new_slot.sem.acquire()  # reserve the first channel for this caller
+                except BaseException as exc:
                     with self._cond:
                         self._creating = False
+                        self._fail_until = time.monotonic() + _CONNECT_RETRY_COOLDOWN
+                        self._fail_exc = exc
                         self._cond.notify_all()
                     raise
-                finally:
-                    with self._cond:
-                        self._creating = False
-                        self._cond.notify_all()
-                if slot is not None:
-                    break
 
-        try:
-            transport = slot.ssh.get_transport()
-            if transport is None or not transport.is_active():
-                raise RuntimeError("Pooled SSH connection is no longer active")
-            channel = transport.open_session()
+                closed = False
+                with self._cond:
+                    self._creating = False
+                    self._fail_until = 0.0
+                    self._fail_exc = None
+                    if self._closed:
+                        closed = True
+                    else:
+                        self._slots.append(new_slot)
+                    self._cond.notify_all()
+                if closed:
+                    self._close_quietly(new_slot.ssh)
+                    raise RuntimeError("SSH connection pool is closed")
+                return new_slot
+        finally:
+            for d in dead:
+                self._close_quietly(d.ssh)
+
+    # ── public API ───────────────────────────────────────────
+    def acquire_channel(self, timeout=None):
+        """Return ``(secondary_ssh, channel)`` and reserve one channel slot."""
+        import paramiko
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+        for attempt in range(2):
+            slot = self._acquire_slot(deadline)
+            try:
+                transport = slot.ssh.get_transport()
+                if transport is None or not transport.is_active():
+                    raise paramiko.SSHException("Pooled SSH connection is no longer active")
+                channel = transport.open_session(timeout=_CHANNEL_OPEN_TIMEOUT)
+            except Exception as exc:
+                try:
+                    slot.sem.release()
+                except Exception:
+                    pass
+                # A server that *rejects* the channel (MaxSessions reached)
+                # is healthy — keep the connection. Anything else (timeout,
+                # EOF, socket error, dead transport) means this connection
+                # is unusable: evict it so it can never be handed out again.
+                unusable = not isinstance(exc, paramiko.ChannelException)
+                if unusable:
+                    self._remove_slot(slot)
+                with self._cond:
+                    self._cond.notify_all()
+                if unusable and attempt == 0:
+                    continue  # retry once on a fresh connection
+                raise
             channel._kdb_pool_slot = slot
             channel._kdb_pool_owner = self
             return slot.ssh, channel
-        except Exception:
-            try:
-                slot.sem.release()
-            except Exception:
-                pass
-            # If opening a channel failed because this pooled connection died,
-            # evict it immediately. The next acquire will create a fresh
-            # secondary connection instead of repeatedly reusing the dead one.
-            try:
-                transport = slot.ssh.get_transport()
-                dead = transport is None or not transport.is_active()
-            except Exception:
-                dead = True
-            if dead:
-                self._remove_slot(slot)
-            with self._cond:
-                self._cond.notify_all()
-            raise
+        raise RuntimeError("SSH pooled session could not be opened")  # pragma: no cover
 
     def release_channel(self, channel):
         slot = getattr(channel, "_kdb_pool_slot", None)
@@ -275,10 +324,7 @@ class SSHConnectionPool:
             self._slots = []
             self._cond.notify_all()
         for slot in slots:
-            try:
-                slot.ssh.close()
-            except Exception:
-                pass
+            self._close_quietly(slot.ssh)
 
 
 def attach_ssh_connection_pool(ssh, host, port, user, pem="", password=""):
@@ -348,7 +394,7 @@ def open_managed_session(ssh, timeout=None):
     if not acquired:
         raise RuntimeError("SSH is busy; no session channel is currently available")
     try:
-        channel = transport.open_session()
+        channel = transport.open_session(timeout=_CHANNEL_OPEN_TIMEOUT)
         channel._kdb_channel_slot = guard["sem"]
         return channel
     except Exception:

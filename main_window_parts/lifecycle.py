@@ -137,6 +137,11 @@ class LifecycleMixin:
           self._term_ai_worker.quit()
         self.k8s_tab.clear_connection_info() # also stops any active tunnel
         self.dashboard_tab.set_active(False) # stop the dashboard's polling timer
+        if self._health_worker:
+          worker = self._health_worker
+          self._health_worker = None
+          worker.stop() # don't leave the heartbeat thread running into interpreter teardown
+        if self.ssh: close_ssh_connection_pool(self.ssh)
         if self.sftp: self.sftp.close()
         if self.ssh: self.ssh.close()
       except Exception:

@@ -43,16 +43,22 @@ class SudoFS:
         self._sudo_prefix = "sudo -u {} ".format(self._sq(username)) if username else ""
 
     # ── Internal helpers ──────────────────────────────────────
-    def _run(self, cmd):
-        # type: (str) -> Tuple[int, str, str]
-        stdin, out, err = self._ssh.exec_command(cmd)
-        try:
+    def _run(self, cmd, timeout=60):
+        # type: (str, int) -> Tuple[int, str, str]
+        # Goes through the managed/pooled channel path like every other
+        # remote command. The previous raw ``ssh.exec_command`` ran on the
+        # primary transport outside the channel limiter, had no timeout (a
+        # stalled server blocked the caller forever), and waited for the exit
+        # status *before* draining stdout — which can deadlock once the
+        # output outgrows the channel window. Output is now drained first.
+        from workers import managed_exec_command
+        with managed_exec_command(self._ssh, cmd) as (_stdin, out, err):
+            out.channel.settimeout(timeout)
+            stdout = out.read()
+            stderr = err.read()
             code = out.channel.recv_exit_status()
-            return code, out.read().decode(errors="replace"), err.read().decode(errors="replace")
-        finally:
-            for stream in (stdin, out, err):
-                try: stream.close()
-                except Exception: pass
+        return code, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
     def _sq(self, path):
         # type: (str) -> str
         """Single-quote a path safely for shell injection."""

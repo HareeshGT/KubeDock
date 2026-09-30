@@ -114,6 +114,11 @@ class ConnectionMixin:
       self._finish_connect_ui()
 
     def _on_connect_success(self, ssh, sftp, home):
+      # Defensive: if a session is somehow still live (e.g. a connect that
+      # completed after the user reconnected), tear it down fully first so
+      # its pool connections and heartbeat thread aren't orphaned.
+      if self.ssh is not None and self.ssh is not ssh:
+        self._disconnect(reason="Reconnecting")
       info = self._pending_conn
       host, port, user, pem, alias = info["host"], info["port"], info["user"], info["pem"], info["alias"]
       password = info.get("password")
@@ -215,6 +220,14 @@ class ConnectionMixin:
         self._health_worker = None
         worker.stop()
         # Stop the heartbeat asynchronously; never block the UI during disconnect.
+      # Close the secondary-connection pool BEFORE the primary client. The
+      # pool's connections are separate TCP sessions with their own
+      # keepalive threads; closing only self.ssh used to leave every one of
+      # them open on the server until the process exited.
+      try:
+        if self.ssh: close_ssh_connection_pool(self.ssh)
+      except Exception:
+        pass
       try:
         if self.sftp: self.sftp.close()
         if self.ssh: self.ssh.close()
@@ -239,4 +252,3 @@ class ConnectionMixin:
       self.terminal.write_output("[disconnected]")
       self.terminal.show_prompt("(not connected)$ ")
       self.status.showMessage(reason)
-
