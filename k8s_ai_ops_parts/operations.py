@@ -87,6 +87,12 @@ class K8sAIOpsOperationsMixin:
             self._write_error('\n' + action['reason'])
             self._speak("That operation isn't supported.")
             return
+        if action.get('action') == 'get' and (action.get('key') or action.get('keys')) and (not action.get('namespace')):
+            reason = f"Please specify the Kubernetes namespace to read keys from this {action.get('resource')}."
+            self._write_info('\nAI needs more information:\n' + reason)
+            self._speak('I need the Kubernetes namespace to do that.')
+            self.request_input.setFocus()
+            return
         if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace for this {action.get('action')} operation."
             self._write_info('\nAI needs more information:\n' + reason)
