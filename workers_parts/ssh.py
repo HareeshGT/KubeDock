@@ -112,11 +112,58 @@ class SSHConnectionPool:
         _configure_transport(ssh)
         return ssh
 
+    def _discard_dead_slots(self):
+        """Remove pooled SSH connections whose Paramiko transport is inactive."""
+        dead = []
+        for slot in list(self._slots):
+            try:
+                transport = slot.ssh.get_transport()
+                active = transport is not None and transport.is_active()
+            except Exception:
+                active = False
+            if not active:
+                dead.append(slot)
+
+        if not dead:
+            return
+
+        for slot in dead:
+            try:
+                self._slots.remove(slot)
+            except ValueError:
+                continue
+            try:
+                slot.ssh.close()
+            except Exception:
+                pass
+
     def _find_slot_with_capacity(self):
+        # A pooled connection can die while KubeDock is idle. Never hand out
+        # a channel from a stale Paramiko transport; remove it so the normal
+        # connection-creation path can replace it.
+        self._discard_dead_slots()
         for slot in self._slots:
+            try:
+                transport = slot.ssh.get_transport()
+                if transport is None or not transport.is_active():
+                    continue
+            except Exception:
+                continue
             if slot.sem.acquire(False):
                 return slot
         return None
+
+    def _remove_slot(self, slot):
+        with self._cond:
+            try:
+                self._slots.remove(slot)
+            except ValueError:
+                return
+            self._cond.notify_all()
+        try:
+            slot.ssh.close()
+        except Exception:
+            pass
 
     def acquire_channel(self, timeout=None):
         """Return ``(secondary_ssh, channel)`` and reserve one channel slot."""
@@ -176,7 +223,10 @@ class SSHConnectionPool:
                     break
 
         try:
-            channel = slot.ssh.get_transport().open_session()
+            transport = slot.ssh.get_transport()
+            if transport is None or not transport.is_active():
+                raise RuntimeError("Pooled SSH connection is no longer active")
+            channel = transport.open_session()
             channel._kdb_pool_slot = slot
             channel._kdb_pool_owner = self
             return slot.ssh, channel
@@ -185,6 +235,16 @@ class SSHConnectionPool:
                 slot.sem.release()
             except Exception:
                 pass
+            # If opening a channel failed because this pooled connection died,
+            # evict it immediately. The next acquire will create a fresh
+            # secondary connection instead of repeatedly reusing the dead one.
+            try:
+                transport = slot.ssh.get_transport()
+                dead = transport is None or not transport.is_active()
+            except Exception:
+                dead = True
+            if dead:
+                self._remove_slot(slot)
             with self._cond:
                 self._cond.notify_all()
             raise
