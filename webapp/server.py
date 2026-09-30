@@ -812,6 +812,24 @@ def _reserve_port(
     )
 
 
+def _get_lan_host() -> str:
+    """Return the local LAN address used to reach the embedded web server."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # No packet is sent; this asks the OS which local interface would
+            # be used to reach an external IPv4 address.
+            sock.connect(("8.8.8.8", 80))
+            host = sock.getsockname()[0]
+        finally:
+            sock.close()
+        if host and host != "127.0.0.1":
+            return host
+    except OSError:
+        pass
+    return "127.0.0.1"
+
+
 def get_server_url() -> str:
     with _SERVER_LOCK:
         port = _server_port
@@ -820,7 +838,7 @@ def get_server_url() -> str:
             port = int(os.environ.get("WEBAPP_PORT", "8000"))
         except ValueError:
             port = 8000
-    return f"http://127.0.0.1:{port}"
+    return f"http://{_get_lan_host()}:{port}"
 
 
 def start_server(
@@ -829,7 +847,9 @@ def start_server(
     port: Optional[int] = None,
 ) -> bool:
     global _server, _server_thread, _server_port
-    host = (host or "127.0.0.1").strip() or "127.0.0.1"
+    # Listen on all local interfaces by default so devices on the same LAN
+    # can reach the web app. Set WEBAPP_HOST=127.0.0.1 to keep it local-only.
+    host = (host or os.environ.get("WEBAPP_HOST", "0.0.0.0")).strip() or "0.0.0.0"
     try:
         preferred_port = int(port or os.environ.get("WEBAPP_PORT", "8000"))
     except ValueError:
