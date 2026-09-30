@@ -46,6 +46,22 @@ class K8sAIOpsOperationsMixin:
         if not self.ssh:
             self._write_error('No Kubernetes SSH connection is active.')
             return
+        # "delete that pod" / "delete it" / "delete that <name> pod": resolve from
+        # the previous lookup locally instead of asking the AI, which tends to
+        # answer with a clarification because the earlier search had no namespace.
+        followup_context = self._kube_context()
+        followup = resolve_followup_delete(request, self._history, followup_context) if followup_context else None
+        if followup is not None:
+            self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
+            if followup.get('clarify'):
+                self._write_info('\n' + followup['clarify'])
+                self._speak('I need more information to do that.')
+                self.request_input.setFocus()
+                return
+            self._write_info('\n' + followup['note'])
+            self._set_busy(True)
+            self._execute_action(followup['action'])
+            return
         provider = ai_assist.get_provider()
         api_key = ai_assist.get_api_key(provider)
         if not api_key:
@@ -93,6 +109,15 @@ class K8sAIOpsOperationsMixin:
             self._speak('I need the Kubernetes namespace to do that.')
             self.request_input.setFocus()
             return
+        if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
+            # The AI (or the user) gave a target but no namespace. If an earlier
+            # successful lookup located this exact resource in exactly one
+            # namespace, use that instead of asking again. Ambiguous or unknown
+            # targets fall through to the clarification below.
+            target = resolve_target_from_history(action, self._history, self._kube_context())
+            if target:
+                action['namespace'], action['name'] = target
+                self._write_info(f"\nUsing {action.get('resource')} {action['name']} in namespace \"{action['namespace']}\" from the earlier lookup.")
         if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace for this {action.get('action')} operation."
             self._write_info('\nAI needs more information:\n' + reason)
@@ -345,6 +370,13 @@ class K8sAIOpsOperationsMixin:
             row['replicas'] = action.get('replicas')
             if action.get('previous_replicas') is not None:
                 row['previous_replicas'] = action.get('previous_replicas')
+        if status == 'success':
+            # An all-namespaces read leaves the action's namespace empty; keep
+            # where the match was actually found so follow-ups like "delete
+            # that pod" can resolve a concrete namespace.
+            resolved = _parse_resolved_targets(action, output or '')
+            if resolved:
+                row['resolved'] = resolved
         persisted_output = output or ''
         if action.get('action') == 'get' and action.get('resource') == 'secret':
             persisted_output = '[REDACTED: secret values omitted from history/audit]'

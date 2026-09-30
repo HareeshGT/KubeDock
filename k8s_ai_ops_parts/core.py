@@ -100,6 +100,7 @@ MAX_REPLICAS = 100
 MAX_PROMPT_CHARS = 4000
 MAX_HISTORY = 40
 HISTORY_CONTEXT_ITEMS = 12
+HISTORY_RESOLVED_LIMIT = 10
 
 # Namespaces matching any of these patterns (case-insensitive substring
 # match) are treated as sensitive: AI-driven "scale" operations targeting
@@ -301,7 +302,22 @@ def _history_text(history: list, limit: int = HISTORY_CONTEXT_ITEMS) -> str:
     timestamp = row.get("timestamp", "")
     replicas = row.get("replicas")
 
-    detail = f"{action} {resource}/{name} in namespace {namespace}"
+    if namespace:
+      detail = f"{action} {resource}/{name} in namespace {namespace}"
+    else:
+      detail = f"{action} {resource}/{name} across all namespaces"
+    resolved = row.get("resolved")
+    if isinstance(resolved, list) and resolved:
+      # An all-namespaces lookup does not record a namespace on the action
+      # itself, so surface where the match was actually found. This is what
+      # lets "delete that pod" resolve to a concrete namespace.
+      found = ", ".join(
+        f"{r.get('namespace')}/{r.get('name')}"
+        for r in resolved[:HISTORY_RESOLVED_LIMIT]
+        if isinstance(r, dict) and r.get("namespace") and r.get("name")
+      )
+      if found:
+        detail += f" (found: {found})"
     if replicas is not None:
       detail += f" replicas={replicas}"
     if row.get("previous_replicas") is not None:
@@ -313,6 +329,198 @@ def _history_text(history: list, limit: int = HISTORY_CONTEXT_ITEMS) -> str:
     )
 
   return "\n".join(lines)
+
+
+_K8S_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", re.IGNORECASE)
+_K8S_NAMESPACE_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", re.IGNORECASE)
+
+
+def _parse_resolved_targets(action: dict, output: str) -> list:
+  """Extract (namespace, name) pairs from a successful all-namespaces read.
+
+  A ``get`` with no namespace searches every namespace, so the action never
+  records where the resource actually lives; only kubectl's output does.
+  Both listing shapes put the namespace in the first column and the name in
+  the second: pods use ``get pods -A --no-headers`` (no header row), other
+  resources use ``get <kind> -A`` (header row starting with NAMESPACE).
+  Returns [] for anything that is not a plain all-namespaces read.
+  """
+  if not isinstance(action, dict) or action.get("action") != "get":
+    return []
+  if action.get("namespace"):
+    return []
+  if action.get("key") or action.get("keys"):
+    return []
+  if action.get("resource") in CLUSTER_SCOPED_RESOURCES:
+    return []
+
+  is_pod = action.get("resource") == "pod"
+  seen_header = False
+  resolved, seen = [], set()
+  for line in (output or "").splitlines():
+    parts = line.split()
+    if len(parts) < 3:
+      continue
+    ns, name = parts[0], parts[1]
+    if ns.upper() == "NAMESPACE":
+      seen_header = True
+      continue  # header row
+    # Only accept genuine listing rows so error text or warnings such as
+    # "No pod named x found in any namespace." are never read as a target.
+    if is_pod:
+      if not re.fullmatch(r"\d+/\d+", parts[2]):  # READY column, e.g. 1/1
+        continue
+    elif not seen_header:
+      continue
+    if not _K8S_NAMESPACE_RE.fullmatch(ns) or not _K8S_NAME_RE.fullmatch(name):
+      continue
+    if (ns, name) in seen:
+      continue
+    seen.add((ns, name))
+    resolved.append({"namespace": ns, "name": name})
+    if len(resolved) >= HISTORY_RESOLVED_LIMIT:
+      break
+  return resolved
+
+
+def _recent_resolved_rows(history: list, kube_context: str = ""):
+  """Yield recent successful all-namespaces reads (newest first) that recorded
+  where their matches were found, limited to the active kube context."""
+  for row in reversed(history[-HISTORY_CONTEXT_ITEMS:]):
+    if row.get("status") != "success" or row.get("action") != "get":
+      continue
+    if kube_context and row.get("context") and row.get("context") != kube_context:
+      continue
+    resolved = row.get("resolved")
+    if isinstance(resolved, list) and resolved:
+      yield row
+
+
+def _row_entries(row: dict) -> list:
+  return [
+    r for r in row.get("resolved", [])
+    if isinstance(r, dict) and r.get("namespace") and r.get("name")
+  ]
+
+
+def _match_entries(entries: list, resource: str, name: str) -> list:
+  """Entries matching a user-supplied name: an exact name always wins; for
+  pods a name prefix is accepted too (pods have generated suffixes)."""
+  exact = [r for r in entries if r["name"] == name]
+  if exact:
+    return exact
+  if resource == "pod":
+    return [r for r in entries if r["name"].startswith(name)]
+  return []
+
+
+def resolve_target_from_history(action: dict, history: list, kube_context: str = ""):
+  """Find (namespace, full_name) for a scale/restart/delete that arrived
+  without a namespace, from a recent successful all-namespaces lookup.
+
+  Returns None unless the name resolves to exactly one (namespace, name), so
+  an ambiguous target is never guessed. The full name is returned because the
+  user may have typed only a pod-name prefix, while delete needs the exact one.
+  """
+  resource = action.get("resource")
+  name = action.get("name")
+  if not resource or not name:
+    return None
+  for row in _recent_resolved_rows(history, kube_context):
+    if row.get("resource") != resource:
+      continue
+    matches = _match_entries(_row_entries(row), resource, name)
+    if not matches:
+      continue
+    targets = {(r["namespace"], r["name"]) for r in matches}
+    return next(iter(targets)) if len(targets) == 1 else None
+  return None
+
+
+def resolve_namespace_from_history(action: dict, history: list, kube_context: str = ""):
+  """Namespace-only wrapper around resolve_target_from_history."""
+  target = resolve_target_from_history(action, history, kube_context)
+  return target[0] if target else None
+
+
+_RESOURCE_WORDS = {
+  "pod": "pod", "pods": "pod", "po": "pod",
+  "deployment": "deployment", "deployments": "deployment", "deploy": "deployment",
+  "statefulset": "statefulset", "sts": "statefulset",
+  "daemonset": "daemonset", "ds": "daemonset",
+  "service": "service", "services": "service", "svc": "service",
+  "ingress": "ingress", "ing": "ingress",
+  "configmap": "configmap", "cm": "configmap",
+  "secret": "secret", "secrets": "secret",
+  "job": "job", "cronjob": "cronjob", "cj": "cronjob",
+  "hpa": "hpa", "pvc": "pvc",
+}
+_REFERENCE_WORDS = {"that", "this", "same", "it"}
+_FOLLOWUP_FILLER = {"the", "one", "please", "alone", "only", "just", "again"} | _REFERENCE_WORDS
+_SCOPE_WORDS = {"in", "from", "namespace", "ns", "all", "every", "everything", "and", "or", "both"}
+
+
+def resolve_followup_delete(request: str, history: list, kube_context: str = ""):
+  """Handle "delete that pod" / "delete it" / "delete that sample-pod pod"
+  deterministically from the previous lookup, without asking the AI.
+
+  Returns None when the request is not a simple follow-up delete or history
+  cannot resolve it (the normal AI path then handles it). Otherwise:
+    {"action": <validated delete action>, "note": str}  - resolved to ONE target
+    {"clarify": str}                                     - several candidates
+  A delete always still goes through the confirmation dialog afterwards.
+  """
+  text = (request or "").strip().lower()
+  m = re.fullmatch(r"(?:please\s+)?(?:delete|remove)\s+(.+?)[\s.!]*", text)
+  if not m:
+    return None
+  tokens = re.findall(r"[a-z0-9][a-z0-9._-]*", m.group(1))
+  if not tokens or any(t in _SCOPE_WORDS for t in tokens):
+    return None  # user gave a scope/namespace, or asked for several targets
+
+  resources = {_RESOURCE_WORDS[t] for t in tokens if t in _RESOURCE_WORDS}
+  if len(resources) > 1:
+    return None
+  stated_resource = next(iter(resources)) if resources else None
+  if stated_resource and stated_resource not in DELETE_RESOURCES:
+    return None
+
+  remaining = [t for t in tokens if t not in _FOLLOWUP_FILLER and t not in _RESOURCE_WORDS]
+  has_reference = any(t in _REFERENCE_WORDS for t in tokens)
+  if len(remaining) > 1 or (not remaining and not has_reference):
+    return None
+  explicit_name = remaining[0] if remaining else None
+
+  candidates = []
+  for row in _recent_resolved_rows(history, kube_context):
+    resource = row.get("resource")
+    if resource not in DELETE_RESOURCES:
+      continue
+    if stated_resource and resource != stated_resource:
+      continue
+    entries = _row_entries(row)
+    if explicit_name:
+      entries = _match_entries(entries, resource, explicit_name)
+    if not entries:
+      continue
+    candidates = [(resource, r["namespace"], r["name"]) for r in entries]
+    break  # most recent lookup that answers the request
+
+  distinct = list(dict.fromkeys(candidates))
+  if not distinct:
+    return None
+  if len(distinct) > 1:
+    listing = ", ".join(f"{ns}/{nm}" for _, ns, nm in distinct[:HISTORY_RESOLVED_LIMIT])
+    return {
+      "clarify": f"More than one match was found earlier: {listing}. "
+                 "Please say which one to delete, e.g. \"delete pod NAME in namespace NS\"."
+    }
+  resource, ns, nm = distinct[0]
+  try:
+    action = validate_action({"action": "delete", "resource": resource, "name": nm, "namespace": ns})
+  except Exception:
+    return None
+  return {"action": action, "note": f"Resolved to {resource} {nm} in namespace {ns} from the earlier lookup."}
 
 
 def _build_k8s_ops_prompt(user_request: str, namespace: str, context: str, history: list) -> str:
@@ -345,7 +553,8 @@ deploy/deployments -> deployment; sts -> statefulset; ds -> daemonset; po/pods -
 NAMES
 - "name" is required for every operation. Use exactly the name the user gave; never invent, guess or complete a name. For a pod, a stable name prefix is fine.
 - The request may come from speech-to-text. When a name or namespace is clearly spelled out, convert "dash" to "-" and "dot" to ".", and lowercase it (e.g. "test dash ns" -> "test-ns").
-- If no name is given (e.g. "show all pods", "delete everything"), return clarification_required asking which resource name to use.
+- If no name is given and the request does not refer back to an earlier operation (e.g. "show all pods", "delete everything"), return clarification_required asking which resource name to use.
+- A reference back to an earlier operation ("that pod", "it", "the same one", "that deployment") is NOT a missing name. Resolve it as described under REFERENCES below.
 - If the user names several targets, return clarification_required asking for one operation at a time.
 
 NAMESPACE
@@ -353,7 +562,7 @@ NAMESPACE
 - If the user says "this", "current" or "selected" namespace, return the value under "Current selected namespace" below. If that value is empty, return clarification_required.
 - Otherwise return an empty "namespace" value. Never silently assume the selected namespace.
 - get, describe and rollout_status with an empty namespace: the application searches all namespaces. This is correct and needs no clarification, except for key lookups (see KEYS).
-- scale, restart and delete with no namespace: return clarification_required, because the target must be unambiguous.
+- scale, restart and delete with no namespace: first try to resolve the namespace from history as described under REFERENCES. If that is not possible, return clarification_required, because the target must be unambiguous.
 - "in all namespaces" on a read means an empty namespace.
 
 CHOOSING A READ ACTION
@@ -373,8 +582,17 @@ KEYS (configmap and secret)
 - Never invent a key name.
 - A key lookup reads one specific resource, so it needs an explicit namespace. If none was given, return clarification_required asking for the namespace.
 
+REFERENCES TO EARLIER RESULTS
+Users often follow a lookup with a short command such as "delete that pod", "describe it" or "scale that deployment to 2". Use <history> to resolve these.
+- Only use entries with status "success". Prefer the most recent entry whose resource type matches what the user said (or, for "it" and "that" with no type, the most recent successful entry).
+- When the user says "that pod" or "it" with no name, take the resource type and name from that entry. If the entry has "(found: NS/NAME)", use that exact NAME.
+- When the user gives a name but no namespace, and a recent successful entry for the same resource and name has "(found: NS/NAME)" with exactly ONE namespace, use that namespace. This is how the namespace of an earlier all-namespaces search is carried forward.
+- If the entry was found in more than one namespace, or nothing in history matches, return clarification_required asking which one (for several namespaces, name them in the reason).
+- The "Current selected namespace" in <ui_context> is never a substitute for a namespace found in history: the resource may live elsewhere.
+- Never carry a reference across a different resource type or a different name.
+
 HISTORY, UNDO AND REPEAT
-Each history line looks like: "N. [status] action resource/name in namespace NS replicas=R previous_replicas=P at TIME". "replicas" is the count after a scale and "previous_replicas" is the count before it. Only use entries with status "success". Use that entry's own resource, name and namespace.
+Each history line looks like: "N. [status] action resource/name in namespace NS replicas=R previous_replicas=P at TIME". A lookup that searched every namespace reads "across all namespaces (found: NS/NAME, ...)" instead, listing where it located the resource. "replicas" is the count after a scale and "previous_replicas" is the count before it. Only use entries with status "success". Use that entry's own resource, name and namespace.
 - "undo" or "revert" a scale, "scale it back", "restore the previous replicas": scale that resource with mode "absolute" and replicas = previous_replicas from the most recent successful scale entry. If there is no such entry, return clarification_required.
 - Undo of restart, delete or a read cannot be done: return unsupported and say why.
 - "again" or "repeat that": repeat the most recent successful operation when it is unambiguous.
