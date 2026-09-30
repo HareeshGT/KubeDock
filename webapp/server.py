@@ -382,7 +382,10 @@ def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
             code,
             err.strip(),
         )
-        raise HTTPException(502, err.strip() or "kubectl command failed")
+        # Several mutating/log commands intentionally use 2>&1, so kubectl
+        # diagnostics may be in stdout rather than stderr.
+        detail = err.strip() or out.strip()
+        raise HTTPException(502, detail or "kubectl command failed")
     if not json_output:
         return out
     try:
@@ -698,7 +701,7 @@ def logs(
     tail = max(1, min(tail, 2000))
     container_flag = f"-c {shlex.quote(container)} " if container else ""
     out = _kubectl(
-        f"logs -- {shlex.quote(pod)} -n {shlex.quote(namespace)} "
+        f"logs {shlex.quote(pod)} -n {shlex.quote(namespace)} "
         f"{container_flag}--tail={tail} 2>&1",
         timeout=20,
     )
@@ -751,7 +754,7 @@ def delete(
     namespace = _validate_k8s_name(namespace, "namespace")
     name = _validate_k8s_name(name, "pod")
     out = _kubectl(
-        f"delete pod -- {shlex.quote(name)} "
+        f"delete pod {shlex.quote(name)} "
         f"-n {shlex.quote(namespace)} 2>&1"
     )
     return {"ok": True, "output": out.strip()}
