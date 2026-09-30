@@ -56,6 +56,7 @@ class _ExecStreamWorker(QThread):
 
   def run(self):
     channel = None
+    exit_code = -1
     try:
       channel = open_managed_session(self._ssh)
       channel.get_pty()
@@ -65,6 +66,7 @@ class _ExecStreamWorker(QThread):
 
       while True:
         if self._stop:
+          exit_code = -1
           return
         try:
           if channel.recv_ready():
@@ -78,14 +80,18 @@ class _ExecStreamWorker(QThread):
           break
         self.msleep(50)
 
-      code = channel.recv_exit_status() if not self._stop else -1
-      self.finished.emit(code)
+      exit_code = channel.recv_exit_status() if not self._stop else -1
     except Exception as e:
       self.error.emit(str(e))
-      self.finished.emit(-1)
+      exit_code = -1
     finally:
       self._channel = None
       close_managed_session(channel)
+      # Always notify the dialog that this worker is finished, including
+      # when Stop caused run() to return early. This keeps the worker
+      # lifecycle consistent and lets the dialog drop its reference before
+      # Qt deletes the QThread wrapper.
+      self.finished.emit(exit_code)
 
 
 class FileExecDialog(QDialog):
@@ -268,8 +274,21 @@ class FileExecDialog(QDialog):
     return (f"cd {qdir} && {choice} {qpath} {args}").rstrip()
 
   # ── Run / stop ────────────────────────────────────────────
+  def _worker_is_running(self) -> bool:
+    """Return whether the current worker is alive without touching a stale
+    PyQt wrapper after Qt has already deleted its underlying QObject."""
+    worker = self._worker
+    if worker is None:
+      return False
+    try:
+      return worker.isRunning()
+    except RuntimeError:
+      # Qt has deleted the C++ QThread while Python still holds the wrapper.
+      self._worker = None
+      return False
+
   def _run(self):
-    if self._worker and self._worker.isRunning():
+    if self._worker_is_running():
       return
 
     cmd = self._build_command()
@@ -292,8 +311,13 @@ class FileExecDialog(QDialog):
     self._worker.start()
 
   def _stop(self):
-    if self._worker and self._worker.isRunning():
-      self._worker.request_stop()
+    worker = self._worker
+    if worker is not None:
+      try:
+        if worker.isRunning():
+          worker.request_stop()
+      except RuntimeError:
+        self._worker = None
     append_terminal_html(self._output, f"<span style='color:{T['WARNING']}'>[stopped by user]</span>")
     self._run_btn.setEnabled(True)
     self._stop_btn.setEnabled(False)
@@ -313,7 +337,7 @@ class FileExecDialog(QDialog):
     disables echo before reading, so nothing would appear on screen
     at all — we print a masked marker ourselves so there's still
     visible confirmation that something was sent."""
-    if not (self._worker and self._worker.isRunning()):
+    if not self._worker_is_running():
       return
     text = self._input_inp.text()
     if self._input_mask_btn.isChecked():
@@ -342,6 +366,11 @@ class FileExecDialog(QDialog):
     self._send_btn.setEnabled(False)
     color = T['SUCCESS'] if code == 0 else T['DANGER']
     append_terminal_html(self._output, f"<span style='color:{color}'>[exit code {code}]</span>")
+    # Drop the Python reference as soon as execution finishes. The worker
+    # is connected to deleteLater(), so retaining this reference until the
+    # next Run could leave a Python wrapper around an already-deleted C++
+    # QThread and make isRunning() raise RuntimeError.
+    self._worker = None
     self._set_status(f"Finished (exit {code})", color)
 
   def _set_status(self, msg, color=None):
