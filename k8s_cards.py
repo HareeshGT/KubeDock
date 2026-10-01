@@ -13,6 +13,7 @@ via currentItemChanged).
 
 from PyQt5.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont, QFontMetrics
 
 from ui_icons import set_icon, icon_pixmap, icon_button, apply_text_icon
 from themes import T
@@ -35,7 +36,11 @@ def _status_color_key(status: str) -> str:
   return "TEXT_MUTED"
 
 
-def _pill(text: str, color_key: str) -> QLabel:
+def _pill(text: str, color_key: str, min_text: str = "") -> QLabel:
+  """Rounded status pill. `min_text` (optional) is a widest-expected sample
+  string: the pill reserves at least that much width and centers its text,
+  so pills in the same column of a card list share one width instead of
+  each hugging its own text (which makes their edges zig-zag row to row)."""
   color = T.get(color_key, T["TEXT_MUTED"])
   lbl = QLabel(text)
   lbl.setStyleSheet(
@@ -43,6 +48,13 @@ def _pill(text: str, color_key: str) -> QLabel:
     f"border: 1px solid rgba({_hex_to_rgb(color)}, 0.4); border-radius: 9px; "
     f"padding: 2px 10px; font-size: 11px; font-weight: 700;"
   )
+  if min_text:
+    f = QFont(lbl.font())
+    f.setPixelSize(11)
+    f.setBold(True)
+    # text + 2*10px padding + 2*1px border + a little slack for font hinting
+    lbl.setMinimumWidth(QFontMetrics(f).horizontalAdvance(min_text) + 24)
+    lbl.setAlignment(Qt.AlignCenter)
   return lbl
 
 
@@ -59,6 +71,19 @@ def _chip(text: str) -> QLabel:
 def _meta_label(text: str) -> QLabel:
   lbl = QLabel(text)
   lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+  return lbl
+
+
+def _age_label(age: str) -> QLabel:
+  """Age shown at the right edge of a card's top row. Variable-width text
+  ("46d" vs "2y238d") would shift every widget to its left, so the label
+  reserves room for the widest expected age and right-aligns its text —
+  the pill beside it then sits at the same x on every row."""
+  lbl = _meta_label(f"⏱ {age or '-'}")
+  f = QFont(lbl.font())
+  f.setPixelSize(12)
+  lbl.setMinimumWidth(QFontMetrics(f).horizontalAdvance("⏱ 99y999d") + 4)
+  lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
   return lbl
 
 
@@ -200,16 +225,25 @@ class PodCardWidget(_CardBase):
     ready = meta.get("ready", "")
     if ready:
       ready_ok = _ratio_ok(ready)
-      top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING"))
+      top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING", "Ready 9/9"))
 
     status = meta.get("status", "") or "Unknown"
-    top.addWidget(_pill(status, _status_color_key(status)))
+    top.addWidget(_pill(status, _status_color_key(status), "Completed"))
 
     self._ai_btn = None
     if _pod_in_trouble(status, meta.get("restarts")):
       self._ai_btn = _ai_button("Ask AI to diagnose this pod")
       self._ai_btn.clicked.connect(lambda: self.ai_requested.emit(meta))
       top.addWidget(self._ai_btn)
+    else:
+      # Reserve the AI button's slot so the Ready/status pills don't shift
+      # left on the rows that do show it.
+      spacer = _ai_button("")
+      sp = spacer.sizePolicy()
+      sp.setRetainSizeWhenHidden(True)
+      spacer.setSizePolicy(sp)
+      spacer.hide()
+      top.addWidget(spacer)
 
     outer.addLayout(top)
 
@@ -268,8 +302,8 @@ class DeploymentCardWidget(_CardBase):
     top.addWidget(name_lbl, 1)
 
     if ready:
-      top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+      top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING", "Ready 9/9"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -318,8 +352,8 @@ class StatefulSetCardWidget(_CardBase):
     top.addWidget(name_lbl, 1)
 
     if ready:
-      top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+      top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING", "Ready 9/9"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -367,8 +401,8 @@ class DaemonSetCardWidget(_CardBase):
     name_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     top.addWidget(name_lbl, 1)
 
-    top.addWidget(_pill(f"Ready {ready}/{desired}", "SUCCESS" if (ready_ok or desired == "0") else "WARNING"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_pill(f"Ready {ready}/{desired}", "SUCCESS" if (ready_ok or desired == "0") else "WARNING", "Ready 9/9"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -435,7 +469,7 @@ class EventCardWidget(_CardBase):
     count = meta.get("count") or 1
     if count and int(count) > 1:
       top.addWidget(_pill(f"×{count}", "WARNING"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     msg = meta.get("message", "") or ""
@@ -490,7 +524,7 @@ class HPACardWidget(_CardBase):
     mn = meta.get("min_replicas", "-")
     mx = meta.get("max_replicas", "-")
     top.addWidget(_pill(f"{cur} pods ({mn}–{mx})", "SUCCESS" if healthy else "WARNING"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -547,7 +581,7 @@ class ServiceCardWidget(_CardBase):
     top.addWidget(name_lbl, 1)
 
     top.addWidget(_pill(stype, _svc_type_color_key(stype)))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -597,7 +631,7 @@ class IngressCardWidget(_CardBase):
     cls = meta.get("class", "") or "-"
     if cls != "-":
       top.addWidget(_pill(cls, "INFO"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -686,7 +720,7 @@ class PVCCardWidget(_CardBase):
     top.addWidget(name_lbl, 1)
 
     top.addWidget(_pill(status, _pvc_status_color_key(status)))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -743,7 +777,7 @@ class PVCardWidget(_CardBase):
     top.addWidget(name_lbl, 1)
 
     top.addWidget(_pill(status, _pv_status_color_key(status)))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -795,7 +829,7 @@ class JobCardWidget(_CardBase):
     top.addWidget(name_lbl, 1)
 
     top.addWidget(_pill(status, _job_status_color_key(status)))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()
@@ -851,7 +885,7 @@ class CronJobCardWidget(_CardBase):
       top.addWidget(_pill(f"{active} running", "INFO"))
     else:
       top.addWidget(_pill("Scheduled", "SUCCESS"))
-    top.addWidget(_meta_label(f"⏱ {meta.get('age', '-')}"))
+    top.addWidget(_age_label(meta.get('age', '-')))
     outer.addLayout(top)
 
     bottom = QHBoxLayout()

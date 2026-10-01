@@ -1,5 +1,89 @@
 from .common import *
 
+import re as _re
+
+_FENCE_RE = _re.compile(r"^(\s*)(`{3,}|~{3,})(.*)$")
+_ORDERED_RE = _re.compile(r"^(\s*)(\d+)([.)])\s+(.*)$")
+
+
+def _hoist_list_code_fences(text: str) -> str:
+  """Make fenced code blocks that sit inside list items safe for Qt.
+
+  The AI replies put each kubectl command in a fenced block *inside* its
+  bullet (``- step`` followed by an indented ```` ``` ```` block). Qt's
+  QTextDocument.setMarkdown() mishandles that shape: the code block comes
+  out as a bullet of its own and an empty bullet is left behind after it,
+  which is the stray ``•`` rows seen in the diagnosis dialog.
+
+  Rewriting every indented fence as a top-level one (dedented, with blank
+  lines around it) sidesteps the bug. The bullet before it ends and the
+  next bullet starts a fresh list, which renders as: bullet text, code
+  block, bullet text, code block. Top-level fences are left untouched.
+  Anything inside a fence is copied verbatim apart from the dedent.
+  """
+  if not text or "```" not in text and "~~~" not in text:
+    return text
+
+  out = []
+  lines = text.split("\n")
+  i = 0
+  in_ordered = False     # last list marker seen was "N." / "N)"
+  split_ordered = False  # an ordered list has been cut by a hoisted block
+  while i < len(lines):
+    m = _FENCE_RE.match(lines[i])
+    if not m:
+      line = lines[i]
+      om = _ORDERED_RE.match(line)
+      if om:
+        in_ordered = True
+        if split_ordered and not om.group(1):
+          # Qt restarts numbering at 1 for each list piece, so keep the
+          # real number as literal text instead of a list marker.
+          line = f"{om.group(2)}\\{om.group(3)} {om.group(4)}"
+      elif line.lstrip().startswith(("- ", "* ", "+ ")):
+        in_ordered = False
+      elif line.startswith("#") or line.strip() == "---":
+        in_ordered = split_ordered = False
+      out.append(line)
+      i += 1
+      continue
+
+    indent, fence, info = m.group(1), m.group(2), m.group(3)
+    # Collect the block up to its closing fence (same char, >= same length).
+    j = i + 1
+    while j < len(lines):
+      cm = _FENCE_RE.match(lines[j])
+      if (cm and cm.group(2)[0] == fence[0]
+          and len(cm.group(2)) >= len(fence) and not cm.group(3).strip()):
+        break
+      j += 1
+    body = lines[i + 1:j]
+    closed = j < len(lines)
+
+    if not indent:
+      out.extend(lines[i:j + 1] if closed else lines[i:])
+    else:
+      n = len(indent.expandtabs(4))
+
+      def _dedent(line, n=n):
+        k = 0
+        while k < len(line) and k < n and line[k] in " \t":
+          k += 1
+        return line[k:]
+
+      if in_ordered:
+        split_ordered = True
+      if out and out[-1].strip():
+        out.append("")
+      out.append(f"{fence}{info}")
+      out.extend(_dedent(b) for b in body)
+      out.append(fence)
+      out.append("")
+    i = j + 1 if closed else len(lines)
+
+  return "\n".join(out)
+
+
 class AIExplainDialog(QDialog):
   """Interactive AI diagnosis workspace.
 
@@ -152,7 +236,7 @@ class AIExplainDialog(QDialog):
   def _type_next_chunk(self):
     if self._typed_position >= len(self._response_text):
       self._typing_timer.stop()
-      self.body.setMarkdown(self._response_text)
+      self.body.setMarkdown(_hoist_list_code_fences(self._response_text))
       self._restyle_headings()
       self._diagnosis = self._response_text
       self._conversation = [{"role": "assistant", "content": self._response_text}]
@@ -284,7 +368,7 @@ class AIExplainDialog(QDialog):
         parts.append(f"### You\n\n{content}")
       else:
         parts.append(f"### AI\n\n{content}")
-    self.body.setMarkdown("\n\n---\n\n".join(parts))
+    self.body.setMarkdown(_hoist_list_code_fences("\n\n---\n\n".join(parts)))
     self._restyle_headings()
     self.body.verticalScrollBar().setValue(self.body.verticalScrollBar().maximum())
 
