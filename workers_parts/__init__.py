@@ -5,4 +5,4 @@ from .directory import DirectoryListWorker
 from .connection import ConnectWorker, FTPConnectionWorker, ConnectionHealthWorker
 from .command import CommandWorker, PodExecStreamWorker
 from .transfer import FileStreamReadWorker, _TransferWorker, _PtyProc, ScpTransferWorker
-from .media import _ChannelReader, _SFTPStreamReader, _RangeHTTPRequestHandler, _MediaStreamHTTPServer, MediaStreamServer, AudioTranscodeWorker, _StreamServerStartWorker
+from .media import _ChannelReader, _SFTPStreamReader, _RangeHTTPRequestHandler, _MediaStreamHTTPServer, MediaStreamServer, AudioTranscodeWorker, VideoTranscodeWorker, _StreamServerStartWorker

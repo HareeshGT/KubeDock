@@ -40,7 +40,7 @@ from PyQt5.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QTextBlockF
 from ui_icons import set_icon, apply_text_icon, icon_button, icon_pixmap
 from themes import T, apply_qss_to
 from utils import load_recent_instances, size_fmt, append_terminal_html, append_terminal_text, html_escape, monospace_font
-from workers import CommandWorker, PodExecStreamWorker, _TransferWorker, ScpTransferWorker, track_worker, FileStreamReadWorker, MediaStreamServer, _StreamServerStartWorker, AudioTranscodeWorker, managed_exec_command, open_managed_session, close_managed_session
+from workers import CommandWorker, PodExecStreamWorker, _TransferWorker, ScpTransferWorker, track_worker, FileStreamReadWorker, MediaStreamServer, _StreamServerStartWorker, AudioTranscodeWorker, VideoTranscodeWorker, managed_exec_command, open_managed_session, close_managed_session
 from editor_widgets import CodeEditor, make_highlighter, LANG_LABEL
 try:
   from monaco_editor import MonacoEditor

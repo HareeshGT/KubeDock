@@ -439,7 +439,7 @@ KubeDock is primarily built with:
 - Uvicorn
 - AI APIs
 - Shell commands
-- SQLite-based local application persistence
+- JSON-based application settings
 
 Architecture at a high level:
 
@@ -982,8 +982,20 @@ Built for developers, DevOps engineers, SREs, and infrastructure teams.
 
 KubeDock stores local recent-connection metadata, Dashboard history, and
 application settings in `~/.vm_visualizer/kubedock.db` using Python's built-in
-`sqlite3` module. Existing `recent.csv`, dashboard history JSON, and
-`settings.json` are read only during one-time migration; the legacy files are
-retained and are never written by normal application operations. JSON used for
-API payloads, editor language handling, and remote tunnel definitions is not
-application-state persistence and is intentionally unchanged.
+`sqlite3` module. Existing `recent.csv`, dashboard history JSON, and legacy
+`settings.json` are migration sources only; after a successful migration, the
+app reads/writes these state categories through SQLite. The legacy files are
+retained as backups unless the user removes them. JSON used for API payloads,
+editor language handling, and remote tunnel definitions is not application-state
+persistence and remains unchanged.
+
+
+### Media playback compatibility
+
+KubeDock first streams remote audio/video directly through QtMultimedia. If the
+platform backend rejects a video (including MKV files containing unsupported
+codecs), the player automatically falls back to the local FFmpeg executable,
+converts the remote media to a temporary H.264/AAC MP4, and plays that result.
+The source file is never modified. On macOS, the installer installs FFmpeg
+through Homebrew. If FFmpeg is unavailable, KubeDock reports that clearly and
+provides the normal download option.

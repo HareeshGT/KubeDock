@@ -334,6 +334,76 @@ class MediaStreamServer:
             self._httpd = None
 
 
+class VideoTranscodeWorker(QThread):
+    """Fallback decoder for video containers/codecs unavailable to QtMultimedia.
+
+    ffmpeg reads the existing loopback media stream and writes a temporary
+    H.264/AAC MP4.  MP4/H.264/AAC is broadly supported by QtMultimedia on
+    macOS, Windows and Linux, while MKV itself may contain codecs that the
+    platform multimedia backend cannot decode.
+    """
+
+    ready = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, source_url: str, output_path: str, ffmpeg_path: str):
+        super().__init__()
+        self._source_url = source_url
+        self._output_path = output_path
+        self._ffmpeg_path = ffmpeg_path
+        self._process = None
+        self.finished.connect(self.deleteLater)
+
+    def run(self):
+        try:
+            self._process = subprocess.Popen(
+                [
+                    self._ffmpeg_path, "-hide_banner", "-loglevel", "error",
+                    "-y", "-i", self._source_url,
+                    "-map", "0:v:0",
+                    "-map", "0:a:0?",
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-crf", "23",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-b:a", "160k",
+                    "-movflags", "+faststart",
+                    self._output_path,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            _, stderr = self._process.communicate()
+            if self._process.returncode != 0:
+                raise RuntimeError(
+                    stderr.decode("utf-8", "replace").strip()
+                    or "ffmpeg failed to decode the video"
+                )
+            if not os.path.isfile(self._output_path) or os.path.getsize(self._output_path) == 0:
+                raise RuntimeError("ffmpeg produced an empty video")
+            self.ready.emit(self._output_path)
+        except Exception as e:
+            try:
+                if os.path.exists(self._output_path):
+                    os.unlink(self._output_path)
+            except OSError:
+                pass
+            self.error.emit(str(e))
+
+    def stop(self):
+        proc = self._process
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+
 class AudioTranscodeWorker(QThread):
     """Fallback decoder for audio codecs unavailable to QtMultimedia.
 

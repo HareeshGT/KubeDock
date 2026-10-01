@@ -34,6 +34,7 @@ from workers_parts.media import (
     _MediaStreamHTTPServer,
     MediaStreamServer,
     AudioTranscodeWorker,
+    VideoTranscodeWorker,
     _StreamServerStartWorker,
 )
 
@@ -54,6 +55,7 @@ __all__ = [
     "_MediaStreamHTTPServer",
     "MediaStreamServer",
     "AudioTranscodeWorker",
+    "VideoTranscodeWorker",
     "_StreamServerStartWorker",
     "SSHConnectionPool",
     "attach_ssh_connection_pool",

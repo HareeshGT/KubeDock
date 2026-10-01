@@ -481,6 +481,62 @@ class MediaPlayerDialog(QDialog):
         return path
     return None
 
+  def _start_video_fallback(self):
+    if self._fallback_attempted or self._kind != "video" or not self._stream_server:
+      return
+    self._fallback_attempted = True
+    ffmpeg = self._find_ffmpeg()
+    if not ffmpeg:
+      self._on_stream_error(
+        "This video codec/container isn't supported by QtMultimedia and ffmpeg "
+        "wasn't found. Install ffmpeg and reopen the file (macOS: brew install ffmpeg).")
+      return
+    try:
+      if self._player:
+        self._player.stop()
+        self._player.setMedia(QMediaContent())
+      fd, path = tempfile.mkstemp(prefix="kubedeck-video-", suffix=".mp4")
+      os.close(fd)
+      self._temp_media_path = path
+      self._status_lbl.setText("Converting video for playback compatibility...")
+      self._status_lbl.setStyleSheet(
+        "color: {}; font-size: 12px; padding: 6px 12px;".format(T['WARNING']))
+      self._dl_bar.show()
+      self._dl_bar.setRange(0, 0)
+      self._set_controls_enabled(False)
+      worker = VideoTranscodeWorker(self._stream_server.url, path, ffmpeg)
+      worker.ready.connect(self._on_video_fallback_ready)
+      worker.error.connect(self._on_video_fallback_error)
+      worker.finished.connect(lambda w=worker: self._clear_transcode_worker(w))
+      self._transcode_worker = worker
+      worker.start()
+    except Exception as e:
+      self._on_video_fallback_error(str(e))
+
+  def _on_video_fallback_ready(self, path):
+    try:
+      if not self._player:
+        return
+      self._dl_bar.hide()
+      self._status_lbl.setText("Playing (decoded for compatibility)")
+      self._status_lbl.setStyleSheet(
+        "color: {}; font-size: 12px; padding: 6px 12px;".format(T['TEXT_DIM']))
+      self._set_controls_enabled(True)
+      self._player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
+      self._player.play()
+    except RuntimeError:
+      pass
+
+  def _on_video_fallback_error(self, msg):
+    try:
+      self._dl_bar.hide()
+      self._status_lbl.setText("Video playback failed: {}".format(msg))
+      self._status_lbl.setStyleSheet(
+        "color: {}; font-size: 12px; padding: 6px 12px;".format(T['DANGER']))
+      self._set_controls_enabled(False)
+    except RuntimeError:
+      pass
+
   def _start_audio_fallback(self):
     if self._fallback_attempted or self._kind != "audio" or not self._stream_server:
       return
@@ -538,6 +594,9 @@ class MediaPlayerDialog(QDialog):
 
   def _on_player_error(self, _err):
     if not self._player:
+      return
+    if self._kind == "video" and not self._fallback_attempted:
+      self._start_video_fallback()
       return
     if self._kind == "audio" and not self._fallback_attempted:
       self._start_audio_fallback()

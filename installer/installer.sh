@@ -368,6 +368,17 @@ if [[ "$OS" == "Darwin" ]]; then
     echo "PortAudio already installed."
   fi
 
+  # Media playback fallback -> FFmpeg
+  # QtMultimedia cannot decode every MKV codec on every macOS backend.
+  # KubeDock uses FFmpeg to convert unsupported remote video to a
+  # broadly-compatible H.264/AAC MP4 when direct playback fails.
+  if ! brew list --formula ffmpeg >/dev/null 2>&1; then
+    echo "Installing FFmpeg..."
+    brew install ffmpeg
+  else
+    echo "FFmpeg already installed."
+  fi
+
   # SpeechRecognition -> FLAC
   #
   # This is especially important on Apple Silicon.
