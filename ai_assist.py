@@ -14,7 +14,7 @@ touching the worker or the dialog.
                                            security.py persists lock
                                            settings: merged under a
                                            dedicated "ai" key in
-                                           settings.json via
+                                           SQLite app_settings via
                                            themes.save_settings. Keys and
                                            model choices are stored
                                            per-provider so switching

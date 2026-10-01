@@ -1,5 +1,7 @@
 from dashboard_tab import *
 from dashboard_tab import _dashboard_text
+from db import connect, initialize
+import os
 
 """DashboardTab implementation mixin.
 
@@ -102,48 +104,76 @@ class DashboardNodesHistoryMixin:
       self._node_windows.pop(node_name, None)
   
   
-  def _load_all_history(self):
-      """Read the whole on-disk store: {instance_key: [samples...]}.
-      Tolerates the old pre-keying format (a bare list) by folding it
-      into a "_legacy" bucket instead of discarding it outright."""
-      try:
-        with open(self._history_file, "r", encoding="utf-8") as f:
-          data = json.load(f)
-      except (OSError, ValueError, TypeError):
-        return {}
-      if isinstance(data, list):
-        return {"_legacy": data[-500:]} if data else {}
-      if isinstance(data, dict):
-        return data
-      return {}
-  
-  
+  def _migrate_history_json(self):
+      """Import legacy dashboard JSON without deleting the source file."""
+      initialize()
+      legacy = getattr(self, "_history_file", None)
+      if not legacy or not os.path.exists(legacy):
+        return
+      with connect() as db:
+        marker = db.execute("SELECT 1 FROM app_settings WHERE setting_key='migration.dashboard_json'").fetchone()
+        if marker:
+          return
+        try:
+          with open(legacy, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        except (OSError, ValueError, TypeError):
+          return
+        if isinstance(data, list):
+          data = {"_legacy": data}
+        if isinstance(data, dict):
+          for instance_key, samples in data.items():
+            if not isinstance(samples, list):
+              continue
+            for sample in samples[-500:]:
+              if not isinstance(sample, dict) or not sample.get("time"):
+                continue
+              db.execute("""INSERT OR IGNORE INTO dashboard_history
+                (instance_key,sample_time,cpu,memory,pods,ready_nodes,restarts,pending,events_json)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (str(instance_key), str(sample.get("time")), sample.get("cpu"), sample.get("memory"),
+                 sample.get("pods"), sample.get("ready_nodes"), sample.get("restarts", 0),
+                 sample.get("pending", 0), json.dumps(sample.get("events", []), separators=(",", ":"))))
+        db.execute("INSERT OR REPLACE INTO app_settings(setting_key,value_json) VALUES('migration.dashboard_json','true')")
+
   def _load_history(self):
-      """Load just the current instance's slice of history."""
+      """Load the current instance's most recent 500 persisted samples."""
       if not self._history_key:
         return []
-      all_history = self._load_all_history()
-      data = all_history.get(self._history_key, [])
-      return data[-500:] if isinstance(data, list) else []
-  
-  
+      self._migrate_history_json()
+      with connect() as db:
+        rows = db.execute("""SELECT sample_time,cpu,memory,pods,ready_nodes,restarts,pending,events_json
+          FROM dashboard_history WHERE instance_key=? ORDER BY id DESC LIMIT 500""",
+          (self._history_key,)).fetchall()
+      result = []
+      for row in reversed(rows):
+        try:
+          events = json.loads(row["events_json"] or "[]")
+        except (TypeError, ValueError):
+          events = []
+        result.append({"time": row["sample_time"], "cpu": row["cpu"], "memory": row["memory"],
+          "pods": row["pods"], "ready_nodes": row["ready_nodes"], "restarts": row["restarts"],
+          "pending": row["pending"], "events": events})
+      return result
+
   def _save_history(self):
       if not self._history_key:
         return
       try:
-        # Read-modify-write against the full store so saving this
-        # instance's history never clobbers any other instance's data
-        # that another connection/session already wrote to the file.
-        all_history = self._load_all_history()
-        all_history[self._history_key] = self._history[-500:]
-        tmp = self._history_file + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-          json.dump(all_history, f, separators=(",", ":"))
-        os.replace(tmp, self._history_file)
-      except OSError:
+        with connect() as db:
+          for sample in self._history[-500:]:
+            db.execute("""INSERT OR IGNORE INTO dashboard_history
+              (instance_key,sample_time,cpu,memory,pods,ready_nodes,restarts,pending,events_json)
+              VALUES(?,?,?,?,?,?,?,?,?)""",
+              (self._history_key, sample.get("time"), sample.get("cpu"), sample.get("memory"),
+               sample.get("pods"), sample.get("ready_nodes"), sample.get("restarts", 0),
+               sample.get("pending", 0), json.dumps(sample.get("events", []), separators=(",", ":"))))
+          db.execute("""DELETE FROM dashboard_history WHERE instance_key=? AND id NOT IN
+            (SELECT id FROM dashboard_history WHERE instance_key=? ORDER BY id DESC LIMIT 500)""",
+            (self._history_key, self._history_key))
+      except Exception:
         pass
-  
-  
+
   def _record_history(self, node_lines, top, pods_by_node, events):
       now = time.time()
       if now - self._last_history_time < 60:

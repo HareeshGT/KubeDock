@@ -439,7 +439,7 @@ KubeDock is primarily built with:
 - Uvicorn
 - AI APIs
 - Shell commands
-- JSON-based application settings
+- SQLite-based local application persistence
 
 Architecture at a high level:
 
@@ -976,3 +976,14 @@ A unified desktop workspace for cloud, Kubernetes, and infrastructure operations
 Built for developers, DevOps engineers, SREs, and infrastructure teams.
 
 </p>
+
+
+## Local SQLite persistence
+
+KubeDock stores local recent-connection metadata, Dashboard history, and
+application settings in `~/.vm_visualizer/kubedock.db` using Python's built-in
+`sqlite3` module. Existing `recent.csv`, dashboard history JSON, and
+`settings.json` are read only during one-time migration; the legacy files are
+retained and are never written by normal application operations. JSON used for
+API payloads, editor language handling, and remote tunnel definitions is not
+application-state persistence and is intentionally unchanged.

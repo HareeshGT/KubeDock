@@ -2,7 +2,7 @@
 and an inactivity watcher that triggers auto-lock.
 
 The PIN is never stored in plain text — only a salted PBKDF2-SHA256 hash
-(see hash_pin/verify_pin) lives in settings.json, alongside the salt used
+(see hash_pin/verify_pin) lives in the SQLite app_settings table, alongside the salt used
 to produce it.
 """
 
@@ -39,7 +39,7 @@ def verify_pin(pin: str, salt_hex: str, expected_hash: str) -> bool:
 
 
 # ─── Persisted lock settings ────────────────────────────────────
-# Stored under settings.json's "security" key so it merges cleanly with
+# Stored under SQLite app_settings with the "security" key so it merges cleanly with
 # theme / tunnel-path / k8s-tab-visibility settings already saved there
 # (see themes.save_settings, which merges rather than overwrites).
 _DEFAULTS = {

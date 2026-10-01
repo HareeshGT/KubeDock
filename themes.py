@@ -1,10 +1,6 @@
 """themes.py — Theme definitions, QSS builder, and apply helpers."""
 
-import json
 import os
-import shutil
-import tempfile
-import threading
 
 # ─── Theme palette definitions ────────────────────────────────
 THEMES = {
@@ -82,90 +78,50 @@ THEMES = {
 }
 
 # ─── Live theme state (single source of truth) ───────────────
+# Application settings are stored in SQLite via db.py.
+from db import get_all_settings, set_settings
+
 T = {}
 
-APP_DIR       = os.path.join(os.path.expanduser("~"), ".vm_visualizer")
-SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
-SETTINGS_BACKUP_FILE = SETTINGS_FILE + ".bak"
-os.makedirs(APP_DIR, exist_ok=True)
+APP_DIR = os.path.join(os.path.expanduser("~"), ".vm_visualizer")
+os.makedirs(APP_DIR, mode=0o700, exist_ok=True)
+try:
+    os.chmod(APP_DIR, 0o700)
+except OSError:
+    pass
 
 CURRENT_THEME = "Obsidian Purple"
-_SETTINGS_LOCK = threading.RLock()
 
 
 def save_settings(**extra):
-    """Persist settings atomically under a process-local lock."""
-    with _SETTINGS_LOCK:
-        os.makedirs(APP_DIR, exist_ok=True)
-        data = load_settings()
-        data["theme"] = CURRENT_THEME
-        data.update(extra)
+    """Persist application settings to SQLite atomically.
 
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=".settings-", suffix=".tmp", dir=APP_DIR, text=True
-        )
-        try:
-            os.chmod(tmp_path, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                fd = None
-                json.dump(data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            if os.path.exists(SETTINGS_FILE):
-                try:
-                    shutil.copy2(SETTINGS_FILE, SETTINGS_BACKUP_FILE)
-                    os.chmod(SETTINGS_BACKUP_FILE, 0o600)
-                except OSError:
-                    pass
-            os.replace(tmp_path, SETTINGS_FILE)
-            try: os.chmod(SETTINGS_FILE, 0o600)
-            except OSError: pass
-        finally:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            try:
-                if os.path.exists(tmp_path): os.unlink(tmp_path)
-            except OSError: pass
-
-def load_settings():
-    with _SETTINGS_LOCK:
-        try:
-            return _read_settings_file(SETTINGS_FILE)
-        except FileNotFoundError:
-            return {}
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            try: return _read_settings_file(SETTINGS_BACKUP_FILE)
-            except (OSError, json.JSONDecodeError, TypeError, ValueError): return {}
-
-def _read_settings_file(path):
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    return data if isinstance(data, dict) else {}
+    Legacy settings.json is a migration-only source; this function never
+    writes to it.
+    """
+    global CURRENT_THEME
+    data = load_settings()
+    data["theme"] = CURRENT_THEME
+    data.update(extra)
+    set_settings(data)
 
 
 def load_settings():
-    """Load settings, recovering from the last atomic backup if needed."""
-    try:
-        return _read_settings_file(SETTINGS_FILE)
-    except FileNotFoundError:
-        return {}
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        try:
-            return _read_settings_file(SETTINGS_BACKUP_FILE)
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return {}
+    """Load application settings from SQLite.
+
+    db.py performs a one-time, read-only migration from legacy settings.json
+    when the SQLite store is first initialized.
+    """
+    return get_all_settings()
 
 
 def apply_theme_vars(theme_name: str):
     """Populate the global T dict from the named theme.
 
-    Falls back to "App Default" if theme_name isn't a known theme —
-    e.g. settings.json was saved by a build with a theme that's since
-    been renamed/removed, or was hand-edited/corrupted. Without this
-    check, THEMES[theme_name] raises KeyError, which happens at import
-    time (see the bootstrap call below) and prevents the app from
-    starting at all.
+    Falls back to "App Default" if theme_name isn't a known theme — for
+    example, when an older installation stored a theme that has since been
+    renamed or removed.  This prevents a bad persisted value from stopping
+    application startup.
     """
     global CURRENT_THEME
     if theme_name not in THEMES:
@@ -174,7 +130,7 @@ def apply_theme_vars(theme_name: str):
     T.update(THEMES[theme_name])
 
 
-# Bootstrap from saved settings at import time.
+# Bootstrap from SQLite. db.py migrates settings.json at most once.
 _settings = load_settings()
 apply_theme_vars(_settings.get("theme", CURRENT_THEME))
 

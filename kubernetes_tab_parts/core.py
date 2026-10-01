@@ -511,7 +511,7 @@ class KubernetesCoreMixin:
   def visible_tab_titles(self) -> list:
     """The exact tab-bar strings currently in sub_tabs, in order —
     used by SettingsDialog to build its show/hide checklist and as
-    the stable keys stored in settings.json."""
+    the stable keys stored in the SQLite app_settings table."""
     return [self.sub_tabs.tabText(i) for i in range(self.sub_tabs.count())]
 
 

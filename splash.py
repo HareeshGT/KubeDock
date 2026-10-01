@@ -4,7 +4,7 @@ Shown before EC2FileManager is constructed. Draws a ring (visually
 consistent with progress_ring.py's CircularProgress) that sweeps in,
 reveals a server glyph at its centre, then fades in the app name below
 it. Colours are read from themes.T at construction time, so the splash
-always matches whatever theme was loaded from settings.json.
+always matches whatever theme was loaded from SQLite app_settings.
 
 Usage (see main.py):
     splash = SplashScreen()

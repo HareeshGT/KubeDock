@@ -9,66 +9,79 @@ from PyQt5.QtGui import QTextCursor, QFont, QFontDatabase, QFontInfo, QTextCharF
 from workers import managed_exec_command
 # ─── Paths ───────────────────────────────────────────────────
 APP_DIR     = os.path.join(os.path.expanduser("~"), ".vm_visualizer")
-RECENT_FILE = os.path.join(APP_DIR, "recent.csv")
+RECENT_FILE = os.path.join(APP_DIR, "recent.csv")  # legacy migration source
 os.makedirs(APP_DIR, exist_ok=True)
+
+from db import connect, initialize
 
 RECENT_MAX    = 50
 RECENT_FIELDS = ["host", "port", "user", "pem", "alias", "protocol"]   # alias is 5th column
 
 
 # ─── Recent instances ─────────────────────────────────────────
+def _migrate_recent_csv():
+    """Import legacy recent.csv once; leave the original file as a backup."""
+    initialize()
+    with connect() as db:
+        done = db.execute("SELECT value_json FROM app_settings WHERE setting_key='migration.recent_csv'").fetchone()
+        if done:
+            return
+        if os.path.exists(RECENT_FILE):
+            try:
+                with open(RECENT_FILE, newline="", encoding="utf-8") as f:
+                    for row in csv.reader(f):
+                        if len(row) < 4:
+                            continue
+                        host, port, user, pem = row[:4]
+                        alias = row[4].strip() if len(row) > 4 else ""
+                        protocol = (row[5].strip().lower() if len(row) > 5 else "ssh") or "ssh"
+                        db.execute("""INSERT OR IGNORE INTO recent_instances
+                            (host,port,user,pem,alias,protocol) VALUES(?,?,?,?,?,?)""",
+                            (host, port or "22", user, pem, alias, protocol))
+            except (OSError, csv.Error):
+                # Do not mark complete on read failure; a later run can retry.
+                return
+        db.execute("INSERT OR REPLACE INTO app_settings(setting_key,value_json) VALUES('migration.recent_csv','true')")
+
+
 def load_recent_instances() -> list:
-    if not os.path.exists(RECENT_FILE):
-        return []
-    try:
-        rows = []
-        with open(RECENT_FILE, newline="", encoding="utf-8") as f:
-            for row in csv.reader(f):
-                if len(row) < 4:
-                    continue
-                host, port, user, pem = row[:4]
-                alias = row[4].strip() if len(row) > 4 else ""
-                protocol = row[5].strip().lower() if len(row) > 5 else "ssh"
-                rows.append({"host": host, "port": port, "user": user,
-                             "pem": pem, "alias": alias, "protocol": protocol or "ssh"})
-        return rows
-    except Exception:
-        return []
+    _migrate_recent_csv()
+    with connect() as db:
+        rows = db.execute("""SELECT host,port,user,pem,alias,protocol
+            FROM recent_instances ORDER BY last_used DESC, id DESC LIMIT ?""", (RECENT_MAX,)).fetchall()
+    return [dict(row) for row in rows]
 
 
 def save_recent_instances(instances: list):
+    _migrate_recent_csv()
     try:
-        with open(RECENT_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
+        with connect() as db:
+            db.execute("DELETE FROM recent_instances")
             for inst in instances[:RECENT_MAX]:
-                writer.writerow([
-                    inst.get("host", ""),
-                    inst.get("port", "22"),
-                    inst.get("user", ""),
-                    inst.get("pem", ""),
-                    inst.get("alias", ""),
-                    inst.get("protocol", "ssh"),
-                ])
+                db.execute("""INSERT OR REPLACE INTO recent_instances
+                    (host,port,user,pem,alias,protocol,last_used)
+                    VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)""",
+                    (inst.get("host", ""), str(inst.get("port", "22")),
+                     inst.get("user", ""), inst.get("pem", ""),
+                     inst.get("alias", ""), inst.get("protocol", "ssh") or "ssh"))
     except Exception:
         pass
 
 
 def add_recent_instance(host: str, port: int, user: str, pem: str, alias: str = "", protocol: str = "ssh"):
-    instances = load_recent_instances()
-    # Remove any existing entry for the same host+port+user
-    instances = [
-        i for i in instances
-        if not (i["host"] == host and i["port"] == str(port) and i["user"] == user)
-    ]
-    instances.insert(0, {
-        "host":  host,
-        "port":  str(port),
-        "user":  user,
-        "pem":   pem or "",
-        "alias": alias or "",
-        "protocol": protocol or "ssh",
-    })
-    save_recent_instances(instances[:RECENT_MAX])
+    _migrate_recent_csv()
+    try:
+        with connect() as db:
+            db.execute("""INSERT INTO recent_instances(host,port,user,pem,alias,protocol,last_used)
+                VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(host,port,user) DO UPDATE SET
+                pem=excluded.pem, alias=excluded.alias, protocol=excluded.protocol,
+                last_used=CURRENT_TIMESTAMP""",
+                (host, str(port), user, pem or "", alias or "", protocol or "ssh"))
+            db.execute("""DELETE FROM recent_instances WHERE id NOT IN
+                (SELECT id FROM recent_instances ORDER BY last_used DESC,id DESC LIMIT ?)""", (RECENT_MAX,))
+    except Exception:
+        pass
 
 
 # ─── File type helpers ────────────────────────────────────────
