@@ -20,7 +20,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .ssh import open_managed_session
+from .ssh import open_managed_session, close_managed_session
 
 class _ChannelReader:
     """Minimal file-like wrapper around a raw paramiko Channel, for the

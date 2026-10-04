@@ -10,8 +10,29 @@ class MediaPlayerDialog(QDialog):
   remote codec.
   """
 
+  # Strong references to open (non-modal) players.
+  _open_players = set()
+
   def __init__(self, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None):
-    super().__init__(parent)
+    # macOS: the main window runs in a native fullscreen Space. Any separate
+    # top-level window (dialog, tool window, sheet) can be placed on a
+    # different Space, which makes macOS switch desktops and the app "loses
+    # focus". So when we have a host window the player is created as a plain
+    # child widget (Qt.Widget) that floats *inside* the main window - no
+    # second native window, no Space switch.
+    host = parent.window() if parent is not None else None
+    self._host = host
+    self._embedded = host is not None
+    if self._embedded:
+      super().__init__(host, Qt.Widget)
+      self.setAttribute(Qt.WA_StyledBackground, True)
+      self.setAutoFillBackground(True)
+      self.setFocusPolicy(Qt.StrongFocus)
+      host.installEventFilter(self)
+    else:
+      super().__init__(parent)
+    self.setAttribute(Qt.WA_DeleteOnClose, True)
+    self._embed_fullscreen = False
     self._sftp = sftp
     self._ssh = ssh
     self._remote = remote_path
@@ -54,6 +75,13 @@ class MediaPlayerDialog(QDialog):
     set_icon(self._fullscreen_btn, "fullscreen", color=T['TEXT_PRIMARY'], size=15)
     self._fullscreen_btn.clicked.connect(self._toggle_fullscreen)
     h.addWidget(self._fullscreen_btn)
+    if self._embedded:
+      self._close_btn = QPushButton("\u2715")
+      self._close_btn.setFixedSize(30, 28)
+      self._close_btn.setToolTip("Close (Esc)")
+      self._close_btn.setCursor(Qt.PointingHandCursor)
+      self._close_btn.clicked.connect(self.close)
+      h.addWidget(self._close_btn)
     lay.addWidget(header)
 
     # Media surface
@@ -247,8 +275,36 @@ class MediaPlayerDialog(QDialog):
     if kind == "video":
       self._set_aspect_ratio("Fit")
 
+    if self._embedded:
+      self._place()
+
     if _MULTIMEDIA_AVAILABLE:
       self._start_stream()
+
+  # ── Embedded-overlay helpers ───────────────────────────────────────
+  def _is_fs(self):
+    return self._embed_fullscreen if self._embedded else self.isFullScreen()
+
+  def _place(self):
+    """Centre the player in the host window (or fill it in fullscreen)."""
+    if not self._embedded or self._host is None:
+      return
+    try:
+      hr = self._host.rect()
+      if self._embed_fullscreen:
+        self.setGeometry(hr)
+      else:
+        w = min(920, max(480, hr.width() - 40))
+        hgt = min(620 if self._kind == "video" else 300, max(240, hr.height() - 40))
+        self.setGeometry((hr.width() - w) // 2, (hr.height() - hgt) // 2, w, hgt)
+      self.raise_()
+    except RuntimeError:
+      pass
+
+  def eventFilter(self, obj, event):
+    if obj is self._host and event.type() == QEvent.Resize:
+      self._place()
+    return False
 
   def _start_stream(self):
     self._status_lbl.setText("Connecting...")
@@ -371,13 +427,21 @@ class MediaPlayerDialog(QDialog):
       pass
 
   def _toggle_fullscreen(self):
-    if self.isFullScreen():
-      self.showNormal()
+    if self._is_fs():
+      if self._embedded:
+        self._embed_fullscreen = False
+        self._place()
+      else:
+        self.showNormal()
       self._was_fullscreen = False
       set_icon(self._fullscreen_btn, "fullscreen", color=T['TEXT_PRIMARY'], size=15)
       self._fullscreen_btn.setToolTip("Fullscreen (F)")
     else:
-      self.showFullScreen()
+      if self._embedded:
+        self._embed_fullscreen = True
+        self._place()
+      else:
+        self.showFullScreen()
       self._was_fullscreen = True
       set_icon(self._fullscreen_btn, "fullscreen_exit", color=T['TEXT_PRIMARY'], size=15)
       self._fullscreen_btn.setToolTip("Exit fullscreen (F)")
@@ -630,8 +694,12 @@ class MediaPlayerDialog(QDialog):
       self._show_media_info()
       event.accept()
       return
-    if key == Qt.Key_Escape and self.isFullScreen():
+    if key == Qt.Key_Escape and self._is_fs():
       self._toggle_fullscreen()
+      event.accept()
+      return
+    if key == Qt.Key_Escape and self._embedded:
+      self.close()
       event.accept()
       return
     if key == Qt.Key_Left:
@@ -660,6 +728,11 @@ class MediaPlayerDialog(QDialog):
     super().keyPressEvent(event)
 
   def closeEvent(self, event):
+    if self._embedded and self._host is not None:
+      try:
+        self._host.removeEventFilter(self)
+      except RuntimeError:
+        pass
     if self._player:
       for sig, slot in (
         (self._player.positionChanged, self._on_position_changed),
@@ -722,9 +795,21 @@ class MediaPlayerDialog(QDialog):
 
     event.accept()
 
+  def reject(self):
+    # reject() only hides a QDialog and skips closeEvent, which would leave
+    # the stream server / player running. Route it through close().
+    self.close()
+
   @classmethod
   def open_remote(cls, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None):
     dlg = cls(parent, sftp, ssh, remote_path, kind, sudo_user=sudo_user)
-    dlg.exec_()
+    if not dlg._embedded:
+      dlg.exec_()
+      return dlg
+    cls._open_players.add(dlg)
+    dlg.destroyed.connect(lambda *_a, d=dlg: cls._open_players.discard(d))
+    dlg.show()
+    dlg._place()
+    dlg.setFocus()
     return dlg
 
