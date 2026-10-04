@@ -1,3 +1,4 @@
+# Path: dialogs_parts/media.py
 from .common import *
 
 class MediaPlayerDialog(QDialog):
@@ -24,7 +25,12 @@ class MediaPlayerDialog(QDialog):
     self._host = host
     self._embedded = host is not None
     if self._embedded:
-      super().__init__(host, Qt.Widget)
+      super().__init__(host)
+      # QDialog's constructor forces the Qt.Dialog window type even when
+      # Qt.Widget is passed, which would still create a separate native
+      # window. Clearing the flags afterwards turns it into a real child
+      # widget of the host (isWindow() == False).
+      self.setWindowFlags(Qt.Widget)
       self.setAttribute(Qt.WA_StyledBackground, True)
       self.setAutoFillBackground(True)
       self.setFocusPolicy(Qt.StrongFocus)
@@ -812,4 +818,3 @@ class MediaPlayerDialog(QDialog):
     dlg._place()
     dlg.setFocus()
     return dlg
-

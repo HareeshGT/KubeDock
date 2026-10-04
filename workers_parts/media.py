@@ -1,3 +1,4 @@
+# Path: workers_parts/media.py
 """KubeDock workers split module.
 
 This module is an internal implementation module. Public compatibility
