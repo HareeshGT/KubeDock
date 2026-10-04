@@ -29,18 +29,24 @@ def _migrate_recent_csv():
         if os.path.exists(RECENT_FILE):
             try:
                 with open(RECENT_FILE, newline="", encoding="utf-8") as f:
-                    for row in csv.reader(f):
-                        if len(row) < 4:
-                            continue
-                        host, port, user, pem = row[:4]
-                        alias = row[4].strip() if len(row) > 4 else ""
-                        protocol = (row[5].strip().lower() if len(row) > 5 else "ssh") or "ssh"
-                        db.execute("""INSERT OR IGNORE INTO recent_instances
-                            (host,port,user,pem,alias,protocol) VALUES(?,?,?,?,?,?)""",
-                            (host, port or "22", user, pem, alias, protocol))
+                    legacy_rows = list(csv.reader(f))
             except (OSError, csv.Error):
                 # Do not mark complete on read failure; a later run can retry.
                 return
+            # recent.csv is newest-first, but recent_instances is read back
+            # ordered by (last_used DESC, id DESC) and every imported row gets
+            # the same last_used.  Insert oldest-first so ids grow with
+            # recency; otherwise the list is reversed and, past RECENT_MAX,
+            # the newest entries are the ones truncated/pruned.
+            for row in reversed(legacy_rows):
+                if len(row) < 4:
+                    continue
+                host, port, user, pem = row[:4]
+                alias = row[4].strip() if len(row) > 4 else ""
+                protocol = (row[5].strip().lower() if len(row) > 5 else "ssh") or "ssh"
+                db.execute("""INSERT OR IGNORE INTO recent_instances
+                    (host,port,user,pem,alias,protocol) VALUES(?,?,?,?,?,?)""",
+                    (host, port or "22", user, pem, alias, protocol))
         db.execute("INSERT OR REPLACE INTO app_settings(setting_key,value_json) VALUES('migration.recent_csv','true')")
 
 
