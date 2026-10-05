@@ -63,11 +63,16 @@ class _ServiceCardBase(ResourceCard):
   """Layout shared by the Manage Services card and the Tunnels-tab card:
   header (name + status), namespace/service chips, remote/local ports."""
 
+  # Vertical rhythm; subclasses override to make the card taller/shorter.
+  PAD_H = 12
+  PAD_V = 10
+  ROW_GAP = 8
+
   def _build_body(self, svc: dict, leading=None, trailing=None):
     self.svc = svc
     col = QVBoxLayout(self)
-    col.setContentsMargins(12, 10, 12, 10)
-    col.setSpacing(8)
+    col.setContentsMargins(self.PAD_H, self.PAD_V, self.PAD_H, self.PAD_V)
+    col.setSpacing(self.ROW_GAP)
 
     head = QHBoxLayout()
     head.setSpacing(8)
@@ -162,12 +167,19 @@ class TunnelCard(_ServiceCardBase):
   OBJ = "tunnel_status_card"
   toggled = pyqtSignal()
 
+  # Taller than the Manage Services card (~+28px): more breathing room.
+  PAD_H = 16
+  PAD_V = 16
+  ROW_GAP = 12
+  MIN_H = 160
+
   def __init__(self, svc: dict, parent=None):
     super().__init__(parent)
     self.exposed = None      # None until the first status check completes
     self.forwarded = False   # part of the running local SSH -L tunnel
     self.filtered = False    # hidden by the search / Active-Inactive filter
     self.setCursor(Qt.PointingHandCursor)
+    self.setMinimumHeight(self.MIN_H)
 
     self.check = QCheckBox()
     self.check.toggled.connect(lambda _c: self.toggled.emit())
@@ -222,6 +234,7 @@ class TunnelCardGrid(QScrollArea):
   `clear()` so existing callers keep working."""
 
   MIN_CARD_W = 300
+  MAX_CARD_W = 440
   SPACING = 10
   selection_changed = pyqtSignal()
 
@@ -232,6 +245,7 @@ class TunnelCardGrid(QScrollArea):
     self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     self.cards = []
     self._cols = 0
+    self._card_w = 0
 
     # Transparent so the grid inherits whatever theme the tab uses.
     self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
@@ -244,7 +258,13 @@ class TunnelCardGrid(QScrollArea):
     outer.setSpacing(0)
     self._grid = QGridLayout()
     self._grid.setSpacing(self.SPACING)
-    outer.addLayout(self._grid)
+    # Stretch on both sides keeps the card block centred in the tab.
+    center_row = QHBoxLayout()
+    center_row.setContentsMargins(0, 0, 0, 0)
+    center_row.addStretch(1)
+    center_row.addLayout(self._grid)
+    center_row.addStretch(1)
+    outer.addLayout(center_row)
     outer.addStretch(1)
     self.empty_lbl = QLabel("")
     self.empty_lbl.setAlignment(Qt.AlignCenter)
@@ -292,17 +312,29 @@ class TunnelCardGrid(QScrollArea):
       c.setHidden(c.filtered)
     self._relayout()
 
+  def _layout_metrics(self, shown_count: int):
+    """Return (cols, card_w): as many columns as fit, never more than the
+    number of visible cards, with card width capped so the block can be
+    centred instead of stretching edge to edge."""
+    width = self.viewport().width() - 20
+    fit = max(1, (width + self.SPACING) // (self.MIN_CARD_W + self.SPACING))
+    cols = max(1, min(fit, shown_count))
+    card_w = (width - (cols - 1) * self.SPACING) // cols
+    card_w = max(self.MIN_CARD_W, min(self.MAX_CARD_W, card_w))
+    return cols, card_w
+
   def _relayout(self):
     while self._grid.count():
       self._grid.takeAt(0)
-    width = self.viewport().width() - 20
-    cols = max(1, (width + self.SPACING) // (self.MIN_CARD_W + self.SPACING))
-    self._cols = cols
     shown = [c for c in self.cards if not c.filtered]
+    cols, card_w = self._layout_metrics(len(shown))
+    self._cols = cols
+    self._card_w = card_w
+    for j in range(self._grid.columnCount()):
+      self._grid.setColumnStretch(j, 0)
     for i, c in enumerate(shown):
+      c.setFixedWidth(card_w)
       self._grid.addWidget(c, i // cols, i % cols)
-    for j in range(max(cols, 1)):
-      self._grid.setColumnStretch(j, 1)
     if self.cards and not shown:
       self.set_empty_text("No tunnels match the current filter")
     elif self.cards:
@@ -310,9 +342,9 @@ class TunnelCardGrid(QScrollArea):
 
   def resizeEvent(self, event):
     super().resizeEvent(event)
-    width = self.viewport().width() - 20
-    cols = max(1, (width + self.SPACING) // (self.MIN_CARD_W + self.SPACING))
-    if cols != self._cols:
+    shown = sum(1 for c in self.cards if not c.filtered)
+    cols, card_w = self._layout_metrics(shown)
+    if cols != self._cols or card_w != getattr(self, "_card_w", None):
       self._relayout()
 
   def refresh_theme(self):
