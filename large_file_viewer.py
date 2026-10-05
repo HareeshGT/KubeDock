@@ -50,10 +50,7 @@ from ui_icons import icon_button, icon_pixmap
 from dialogs import FileTransferDialog
 
 
-def _rgba(hex_color: str, alpha: float) -> str:
-    hex_color = hex_color.lstrip("#")
-    r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
-    return "rgba({}, {}, {}, {})".format(r, g, b, alpha)
+from themes import rgba as _rgba  # shared helper (themes.rgba)
 
 
 class LargeFileViewerDialog(QDialog):

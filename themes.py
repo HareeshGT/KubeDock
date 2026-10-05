@@ -134,9 +134,35 @@ _settings = load_settings()
 apply_theme_vars(_settings.get("theme", CURRENT_THEME))
 
 
+# ─── Color helpers (derive tints/contrast from the active theme) ──
+def rgba(hex_color: str, alpha: float) -> str:
+    """'#7c6af7', 0.15 -> 'rgba(124, 106, 247, 0.15)' for tinted fills."""
+    h = (hex_color or "#888888").lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        r, g, b = 136, 136, 136
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def on_color(hex_color: str) -> str:
+    """Readable text color (dark/white) for a solid fill such as ACCENT.
+    Keeps primary buttons legible on light accents (Toxic Lime, Arctic Frost)."""
+    h = (hex_color or "#000000").lstrip("#")
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return "#ffffff"
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#0b0b0f" if lum > 150 else "#ffffff"
+
+
 # ─── QSS builder ─────────────────────────────────────────────
 def build_qss() -> str:
     c = T
+    on_acc = on_color(c['ACCENT'])
     return f"""
     QMainWindow, QWidget {{
         background: {c['BG_DARK']};
@@ -158,21 +184,21 @@ def build_qss() -> str:
     QTabBar::tab {{
         background: {c['BG_PANEL']}; color: {c['TEXT_DIM']};
         border: none; border-bottom: 2px solid transparent;
-        padding: 10px 22px; font-size: 13px; font-weight: 500; margin-right: 2px;
+        padding: 8px 16px; font-size: 12px; font-weight: 600; margin-right: 1px;
     }}
     QTabBar::tab:selected {{ color: {c['TEXT_PRIMARY']}; border-bottom: 2px solid {c['ACCENT']}; background: {c['BG_DARK']}; }}
     QTabBar::tab:hover:!selected {{ color: {c['TEXT_PRIMARY']}; background: {c['BG_HOVER']}; }}
     QToolBar {{ background: {c['BG_PANEL']}; border-bottom: 1px solid {c['BORDER']}; padding: 4px 8px; spacing: 6px; }}
     QToolBar QToolButton {{
         background: transparent; color: {c['TEXT_PRIMARY']};
-        border: none; border-radius: 6px; padding: 6px 10px; font-size: 13px;
+        border: none; border-radius: 6px; padding: 5px 9px; font-size: 12px;
     }}
     QToolBar QToolButton:hover   {{ background: {c['BG_HOVER']}; }}
     QToolBar QToolButton:pressed {{ background: {c['BG_ITEM_SEL']}; }}
     QToolBar QToolButton:disabled{{ color: {c['TEXT_MUTED']}; }}
     QLineEdit {{
         background: {c['BG_ITEM']}; color: {c['TEXT_PRIMARY']};
-        border: 1px solid {c['BORDER']}; border-radius: 8px; padding: 6px 12px;
+        border: 1px solid {c['BORDER']}; border-radius: 6px; padding: 5px 10px;
         selection-background-color: {c['ACCENT']};
     }}
     QLineEdit:focus {{ border-color: {c['ACCENT']}; }}
@@ -182,7 +208,7 @@ def build_qss() -> str:
     one consistent control language. */
     QComboBox {{
         background: {c['BG_ITEM']}; color: {c['TEXT_PRIMARY']};
-        border: 1px solid {c['BORDER']}; border-radius: 15px; padding: 6px 14px; min-width: 120px;
+        border: 1px solid {c['BORDER']}; border-radius: 6px; padding: 5px 10px; min-width: 110px;
     }}
     QComboBox:hover {{ border-color: {c['TEXT_MUTED']}; background: {c['BG_HOVER']}; }}
     QComboBox:focus {{ border: 1px solid {c['ACCENT']}; }}
@@ -220,7 +246,7 @@ def build_qss() -> str:
     }}
     QSpinBox {{
         background: {c['BG_ITEM']}; color: {c['TEXT_PRIMARY']};
-        border: 1px solid {c['BORDER']}; border-radius: 8px; padding: 5px 8px;
+        border: 1px solid {c['BORDER']}; border-radius: 6px; padding: 4px 8px;
     }}
     QSpinBox:focus {{ border-color: {c['ACCENT']}; }}
     QListWidget {{ background: {c['BG_DARK']}; border: none; outline: none; }}
@@ -238,13 +264,15 @@ def build_qss() -> str:
     QHeaderView::section {{
         background: {c['BG_PANEL']}; color: {c['TEXT_MUTED']};
         border: none; border-bottom: 1px solid {c['BORDER']};
-        padding: 6px 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 5px 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.6px;
     }}
     QTableWidget {{
         background: {c['BG_DARK']}; color: {c['TEXT_PRIMARY']};
-        border: none; outline: none; gridline-color: {c['BORDER']};
+        border: none; outline: none; gridline-color: transparent;
+        alternate-background-color: transparent;
     }}
-    QTableWidget::item {{ padding: 4px 8px; }}
+    QTableWidget::item {{ padding: 3px 8px; border-bottom: 1px solid {c['BORDER']}; }}
+    QTableWidget::item:hover {{ background: {c['BG_HOVER']}; }}
     QTableWidget::item:selected {{ background: {c['BG_ITEM_SEL']}; color: {c['TEXT_PRIMARY']}; }}
     QTextEdit {{
         background: {c['BG_PANEL']}; color: {c['TEXT_PRIMARY']}; border: none;
@@ -253,10 +281,11 @@ def build_qss() -> str:
     }}
     QSplitter::handle {{ background: {c['BORDER']}; width: 1px; height: 1px; }}
     QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; }}
-    QScrollBar::handle:vertical {{ background: {c['TEXT_MUTED']}; border-radius: 4px; min-height: 24px; }}
+    QScrollBar::handle:vertical {{ background: {c['BORDER']}; border-radius: 4px; min-height: 24px; }}
+    QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{ background: {c['TEXT_MUTED']}; }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
     QScrollBar:horizontal {{ background: transparent; height: 8px; }}
-    QScrollBar::handle:horizontal {{ background: {c['TEXT_MUTED']}; border-radius: 4px; min-width: 24px; }}
+    QScrollBar::handle:horizontal {{ background: {c['BORDER']}; border-radius: 4px; min-width: 24px; }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
     QStatusBar {{
         background: {c['BG_PANEL']}; color: {c['TEXT_DIM']};
@@ -276,24 +305,39 @@ def build_qss() -> str:
     QProgressBar::chunk {{ background: {c['ACCENT']}; border-radius: 3px; }}
     QPushButton {{
         background: {c['BG_ITEM']}; color: {c['TEXT_PRIMARY']};
-        border: 1px solid {c['BORDER']}; border-radius: 7px; padding: 7px 16px;
+        border: 1px solid {c['BORDER']}; border-radius: 6px; padding: 5px 12px; font-size: 12px;
     }}
     QPushButton:hover   {{ background: {c['BG_HOVER']}; border-color: {c['ACCENT']}; }}
     QPushButton:pressed {{ background: {c['BG_ITEM_SEL']}; }}
-    QPushButton#primary {{ background: {c['ACCENT']}; border-color: {c['ACCENT']}; color: white; font-weight: 600; }}
-    QPushButton#primary:hover {{ background: {c['ACCENT2']}; }}
+    QPushButton:disabled {{ color: {c['TEXT_MUTED']}; border-color: {c['BORDER']}; background: transparent; }}
+    QPushButton#primary {{ background: {c['ACCENT']}; border-color: {c['ACCENT']}; color: {on_acc}; font-weight: 600; }}
+    QPushButton#primary:hover {{ background: {c['ACCENT2']}; border-color: {c['ACCENT2']}; }}
+    QPushButton#secondary {{ background: {c['BG_ITEM']}; border-color: {c['BORDER']}; color: {c['TEXT_PRIMARY']}; }}
+    QPushButton#ghost {{ background: transparent; border-color: transparent; color: {c['TEXT_DIM']}; }}
+    QPushButton#ghost:hover {{ background: {c['BG_HOVER']}; color: {c['TEXT_PRIMARY']}; }}
     QPushButton#danger  {{ background: transparent; border-color: {c['DANGER']}; color: {c['DANGER']}; }}
-    QPushButton#danger:hover  {{ background: rgba(248,113,113,0.12); }}
+    QPushButton#danger:hover  {{ background: {rgba(c['DANGER'], 0.14)}; }}
     QPushButton#success {{ background: transparent; border-color: {c['SUCCESS']}; color: {c['SUCCESS']}; }}
-    QPushButton#success:hover {{ background: rgba(74,222,128,0.12); }}
+    QPushButton#success:hover {{ background: {rgba(c['SUCCESS'], 0.14)}; }}
     QPushButton#warning {{ background: transparent; border-color: {c['WARNING']}; color: {c['WARNING']}; }}
-    QPushButton#warning:hover {{ background: rgba(251,191,36,0.12); }}
-    QPushButton:checked {{ background: {c['ACCENT']}; border-color: {c['ACCENT']}; color: white; }}
+    QPushButton#warning:hover {{ background: {rgba(c['WARNING'], 0.14)}; }}
+    QPushButton:checked {{ background: {c['ACCENT']}; border-color: {c['ACCENT']}; color: {on_acc}; }}
+    QCheckBox {{ spacing: 6px; background: transparent; }}
+    QCheckBox::indicator {{
+        width: 14px; height: 14px; border-radius: 4px;
+        border: 1px solid {c['TEXT_MUTED']}; background: {c['BG_ITEM']};
+    }}
+    QCheckBox::indicator:hover {{ border-color: {c['ACCENT']}; }}
+    QCheckBox::indicator:checked {{ background: {c['ACCENT']}; border-color: {c['ACCENT']}; }}
+    QToolTip {{
+        background: {c['BG_PANEL']}; color: {c['TEXT_PRIMARY']};
+        border: 1px solid {c['BORDER']}; padding: 4px 8px;
+    }}
     QDialog {{ background: {c['BG_PANEL']}; }}
     QDialogButtonBox QPushButton {{ min-width: 80px; }}
     QGroupBox {{
         color: {c['TEXT_DIM']}; border: 1px solid {c['BORDER']}; border-radius: 8px;
-        margin-top: 12px; padding-top: 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.8px;
+        margin-top: 12px; padding-top: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
     }}
     QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 6px; color: {c['TEXT_MUTED']}; }}
     QLabel#breadcrumb {{ color: {c['TEXT_DIM']}; font-size: 12px; padding: 0 4px; }}
@@ -302,20 +346,23 @@ def build_qss() -> str:
         letter-spacing: 1px; padding: 12px 12px 4px 12px; text-transform: uppercase;
     }}
     QLabel#badge_running {{
-        background: rgba(74,222,128,0.15); color: {c['SUCCESS']};
-        border: 1px solid rgba(74,222,128,0.4); border-radius: 10px;
-        padding: 2px 10px; font-size: 13px; font-weight: 600;
+        background: {rgba(c['SUCCESS'], 0.14)}; color: {c['SUCCESS']};
+        border: 1px solid {rgba(c['SUCCESS'], 0.35)}; border-radius: 9px;
+        padding: 1px 8px; font-size: 11px; font-weight: 600;
     }}
     QLabel#badge_pending {{
-        background: rgba(251,191,36,0.15); color: {c['WARNING']};
-        border: 1px solid rgba(251,191,36,0.4); border-radius: 10px;
-        padding: 2px 10px; font-size: 13px; font-weight: 600;
+        background: {rgba(c['WARNING'], 0.14)}; color: {c['WARNING']};
+        border: 1px solid {rgba(c['WARNING'], 0.35)}; border-radius: 9px;
+        padding: 1px 8px; font-size: 11px; font-weight: 600;
     }}
     QLabel#badge_failed {{
-        background: rgba(248,113,113,0.15); color: {c['DANGER']};
-        border: 1px solid rgba(248,113,113,0.4); border-radius: 10px;
-        padding: 2px 10px; font-size: 13px; font-weight: 600;
+        background: {rgba(c['DANGER'], 0.14)}; color: {c['DANGER']};
+        border: 1px solid {rgba(c['DANGER'], 0.35)}; border-radius: 9px;
+        padding: 1px 8px; font-size: 11px; font-weight: 600;
     }}
+    QLabel#page_title {{ color: {c['TEXT_PRIMARY']}; font-size: 22px; font-weight: 700; }}
+    QLabel#section_header {{ color: {c['TEXT_PRIMARY']}; font-size: 15px; font-weight: 700; }}
+    QLabel#secondary_text {{ color: {c['TEXT_DIM']}; font-size: 11px; }}
     QScrollArea#recent_scroll {{
         background: transparent; border: none;
     }}

@@ -16,14 +16,20 @@ class DashboardUIMixin:
       root.setSpacing(0)
   
       self.ctrl_bar = QWidget()
-      self.ctrl_bar.setFixedHeight(48)
+      self.ctrl_bar.setObjectName("dash_ctrl")
+      self.ctrl_bar.setFixedHeight(68)
       cb = QHBoxLayout(self.ctrl_bar)
-      cb.setContentsMargins(12, 0, 12, 0)
+      cb.setContentsMargins(16, 8, 16, 8)
       cb.setSpacing(10)
   
-      title = QLabel("Dashboard")
-      title.setStyleSheet(f"color: {_dashboard_text('primary')}; font-size: 14px; font-weight: 700;")
-      cb.addWidget(title)
+      # Page header: 22px title + secondary subtitle (design-system hierarchy)
+      title_col = QVBoxLayout()
+      title_col.setSpacing(0)
+      self.page_title_lbl = QLabel("Dashboard")
+      self.page_sub_lbl = QLabel("Live infrastructure overview")
+      title_col.addWidget(self.page_title_lbl)
+      title_col.addWidget(self.page_sub_lbl)
+      cb.addLayout(title_col)
       cb.addStretch()
   
       self.updated_lbl = QLabel("")
@@ -34,7 +40,8 @@ class DashboardUIMixin:
       cb.addWidget(self.live_lbl)
   
       self.refresh_btn = icon_button(" Refresh")
-      self.refresh_btn.setFixedHeight(30)
+      self.refresh_btn.setObjectName("primary")
+      self.refresh_btn.setFixedHeight(28)
       self.refresh_btn.clicked.connect(self._refresh)
       cb.addWidget(self.refresh_btn)
   
@@ -472,8 +479,8 @@ class DashboardUIMixin:
       frame = QFrame()
       frame.setObjectName("dash_card")
       outer = QVBoxLayout(frame)
-      outer.setContentsMargins(16, 12, 16, 16)
-      outer.setSpacing(10)
+      outer.setContentsMargins(14, 10, 14, 14)
+      outer.setSpacing(8)
       lbl = QLabel()
       name, cleaned = split_icon_text(title)
       if name:
@@ -643,13 +650,16 @@ class DashboardUIMixin:
   
   
   def _apply_styles(self):
-      self.ctrl_bar.setStyleSheet(f"background: {T['BG_PANEL']}; border-bottom: 1px solid {T['BORDER']};")
+      self.ctrl_bar.setStyleSheet(f"QWidget#dash_ctrl {{ background: {T['BG_DARK']}; }}")
+      self.page_title_lbl.setStyleSheet(
+        f"color: {T['TEXT_PRIMARY']}; font-size: 22px; font-weight: 700;")
+      self.page_sub_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 11px;")
       for frame in (self.vm_card["frame"], self.k8s_summary_card["frame"],
               self.workloads_card["frame"], self.services_card["frame"],
               self.events_card["frame"], self.k8s_card["frame"], self.process_card["frame"]):
         frame.setStyleSheet(
           f"QFrame#dash_card {{ background: {T['BG_PANEL']}; "
-          f"border: 1px solid {T['BORDER']}; border-radius: 10px; }}"
+          f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
         )
       self.disk_tree.setStyleSheet(f"QTreeWidget {{ font-size: 12px; }}")
       self._update_live_label()

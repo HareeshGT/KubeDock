@@ -17,6 +17,7 @@ from PyQt5.QtGui import QFont, QFontMetrics
 
 from ui_icons import set_icon, icon_pixmap, icon_button, apply_text_icon
 from themes import T
+from ui_kit import pill_qss, chip_qss, RADIUS_CARD
 from utils import monospace_font
 
 
@@ -43,11 +44,7 @@ def _pill(text: str, color_key: str, min_text: str = "") -> QLabel:
   each hugging its own text (which makes their edges zig-zag row to row)."""
   color = T.get(color_key, T["TEXT_MUTED"])
   lbl = QLabel(text)
-  lbl.setStyleSheet(
-    f"background: rgba({_hex_to_rgb(color)}, 0.15); color: {color}; "
-    f"border: 1px solid rgba({_hex_to_rgb(color)}, 0.4); border-radius: 9px; "
-    f"padding: 2px 10px; font-size: 11px; font-weight: 700;"
-  )
+  lbl.setStyleSheet(pill_qss(color))
   if min_text:
     f = QFont(lbl.font())
     f.setPixelSize(11)
@@ -60,11 +57,7 @@ def _pill(text: str, color_key: str, min_text: str = "") -> QLabel:
 
 def _chip(text: str) -> QLabel:
   lbl = QLabel(text)
-  lbl.setStyleSheet(
-    f"background: {T['BG_DARK']}; color: {T['TEXT_DIM']}; "
-    f"border: 1px solid {T['BORDER']}; border-radius: 8px; "
-    f"padding: 1px 8px; font-size: 10px; font-weight: 600;"
-  )
+  lbl.setStyleSheet(chip_qss())
   return lbl
 
 
@@ -157,7 +150,7 @@ class _CardBase(QFrame):
       bg   = T["BG_ITEM"]
       border = T["BORDER"]
     self.setStyleSheet(
-      f"QFrame#k8s_card {{ background: {bg}; border-radius: 10px; "
+      f"QFrame#k8s_card {{ background: {bg}; border-radius: {RADIUS_CARD}px; "
       f"border-top: 1px solid {border}; border-right: 1px solid {border}; "
       f"border-bottom: 1px solid {border}; border-left: 3px solid {self._accent}; }}"
     )

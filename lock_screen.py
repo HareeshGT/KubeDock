@@ -23,13 +23,7 @@ from security import verify_pin, get_lock_settings
 from progress_ring import CircularProgress
 
 
-def _alpha(hex_color: str, opacity: float) -> str:
-  """'#a855f7' + 0.16 -> 'rgba(168,85,247,0.16)' — lets the badge/hover
-  tints sit on top of any theme's accent or danger colour without a
-  hardcoded value that would clash on lighter/darker palettes."""
-  hex_color = hex_color.lstrip("#")
-  r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
-  return f"rgba({r},{g},{b},{opacity})"
+from themes import rgba as _alpha  # shared helper (themes.rgba)
 
 
 def _mix(hex_a: str, hex_b: str, t: float) -> str:

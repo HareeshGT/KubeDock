@@ -1,3 +1,4 @@
+from themes import on_color
 from .common import *
 
 class FileEditorDialog(QDialog):
@@ -145,7 +146,7 @@ class FileEditorDialog(QDialog):
       lambda: self._save_and_close() if self._save_close_btn.isChecked() else self._save()
     )
     save_btn.setStyleSheet(
-      f"QPushButton#editor_primary {{ background: {T['ACCENT']}; color: #ffffff; border: 1px solid {T['ACCENT']}; "
+      f"QPushButton#editor_primary {{ background: {T['ACCENT']}; color: {on_color(T['ACCENT'])}; border: 1px solid {T['ACCENT']}; "
       f"border-radius: 8px; padding: 0 14px; font-weight: 700; }}"
       f"QPushButton#editor_primary:hover {{ background: {T['ACCENT2']}; border-color: {T['ACCENT2']}; }}"
       f"QPushButton#editor_primary:pressed {{ background: {T['ACCENT']}; }}"

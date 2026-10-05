@@ -1,4 +1,6 @@
 from .common import *
+from ui_kit import (rgba, card_qss, chip_qss, status_color, StatusBadge, ResourceCard,
+                    FS_CARD, FS_BODY, FS_SMALL)
 
 class _IconButton(QPushButton):
   """A small flat, round icon-only button used inside the service cards.
@@ -18,7 +20,7 @@ class _IconButton(QPushButton):
 
   def _apply_style(self):
     set_icon(self, self._icon_name, T["DANGER"] if self._danger else T["TEXT_DIM"], 16)
-    hover_bg = f"rgba(248,113,113,0.15)" if self._danger else T["BG_HOVER"]
+    hover_bg = rgba(T["DANGER"], 0.15) if self._danger else T["BG_HOVER"]
     border_hover = T["DANGER"] if self._danger else T["ACCENT"]
     self.setStyleSheet(f"""
       QPushButton {{
@@ -38,142 +40,142 @@ class _IconButton(QPushButton):
 
 def _card_frame_qss(obj_name: str) -> str:
   """Frame style shared by the Manage Services cards and the Tunnels-tab
-  cards so the two always look the same."""
-  return (
-    f"QFrame#{obj_name} {{ background: {T['BG_ITEM']}; "
-    f"border: 1px solid {T['BORDER']}; border-radius: 12px; }} "
-    f"QFrame#{obj_name}:hover {{ border: 1px solid {T['ACCENT']}; }}"
-  )
+  cards (delegates to the design-system card so every card matches)."""
+  return card_qss(obj_name)
 
 
-class _ServiceCard(QFrame):
-  """A single tunnel service rendered as a friendly card (name, namespace
-  badge, port mapping) with edit/delete actions — the row-level building
-  block of ManageTunnelServicesDialog's list, styled after the
-  NodeCard/badge visual language used elsewhere in the app."""
+def _port_box(label: str, value) -> tuple:
+  """Compact 'LABEL / value' stack used for Remote/Local port on both cards.
+  Returns (widget, caption_label, value_label) so callers can restyle."""
+  box = QWidget()
+  box.setStyleSheet("background: transparent;")
+  lay = QVBoxLayout(box)
+  lay.setContentsMargins(0, 0, 0, 0)
+  lay.setSpacing(0)
+  cap = QLabel(label.upper())
+  val = QLabel(str(value))
+  lay.addWidget(cap)
+  lay.addWidget(val)
+  return box, cap, val
 
-  edit_clicked  = pyqtSignal(dict)
-  delete_clicked = pyqtSignal(dict)
 
-  def __init__(self, svc: dict, parent=None):
-    super().__init__(parent)
+class _ServiceCardBase(ResourceCard):
+  """Layout shared by the Manage Services card and the Tunnels-tab card:
+  header (name + status), namespace/service chips, remote/local ports."""
+
+  def _build_body(self, svc: dict, leading=None, trailing=None):
     self.svc = svc
-    self.setObjectName("tunnel_service_card")
-
-    row = QHBoxLayout(self)
-    row.setContentsMargins(16, 12, 12, 12)
-    row.setSpacing(12)
-
-    self.icon_lbl = QLabel()
-    self.icon_lbl.setFixedWidth(26)
-    self.icon_lbl.setAlignment(Qt.AlignCenter)
-    row.addWidget(self.icon_lbl)
-
-    text_col = QVBoxLayout()
-    text_col.setSpacing(4)
-
-    name_row = QHBoxLayout()
-    name_row.setSpacing(8)
-    self.name_lbl = QLabel(svc["name"])
-    name_row.addWidget(self.name_lbl)
-    self.ns_badge = QLabel(f"ns/{svc.get('namespace') or 'default'}")
-    name_row.addWidget(self.ns_badge)
-    name_row.addStretch(1)
-    text_col.addLayout(name_row)
-
-    self.port_lbl = QLabel(
-      f"container : {svc['container_port']}  →  local : {svc['port']}"
-    )
-    text_col.addWidget(self.port_lbl)
-
-    row.addLayout(text_col, 1)
-
-    self.edit_btn = _IconButton("edit", "Edit this service")
-    self.edit_btn.clicked.connect(lambda: self.edit_clicked.emit(self.svc))
-    row.addWidget(self.edit_btn)
-
-    self.del_btn = _IconButton("trash", "Remove this service", danger=True)
-    self.del_btn.clicked.connect(lambda: self.delete_clicked.emit(self.svc))
-    row.addWidget(self.del_btn)
-
-    self._apply_styles()
-
-  def _apply_styles(self):
-    self.setStyleSheet(_card_frame_qss("tunnel_service_card"))
-    self.name_lbl.setStyleSheet(
-      f"color: {T['TEXT_PRIMARY']}; font-size: 14px; font-weight: 700;"
-    )
-    self.ns_badge.setStyleSheet(
-      f"background: {T['BG_ITEM_SEL']}; color: {T['TEXT_PRIMARY']}; "
-      f"border-radius: 8px; padding: 1px 9px; font-size: 11px; font-weight: 600;"
-    )
-    self.port_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
-    self.icon_lbl.setPixmap(icon_pixmap("tunnel", T["ACCENT"], 20))
-    self.edit_btn.refresh_theme()
-    self.del_btn.refresh_theme()
-
-  def refresh_theme(self):
-    self._apply_styles()
-
-
-class TunnelCard(QFrame):
-  """A tunnel service on the Tunnels tab, in the Manage Services card style.
-
-  Shows name, namespace badge, port mapping, a selection checkbox (the
-  existing Tunnel / Restart / Kill Port buttons act on checked cards) and
-  a status dot: green = the service's local port is listening on the VM
-  (kubectl port-forward actually up), red = not listening / failed /
-  unknown.  `set_exposed` is driven only by the existing status check.
-  """
-
-  toggled = pyqtSignal()
-
-  def __init__(self, svc: dict, parent=None):
-    super().__init__(parent)
-    self.svc = svc
-    self.exposed = None      # None until the first status check completes
-    self.forwarded = False   # part of the running local SSH -L tunnel
-    self.filtered = False    # hidden by the search / Active-Inactive filter
-    self.setObjectName("tunnel_status_card")
-    self.setCursor(Qt.PointingHandCursor)
-
     col = QVBoxLayout(self)
-    col.setContentsMargins(14, 12, 14, 12)
-    col.setSpacing(6)
+    col.setContentsMargins(12, 10, 12, 10)
+    col.setSpacing(8)
 
     head = QHBoxLayout()
     head.setSpacing(8)
-    self.check = QCheckBox()
-    self.check.toggled.connect(lambda _c: self.toggled.emit())
-    head.addWidget(self.check)
+    if leading is not None:
+      head.addWidget(leading)
     self.icon_lbl = QLabel()
-    self.icon_lbl.setFixedWidth(22)
+    self.icon_lbl.setFixedWidth(20)
     self.icon_lbl.setAlignment(Qt.AlignCenter)
     head.addWidget(self.icon_lbl)
     self.name_lbl = QLabel(svc["name"])
     self.name_lbl.setToolTip(svc["name"])
     head.addWidget(self.name_lbl, 1)
-    self.dot = QLabel("\u25cf")
-    head.addWidget(self.dot)
+    self.head_row = head
     col.addLayout(head)
 
-    badges = QHBoxLayout()
-    badges.setSpacing(8)
+    chips = QHBoxLayout()
+    chips.setSpacing(6)
     self.ns_badge = QLabel(f"ns/{svc.get('namespace') or 'default'}")
-    badges.addWidget(self.ns_badge)
+    self.svc_badge = QLabel(f"svc/{svc['name']}")
     self.fwd_badge = QLabel("\u21c4 forwarded locally")
     self.fwd_badge.setVisible(False)
-    badges.addWidget(self.fwd_badge)
-    badges.addStretch(1)
-    col.addLayout(badges)
+    for w in (self.ns_badge, self.svc_badge, self.fwd_badge):
+      chips.addWidget(w)
+    chips.addStretch(1)
+    col.addLayout(chips)
 
-    self.port_lbl = QLabel(
-      f"container : {svc['container_port']}  \u2192  local : {svc['port']}"
-    )
-    col.addWidget(self.port_lbl)
+    ports = QHBoxLayout()
+    ports.setSpacing(18)
+    b1, self._cap_remote, self._val_remote = _port_box("Remote port", svc["container_port"])
+    b2, self._cap_local, self._val_local = _port_box("Local port", svc["port"])
+    ports.addWidget(b1)
+    ports.addWidget(b2)
+    ports.addStretch(1)
+    self.ports_row = ports
+    col.addLayout(ports)
+
+  def _style_children(self):
+    self.name_lbl.setStyleSheet(
+      f"color: {T['TEXT_PRIMARY']}; font-size: {FS_CARD}px; font-weight: 700;")
+    self.ns_badge.setStyleSheet(chip_qss())
+    self.svc_badge.setStyleSheet(chip_qss())
+    self.fwd_badge.setStyleSheet(
+      f"color: {T['INFO']}; font-size: {FS_SMALL}px; font-weight: 600;")
+    cap = (f"color: {T['TEXT_MUTED']}; font-size: 10px; font-weight: 700; "
+           f"letter-spacing: 0.6px;")
+    val = (f"color: {T['TEXT_PRIMARY']}; font-size: {FS_BODY}px; font-weight: 600; "
+           f"font-family: 'SF Mono','Menlo','Consolas',monospace;")
+    self._cap_remote.setStyleSheet(cap)
+    self._cap_local.setStyleSheet(cap)
+    self._val_remote.setStyleSheet(val)
+    self._val_local.setStyleSheet(val)
+    self.icon_lbl.setPixmap(icon_pixmap("tunnel", T["ACCENT"], 18))
+
+
+class _ServiceCard(_ServiceCardBase):
+  """A single tunnel service in ManageTunnelServicesDialog's list, with
+  edit/delete actions. Same visual language as the Tunnels-tab card."""
+
+  OBJ = "tunnel_service_card"
+  edit_clicked  = pyqtSignal(dict)
+  delete_clicked = pyqtSignal(dict)
+
+  def __init__(self, svc: dict, parent=None):
+    super().__init__(parent)
+    self._build_body(svc)
+    self.edit_btn = _IconButton("edit", "Edit this service")
+    self.edit_btn.clicked.connect(lambda: self.edit_clicked.emit(self.svc))
+    self.del_btn = _IconButton("trash", "Remove this service", danger=True)
+    self.del_btn.clicked.connect(lambda: self.delete_clicked.emit(self.svc))
+    self.head_row.addWidget(self.edit_btn)
+    self.head_row.addWidget(self.del_btn)
+    self._apply_styles()
+
+  def _style_children(self):
+    super()._style_children()
+    self.edit_btn.refresh_theme()
+    self.del_btn.refresh_theme()
+
+
+class TunnelCard(_ServiceCardBase):
+  """A tunnel on the Tunnels tab (Manage Services card style).
+
+  Shows tunnel name, namespace, service, remote/local port, a status badge
+  and a selection checkbox (the Tunnel / Restart / Kill Port buttons act on
+  checked cards).  Status colors:
+    GREEN  = local port listening on the VM (port-forward up)
+    RED    = not listening / failed
+    YELLOW = connecting / status check pending
+  `set_exposed` is driven only by the existing status check.
+  """
+
+  OBJ = "tunnel_status_card"
+  toggled = pyqtSignal()
+
+  def __init__(self, svc: dict, parent=None):
+    super().__init__(parent)
+    self.exposed = None      # None until the first status check completes
+    self.forwarded = False   # part of the running local SSH -L tunnel
+    self.filtered = False    # hidden by the search / Active-Inactive filter
+    self.setCursor(Qt.PointingHandCursor)
+
+    self.check = QCheckBox()
+    self.check.toggled.connect(lambda _c: self.toggled.emit())
+    self._build_body(svc, leading=self.check)
+    self.badge = StatusBadge("Checking", "pending")
+    self.head_row.addWidget(self.badge)
     self.status_lbl = QLabel()
-    col.addWidget(self.status_lbl)
-
+    self.layout().addWidget(self.status_lbl)
     self._apply_styles()
 
   def set_selected(self, on: bool):
@@ -196,33 +198,22 @@ class TunnelCard(QFrame):
       self.check.toggle()
     super().mousePressEvent(event)
 
-  def _apply_styles(self):
-    self.setStyleSheet(_card_frame_qss("tunnel_status_card"))
-    self.name_lbl.setStyleSheet(
-      f"color: {T['TEXT_PRIMARY']}; font-size: 14px; font-weight: 700;"
-    )
-    self.ns_badge.setStyleSheet(
-      f"background: {T['BG_ITEM_SEL']}; color: {T['TEXT_PRIMARY']}; "
-      f"border-radius: 8px; padding: 1px 9px; font-size: 11px; font-weight: 600;"
-    )
-    self.fwd_badge.setStyleSheet(
-      f"color: {T['INFO']}; font-size: 11px; font-weight: 600;"
-    )
-    self.icon_lbl.setPixmap(icon_pixmap("tunnel", T["ACCENT"], 18))
-    self.port_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+  def _style_children(self):
+    super()._style_children()
+    port = self.svc["port"]
     if self.exposed is True:
-      color, text = T["SUCCESS"], f"Running \u2014 port {self.svc['port']} listening on VM"
+      state, label, text = "active", "Running", f"Port {port} listening on VM"
     elif self.exposed is False:
-      color, text = T["DANGER"], f"Not running \u2014 port {self.svc['port']} not listening"
+      state, label, text = "stopped", "Stopped", f"Port {port} not listening"
     else:
-      color, text = T["TEXT_MUTED"], "Checking status\u2026"
-    self.dot.setStyleSheet(f"color: {color}; font-size: 16px;")
-    self.dot.setToolTip(text)
+      state, label, text = "pending", "Connecting", "Checking status\u2026"
+    self.badge.set_state(state, label)
+    self.badge.setToolTip(text)
     self.status_lbl.setText(text)
-    self.status_lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
-
-  def refresh_theme(self):
-    self._apply_styles()
+    self.status_lbl.setStyleSheet(
+      f"color: {status_color(state)}; font-size: {FS_SMALL}px; font-weight: 600;")
+    # Left edge carries the status so it reads without opening the tunnel.
+    self.setStyleSheet(card_qss(self.OBJ, accent_edge=status_color(state)))
 
 
 class TunnelCardGrid(QScrollArea):

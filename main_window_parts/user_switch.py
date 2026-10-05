@@ -23,6 +23,7 @@ from PyQt5.QtGui import QFont, QColor, QPalette, QKeySequence
 
 import themes as _themes
 from ui_icons import set_icon, apply_text_icon, add_icon_tab, icon_button, icon_pixmap, split_icon_text
+from themes import rgba
 from themes import T, THEMES, apply_theme_vars, build_qss, apply_qss_to, save_settings
 from utils import classify, icon_for, size_fmt, add_recent_instance, monospace_font
 from sudo_fs import SudoFS
@@ -151,9 +152,10 @@ class UserSwitchMixin:
       if self._sudo_user:
         self.sudo_badge.setText(" sudo: {} ".format(self._sudo_user))
         self.sudo_badge.setStyleSheet(
-          "color: {w}; background: rgba(251,191,36,0.15); "
-          "border: 1px solid rgba(251,191,36,0.4); border-radius: 8px; "
-          "padding: 1px 6px; font-size: 13px; font-weight: 600;".format(w=T['WARNING'])
+          "color: {w}; background: {bg}; "
+          "border: 1px solid {bd}; border-radius: 6px; "
+          "padding: 1px 6px; font-size: 12px; font-weight: 600;".format(
+            w=T['WARNING'], bg=rgba(T['WARNING'], 0.14), bd=rgba(T['WARNING'], 0.35))
         )
         self.sudo_badge.show()
       else:

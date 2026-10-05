@@ -8,6 +8,16 @@ from PyQt5.QtGui import QColor
 from ui_icons import icon_button, icon_pixmap
 from themes import T
 
+
+def _themed_qss(qss: str) -> str:
+  """Fill __KEY__ tokens in a literal stylesheet from the active theme T."""
+  from themes import on_color
+  out = qss.replace("__ONACC__", on_color(T["ACCENT"]))
+  for key, val in T.items():
+    out = out.replace("__%s__" % key, val)
+  return out
+
+
 class _TerminalPopoutWindow(QDialog):
   """Floating window that hosts the terminal when popped out. Behaves like
   a normal top-level window (resizable, minimizable, has its own close
@@ -128,10 +138,10 @@ class UserSwitchDialog(QDialog):
 
     outer.addWidget(self.card)
 
-    self.setStyleSheet("""
+    self.setStyleSheet(_themed_qss("""
       #card {
-        background: #131417;
-        border: 1px solid #2a2d33;
+        background: __BG_PANEL__;
+        border: 1px solid __BORDER__;
         border-radius: 18px;
       }
 
@@ -140,22 +150,22 @@ class UserSwitchDialog(QDialog):
       }
 
       QLineEdit {
-        background: #191b20;
-        color: #f5f5f7;
-        border: 1px solid #30343c;
+        background: __BG_ITEM__;
+        color: __TEXT_PRIMARY__;
+        border: 1px solid __BORDER__;
         border-radius: 10px;
         padding: 10px 13px 10px 34px;
         font-size: 13px;
-        selection-background-color: #4f46e5;
+        selection-background-color: __ACCENT__;
       }
 
       QLineEdit:focus {
-        border: 1px solid #6366f1;
+        border: 1px solid __ACCENT__;
       }
 
       QListWidget {
-        background: #0d0e10;
-        border: 1px solid #23262c;
+        background: __BG_DARK__;
+        border: 1px solid __BORDER__;
         border-radius: 12px;
         padding: 6px;
         outline: none;
@@ -190,17 +200,17 @@ class UserSwitchDialog(QDialog):
       }
 
       QFrame#userRow[rowHovered="true"] {
-        background: #1b1d23;
+        background: __BG_HOVER__;
       }
 
       QFrame#userRow[rowSelected="true"] {
-        background: #232244;
+        background: __BG_ITEM_SEL__;
       }
 
       QPushButton {
-        background: #1b1d22;
-        color: #c9cbd1;
-        border: 1px solid #30333a;
+        background: __BG_ITEM__;
+        color: __TEXT_DIM__;
+        border: 1px solid __BORDER__;
         border-radius: 9px;
         padding: 9px 18px;
         font-size: 13px;
@@ -208,29 +218,29 @@ class UserSwitchDialog(QDialog):
       }
 
       QPushButton:hover {
-        background: #252830;
-        color: #ffffff;
+        background: __BG_HOVER__;
+        color: __TEXT_PRIMARY__;
       }
 
       QPushButton#switchButton {
-        background: #635bff;
-        color: white;
+        background: __ACCENT__;
+        color: __ONACC__;
         border: none;
       }
 
       QPushButton#switchButton:hover {
-        background: #746cff;
+        background: __ACCENT2__;
       }
 
       QPushButton#switchButton:disabled {
-        background: #23242a;
-        color: #63666f;
+        background: __BG_ITEM__;
+        color: __TEXT_MUTED__;
       }
 
       QPushButton#closeBtn {
         background: transparent;
         border: none;
-        color: #6f7380;
+        color: __TEXT_MUTED__;
         font-size: 13px;
         font-weight: 700;
         border-radius: 13px;
@@ -238,10 +248,10 @@ class UserSwitchDialog(QDialog):
       }
 
       QPushButton#closeBtn:hover {
-        background: #24262c;
-        color: #f5f5f7;
+        background: __BG_HOVER__;
+        color: __TEXT_PRIMARY__;
       }
-    """)
+    """))
 
     main = QVBoxLayout(self.card)
     main.setContentsMargins(22, 18, 22, 20)
@@ -255,7 +265,7 @@ class UserSwitchDialog(QDialog):
     header_row.setSpacing(8)
 
     title = QLabel("Switch User")
-    title.setStyleSheet("color: #f5f5f7; font-size: 21px; font-weight: 700;")
+    title.setStyleSheet(f"color: {T['TEXT_PRIMARY']}; font-size: 20px; font-weight: 700;")
     header_row.addWidget(title)
     header_row.addStretch()
 

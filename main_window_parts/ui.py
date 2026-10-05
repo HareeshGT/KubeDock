@@ -39,6 +39,7 @@ from dialogs import (
 from large_file_viewer import LargeFileViewerDialog
 import ai_assist
 from sidebar import Sidebar
+from nav_rail import NavRail, RAIL_WIDTH
 from preview import PreviewPane
 from file_widgets import FileRowWidget, FileGridWidget
 from terminal_widget import TerminalWidget
@@ -208,13 +209,29 @@ class UIMixin:
       self.main_tabs.setTabPosition(QTabWidget.North)
       self.main_tabs.currentChanged.connect(self._on_main_tab_change)
 
-      # Root layout: toolbar on top, tabs below
+      # Root layout: left nav rail | (toolbar on top, pages below)
+      self.main_tabs.tabBar().hide()   # navigation is driven by the NavRail
+      self.nav_rail = NavRail()
+      self.nav_rail.navigate.connect(self._on_nav_rail)
+      self.sidebar = Sidebar()
+      self.sidebar.navigate.connect(self._nav_to)
+      self.sidebar.setFixedWidth(RAIL_WIDTH - 20)
+      self.sidebar.set_embedded(True)
+      self.nav_rail.add_quick_access(self.sidebar)
+
+      right_widget = QWidget()
+      right_layout = QVBoxLayout(right_widget)
+      right_layout.setContentsMargins(0, 0, 0, 0)
+      right_layout.setSpacing(0)
+      right_layout.addWidget(tb_widget)
+      right_layout.addWidget(self.main_tabs, 1)
+
       root_widget = QWidget()
-      root_layout = QVBoxLayout(root_widget)
+      root_layout = QHBoxLayout(root_widget)
       root_layout.setContentsMargins(0, 0, 0, 0)
       root_layout.setSpacing(0)
-      root_layout.addWidget(tb_widget)
-      root_layout.addWidget(self.main_tabs)
+      root_layout.addWidget(self.nav_rail)
+      root_layout.addWidget(right_widget, 1)
       self.setCentralWidget(root_widget)
 
       # ── File manager tab ──────────────────────────────────
@@ -232,9 +249,7 @@ class UIMixin:
       splitter = QSplitter(Qt.Horizontal)
       splitter.setHandleWidth(1)
 
-      self.sidebar = Sidebar()
-      self.sidebar.navigate.connect(self._nav_to)
-      splitter.addWidget(self.sidebar)
+      # Quick Access (self.sidebar) now lives in the left NavRail.
 
       list_col = QWidget()
       list_col.setStyleSheet("background: {};".format(T['BG_DARK']))
@@ -346,7 +361,7 @@ class UIMixin:
       self._terminal_home_layout = tl
       self._terminal_popout_win = None
       splitter.addWidget(right_col)
-      splitter.setSizes([180, 600, 300])
+      splitter.setSizes([600, 300])
       fm_root.addWidget(splitter)
 
       add_icon_tab(self.main_tabs, fm_widget, " File Manager")
@@ -382,6 +397,8 @@ class UIMixin:
 
       # Land on the Dashboard tab by default rather than File Manager.
       self.main_tabs.setCurrentWidget(self.dashboard_tab)
+      self.k8s_tab.sub_tabs.currentChanged.connect(lambda _i: self._sync_nav_rail())
+      self._sync_nav_rail()
 
       # ── Status bar ────────────────────────────────────────
       self.status = QStatusBar()
@@ -468,6 +485,46 @@ class UIMixin:
       if self.view_mode == "grid":
         self.list_header.hide()
 
+    # ── Left NavRail → existing tabs/actions (no behavior change) ──
+    def _on_nav_rail(self, key):
+      if key == "dashboard":
+        self.main_tabs.setCurrentWidget(self.dashboard_tab)
+      elif key == "kubernetes":
+        self.main_tabs.setCurrentWidget(self.k8s_tab)
+      elif key == "files":
+        self.main_tabs.setCurrentIndex(0)
+      elif key == "terminal":
+        self.main_tabs.setCurrentIndex(0)   # terminal pane lives beside the file list
+        t = getattr(self, "terminal", None)
+        if t is not None:
+          t.setFocus()
+      elif key == "tunnels":
+        self.main_tabs.setCurrentWidget(self.k8s_tab)
+        subs = self.k8s_tab.sub_tabs
+        for i in range(subs.count()):
+          if "Tunnels" in subs.tabText(i):
+            subs.setCurrentIndex(i)
+            break
+      elif key == "ec2":
+        self._connect()      # same Connect dialog as the toolbar button
+      self._sync_nav_rail()
+
+    def _sync_nav_rail(self):
+      """Highlight the rail item matching the visible page."""
+      if not hasattr(self, "nav_rail") or not hasattr(self, "dashboard_tab"):
+        return
+      w = self.main_tabs.currentWidget()
+      if w is self.dashboard_tab:
+        key = "dashboard"
+      elif w is self.k8s_tab:
+        subs = self.k8s_tab.sub_tabs
+        key = "tunnels" if "Tunnels" in subs.tabText(subs.currentIndex()) else "kubernetes"
+      else:
+        key = "files"
+      self.nav_rail.set_active(key)
+      # Quick Access only makes sense for the file manager.
+      self.sidebar.setVisible(key == "files")
+
     def _on_main_tab_change(self, idx):
       new_widget = self.main_tabs.widget(idx)
       if (self._tab_slide_ready and new_widget is not None
@@ -477,6 +534,7 @@ class UIMixin:
         self._animate_tab_slide(self._current_tab_widget, new_widget, direction)
       self._current_tab_widget = new_widget
       self._current_tab_idx  = idx
+      self._sync_nav_rail()
 
       fm_mode = (idx == 0)
       for b in [self.act_back, self.act_forward, self.act_up, self.act_refresh]:
@@ -505,7 +563,7 @@ class UIMixin:
       self._finish_tab_slide()
 
       tab_bar = self.main_tabs.tabBar()
-      tab_bar_h = tab_bar.height() if tab_bar else 0
+      tab_bar_h = tab_bar.height() if (tab_bar and tab_bar.isVisible()) else 0
       rect = QRect(0, tab_bar_h, self.main_tabs.width(),
              max(0, self.main_tabs.height() - tab_bar_h))
       if rect.width() <= 0 or rect.height() <= 0:

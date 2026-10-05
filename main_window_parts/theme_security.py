@@ -130,6 +130,7 @@ class ThemeSecurityMixin:
 
       self._apply_inline_styles()
       self.sidebar.refresh_theme()
+      self.nav_rail.refresh_theme()
       self.preview.refresh_theme()
       self.k8s_tab.apply_theme()
       self.dashboard_tab.apply_theme()

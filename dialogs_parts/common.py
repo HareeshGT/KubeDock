@@ -50,13 +50,7 @@ import ai_assist
 from ansi_terminal import AnsiStreamRenderer, plain_text
 
 
-def _rgba(hex_color: str, alpha: float) -> str:
-  """'#7c6af7' -> 'rgba(124, 106, 247, 0.15)', for tinted badge backgrounds."""
-  hex_color = (hex_color or "#888888").lstrip("#")
-  if len(hex_color) != 6:
-    hex_color = "888888"
-  r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
-  return f"rgba({r}, {g}, {b}, {alpha})"
+from themes import rgba as _rgba  # shared helper (themes.rgba)
 
 # QtMultimedia is an optional Qt component — most PyQt5 installs on macOS
 # and Linux ship it, but guard the import so a system missing the
