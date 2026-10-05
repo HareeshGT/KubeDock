@@ -275,7 +275,7 @@ class FileEditorDialog(QDialog):
     self._find_inp.setFixedWidth(220)
     self._find_inp.setStyleSheet(input_style)
     self._find_inp.textChanged.connect(self._do_highlight)
-    self._find_inp.returnPressed.connect(self._find_next)
+    self._find_inp.returnPressed.connect(self._on_find_enter)
     fb.addWidget(self._find_inp)
 
     self._match_lbl = QLabel("")
@@ -787,6 +787,13 @@ class FileEditorDialog(QDialog):
     self._apply_match_selections()
     self._update_match_label()
 
+  def _on_find_enter(self):
+    # Enter = next match, Shift+Enter = previous match
+    if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+      self._find_prev()
+    else:
+      self._find_next()
+
   def _find_next(self):
     if not self._matches:
       self._do_highlight()
@@ -996,6 +1003,18 @@ class FileEditorDialog(QDialog):
       if r != QMessageBox.Discard:
         return
     self.reject()
+
+  def keyPressEvent(self, event):
+    # QLineEdit ignores Enter/Return after emitting returnPressed, so the
+    # key used to bubble up to QDialog, which "clicks" the default button
+    # (Save/Discard) and closed the editor when pressing Enter in Find.
+    # Swallow it for the dialog's text fields; returnPressed already runs
+    # the find action.
+    if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+      if isinstance(QApplication.focusWidget(), QLineEdit):
+        event.accept()
+        return
+    super().keyPressEvent(event)
 
   def closeEvent(self, event):
     if self._loading:
