@@ -6,6 +6,7 @@ Kept in one place so the feature mixins can remain focused on behavior.
 import json
 import re
 import shlex
+import time
 from datetime import datetime, timezone
 
 from PyQt5.QtWidgets import (
@@ -23,7 +24,7 @@ from ui_icons import set_icon, apply_text_icon, add_icon_tab, icon_button, icon_
 from themes import T, apply_qss_to, load_settings, save_settings
 from workers import CommandWorker, track_worker
 from dialogs import (
-  LogViewerDialog, ExecDialog, ManageTunnelServicesDialog,
+  LogViewerDialog, ExecDialog, ManageTunnelServicesDialog, TunnelCardGrid,
   ContainerPickerDialog, AIExplainDialog,
 )
 import ai_assist

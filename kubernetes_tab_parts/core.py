@@ -110,6 +110,7 @@ class KubernetesCoreMixin:
     self._conn_pem = None
     self._tunnel_services = []
     self.tunnel_list.clear()
+    self.tunnel_list.set_empty_text("Connect to a VM to see its tunnel services")
     self.tunnel_cmd_preview.clear()
 
   # ── SSH wiring ────────────────────────────────────────────
@@ -127,6 +128,7 @@ class KubernetesCoreMixin:
 
       self._tunnel_services = []
       self.tunnel_list.clear()
+      self.tunnel_list.set_empty_text("Connect to a VM to see its tunnel services")
       self.tunnel_cmd_preview.clear()
 
   # ── UI construction ───────────────────────────────────────
@@ -428,7 +430,7 @@ class KubernetesCoreMixin:
 
   # ── Terminal tab ──────────────────────────────────────────
 
-  def _run_cmd(self, cmd: str, callback, apply_context: bool = True):
+  def _run_cmd(self, cmd: str, callback, apply_context: bool = True, on_error=None):
     if not self.ssh:
       return
     if apply_context:
@@ -443,6 +445,8 @@ class KubernetesCoreMixin:
     def on_error(e):
       self.progress.hide()
       self._log(f"[error] {e}")
+      if on_error:
+        on_error(e)
 
     worker.done.connect(on_done)
     worker.error.connect(on_error)
@@ -569,6 +573,8 @@ class KubernetesCoreMixin:
       self.tunnel_log.setStyleSheet(
         f"background: #0d0d1a; color: {T['TEXT_DIM']}; border: none; padding: 8px;"
       )
+    if getattr(self, "tunnel_list", None) is not None:
+      self.tunnel_list.refresh_theme()
     if getattr(self, "tunnel_path_lbl", None) is not None:
       self.tunnel_path_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 13px;")
     if getattr(self, "tunnel_status_lbl", None) is not None:

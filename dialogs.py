@@ -14,12 +14,12 @@ from dialogs_parts.file_editor import FileEditorDialog
 from dialogs_parts.media import MediaPlayerDialog
 from dialogs_parts.file_exec import _exec_cmd_for, _ExecStreamWorker, FileExecDialog
 from dialogs_parts.search import SearchDialog
-from dialogs_parts.tunnel import _IconButton, _ServiceCard, _contains_completer, _ServiceFormPanel, ManageTunnelServicesDialog
+from dialogs_parts.tunnel import _IconButton, _ServiceCard, TunnelCard, TunnelCardGrid, _contains_completer, _ServiceFormPanel, ManageTunnelServicesDialog
 
 __all__ = [
     "FileTransferDialog", "MarqueeLabel", "_RecentCard", "ConnectDialog",
     "ConnectingDialog", "AIExplainDialog", "LogViewerDialog",
     "ContainerPickerDialog", "ExecDialog", "FileEditorDialog",
     "MediaPlayerDialog", "FileExecDialog", "SearchDialog",
-    "ManageTunnelServicesDialog",
+    "ManageTunnelServicesDialog", "TunnelCard", "TunnelCardGrid",
 ]

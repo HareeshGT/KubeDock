@@ -1253,23 +1253,19 @@ class KubernetesUiMixin:
     self.tunnel_filter_group.buttonClicked.connect(self._on_tunnel_status_filter_clicked)
 
     lay.addLayout(search_row)
-    # Service checklist
-    self.tunnel_list = QListWidget()
-    self.tunnel_list.setAlternatingRowColors(True)
-    self.tunnel_list.itemChanged.connect(self._update_tunnel_cmd_preview)
-    self.tunnel_list.setStyleSheet("""
-    QListWidget {
-      font-size: 13px;
-    }
-    QListWidget::item {
-      height: 38px;
-    }
-    QListWidget::indicator {
-      width: 22px;
-      height: 22px;
-    }
-    """)
+    # Tunnel cards (Manage Services card style); status dot per card
+    self.tunnel_list = TunnelCardGrid()
+    self.tunnel_list.selection_changed.connect(self._update_tunnel_cmd_preview)
+    self.tunnel_list.set_empty_text("Connect to a VM to see its tunnel services")
     lay.addWidget(self.tunnel_list, 1)
+
+    # Lightweight live status: re-check VM listening ports every 15s, only
+    # while the Tunnels tab is on screen (event-driven refreshes also run
+    # after start/stop/restart/kill).
+    self._tunnel_status_timer = QTimer(self)
+    self._tunnel_status_timer.setInterval(15000)
+    self._tunnel_status_timer.timeout.connect(self._poll_tunnel_status)
+    self._tunnel_status_timer.start()
 
     # Command preview (read-only, for transparency/debugging)
     preview_row = QHBoxLayout()

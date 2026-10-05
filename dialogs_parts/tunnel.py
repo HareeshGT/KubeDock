@@ -6,8 +6,9 @@ class _IconButton(QPushButton):
   inside a QFrame card, not a toolbar, and need to be small and circular
   rather than pill-shaped."""
 
-  def __init__(self, glyph: str, tooltip: str = "", danger: bool = False, parent=None):
-    super().__init__(glyph, parent)
+  def __init__(self, icon_name: str, tooltip: str = "", danger: bool = False, parent=None):
+    super().__init__(parent)
+    self._icon_name = icon_name
     self.setFixedSize(30, 30)
     self.setCursor(Qt.PointingHandCursor)
     if tooltip:
@@ -16,6 +17,7 @@ class _IconButton(QPushButton):
     self._apply_style()
 
   def _apply_style(self):
+    set_icon(self, self._icon_name, T["DANGER"] if self._danger else T["TEXT_DIM"], 16)
     hover_bg = f"rgba(248,113,113,0.15)" if self._danger else T["BG_HOVER"]
     border_hover = T["DANGER"] if self._danger else T["ACCENT"]
     self.setStyleSheet(f"""
@@ -32,6 +34,16 @@ class _IconButton(QPushButton):
 
   def refresh_theme(self):
     self._apply_style()
+
+
+def _card_frame_qss(obj_name: str) -> str:
+  """Frame style shared by the Manage Services cards and the Tunnels-tab
+  cards so the two always look the same."""
+  return (
+    f"QFrame#{obj_name} {{ background: {T['BG_ITEM']}; "
+    f"border: 1px solid {T['BORDER']}; border-radius: 12px; }} "
+    f"QFrame#{obj_name}:hover {{ border: 1px solid {T['ACCENT']}; }}"
+  )
 
 
 class _ServiceCard(QFrame):
@@ -52,10 +64,10 @@ class _ServiceCard(QFrame):
     row.setContentsMargins(16, 12, 12, 12)
     row.setSpacing(12)
 
-    icon_lbl = QLabel("")
-    icon_lbl.setStyleSheet("font-size: 18px;")
-    icon_lbl.setFixedWidth(26)
-    row.addWidget(icon_lbl)
+    self.icon_lbl = QLabel()
+    self.icon_lbl.setFixedWidth(26)
+    self.icon_lbl.setAlignment(Qt.AlignCenter)
+    row.addWidget(self.icon_lbl)
 
     text_col = QVBoxLayout()
     text_col.setSpacing(4)
@@ -76,22 +88,18 @@ class _ServiceCard(QFrame):
 
     row.addLayout(text_col, 1)
 
-    self.edit_btn = _IconButton("", "Edit this service")
+    self.edit_btn = _IconButton("edit", "Edit this service")
     self.edit_btn.clicked.connect(lambda: self.edit_clicked.emit(self.svc))
     row.addWidget(self.edit_btn)
 
-    self.del_btn = _IconButton("", "Remove this service", danger=True)
+    self.del_btn = _IconButton("trash", "Remove this service", danger=True)
     self.del_btn.clicked.connect(lambda: self.delete_clicked.emit(self.svc))
     row.addWidget(self.del_btn)
 
     self._apply_styles()
 
   def _apply_styles(self):
-    self.setStyleSheet(
-      f"QFrame#tunnel_service_card {{ background: {T['BG_ITEM']}; "
-      f"border: 1px solid {T['BORDER']}; border-radius: 12px; }} "
-      f"QFrame#tunnel_service_card:hover {{ border: 1px solid {T['ACCENT']}; }}"
-    )
+    self.setStyleSheet(_card_frame_qss("tunnel_service_card"))
     self.name_lbl.setStyleSheet(
       f"color: {T['TEXT_PRIMARY']}; font-size: 14px; font-weight: 700;"
     )
@@ -100,11 +108,226 @@ class _ServiceCard(QFrame):
       f"border-radius: 8px; padding: 1px 9px; font-size: 11px; font-weight: 600;"
     )
     self.port_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+    self.icon_lbl.setPixmap(icon_pixmap("tunnel", T["ACCENT"], 20))
     self.edit_btn.refresh_theme()
     self.del_btn.refresh_theme()
 
   def refresh_theme(self):
     self._apply_styles()
+
+
+class TunnelCard(QFrame):
+  """A tunnel service on the Tunnels tab, in the Manage Services card style.
+
+  Shows name, namespace badge, port mapping, a selection checkbox (the
+  existing Tunnel / Restart / Kill Port buttons act on checked cards) and
+  a status dot: green = the service's local port is listening on the VM
+  (kubectl port-forward actually up), red = not listening / failed /
+  unknown.  `set_exposed` is driven only by the existing status check.
+  """
+
+  toggled = pyqtSignal()
+
+  def __init__(self, svc: dict, parent=None):
+    super().__init__(parent)
+    self.svc = svc
+    self.exposed = None      # None until the first status check completes
+    self.forwarded = False   # part of the running local SSH -L tunnel
+    self.filtered = False    # hidden by the search / Active-Inactive filter
+    self.setObjectName("tunnel_status_card")
+    self.setCursor(Qt.PointingHandCursor)
+
+    col = QVBoxLayout(self)
+    col.setContentsMargins(14, 12, 14, 12)
+    col.setSpacing(6)
+
+    head = QHBoxLayout()
+    head.setSpacing(8)
+    self.check = QCheckBox()
+    self.check.toggled.connect(lambda _c: self.toggled.emit())
+    head.addWidget(self.check)
+    self.icon_lbl = QLabel()
+    self.icon_lbl.setFixedWidth(22)
+    self.icon_lbl.setAlignment(Qt.AlignCenter)
+    head.addWidget(self.icon_lbl)
+    self.name_lbl = QLabel(svc["name"])
+    self.name_lbl.setToolTip(svc["name"])
+    head.addWidget(self.name_lbl, 1)
+    self.dot = QLabel("\u25cf")
+    head.addWidget(self.dot)
+    col.addLayout(head)
+
+    badges = QHBoxLayout()
+    badges.setSpacing(8)
+    self.ns_badge = QLabel(f"ns/{svc.get('namespace') or 'default'}")
+    badges.addWidget(self.ns_badge)
+    self.fwd_badge = QLabel("\u21c4 forwarded locally")
+    self.fwd_badge.setVisible(False)
+    badges.addWidget(self.fwd_badge)
+    badges.addStretch(1)
+    col.addLayout(badges)
+
+    self.port_lbl = QLabel(
+      f"container : {svc['container_port']}  \u2192  local : {svc['port']}"
+    )
+    col.addWidget(self.port_lbl)
+    self.status_lbl = QLabel()
+    col.addWidget(self.status_lbl)
+
+    self._apply_styles()
+
+  def set_selected(self, on: bool):
+    self.check.setChecked(on)
+
+  def is_selected(self) -> bool:
+    return self.check.isChecked()
+
+  def set_exposed(self, exposed):
+    self.exposed = exposed
+    self._apply_styles()
+
+  def set_forwarded(self, on: bool):
+    self.forwarded = on
+    self.fwd_badge.setVisible(on)
+
+  def mousePressEvent(self, event):
+    # Clicking anywhere on the card toggles its selection.
+    if event.button() == Qt.LeftButton and not self.check.underMouse():
+      self.check.toggle()
+    super().mousePressEvent(event)
+
+  def _apply_styles(self):
+    self.setStyleSheet(_card_frame_qss("tunnel_status_card"))
+    self.name_lbl.setStyleSheet(
+      f"color: {T['TEXT_PRIMARY']}; font-size: 14px; font-weight: 700;"
+    )
+    self.ns_badge.setStyleSheet(
+      f"background: {T['BG_ITEM_SEL']}; color: {T['TEXT_PRIMARY']}; "
+      f"border-radius: 8px; padding: 1px 9px; font-size: 11px; font-weight: 600;"
+    )
+    self.fwd_badge.setStyleSheet(
+      f"color: {T['INFO']}; font-size: 11px; font-weight: 600;"
+    )
+    self.icon_lbl.setPixmap(icon_pixmap("tunnel", T["ACCENT"], 18))
+    self.port_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+    if self.exposed is True:
+      color, text = T["SUCCESS"], f"Running \u2014 port {self.svc['port']} listening on VM"
+    elif self.exposed is False:
+      color, text = T["DANGER"], f"Not running \u2014 port {self.svc['port']} not listening"
+    else:
+      color, text = T["TEXT_MUTED"], "Checking status\u2026"
+    self.dot.setStyleSheet(f"color: {color}; font-size: 16px;")
+    self.dot.setToolTip(text)
+    self.status_lbl.setText(text)
+    self.status_lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
+
+  def refresh_theme(self):
+    self._apply_styles()
+
+
+class TunnelCardGrid(QScrollArea):
+  """Scrollable, responsive grid of TunnelCards (more columns when wide,
+  one when narrow).  Replaces the old checkable QListWidget; keeps a
+  `clear()` so existing callers keep working."""
+
+  MIN_CARD_W = 300
+  SPACING = 10
+  selection_changed = pyqtSignal()
+
+  def __init__(self, parent=None):
+    super().__init__(parent)
+    self.setWidgetResizable(True)
+    self.setFrameShape(QFrame.NoFrame)
+    self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    self.cards = []
+    self._cols = 0
+
+    # Transparent so the grid inherits whatever theme the tab uses.
+    self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+    self.viewport().setAutoFillBackground(False)
+    body = QWidget()
+    body.setObjectName("tunnel_cards_body")
+    body.setStyleSheet("QWidget#tunnel_cards_body { background: transparent; }")
+    outer = QVBoxLayout(body)
+    outer.setContentsMargins(10, 10, 10, 10)
+    outer.setSpacing(0)
+    self._grid = QGridLayout()
+    self._grid.setSpacing(self.SPACING)
+    outer.addLayout(self._grid)
+    outer.addStretch(1)
+    self.empty_lbl = QLabel("")
+    self.empty_lbl.setAlignment(Qt.AlignCenter)
+    self.empty_lbl.setWordWrap(True)
+    self.empty_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 13px; padding: 40px;")
+    outer.insertWidget(0, self.empty_lbl)
+    self.empty_lbl.hide()
+    self.setWidget(body)
+
+  def clear(self):
+    for card in self.cards:
+      card.setParent(None)
+      card.deleteLater()
+    self.cards = []
+    self.set_empty_text("")
+
+  def set_empty_text(self, text: str):
+    self.empty_lbl.setText(text)
+    self.empty_lbl.setVisible(bool(text))
+
+  def set_services(self, services: list):
+    self.clear()
+    for svc in services:
+      card = TunnelCard(svc)
+      card.toggled.connect(self.selection_changed)
+      self.cards.append(card)
+    self._relayout()
+
+  def selected_services(self) -> list:
+    return [c.svc for c in self.cards if c.is_selected()]
+
+  def set_checked_visible(self, on: bool):
+    """Check/uncheck only the cards currently shown (respects filters)."""
+    for c in self.cards:
+      if not c.filtered:
+        c.check.blockSignals(True)
+        c.set_selected(on)
+        c.check.blockSignals(False)
+    self.selection_changed.emit()
+
+  def apply_filter(self, keep):
+    """`keep(card) -> bool`; hidden cards are dropped from the grid."""
+    for c in self.cards:
+      c.filtered = not keep(c)
+      c.setHidden(c.filtered)
+    self._relayout()
+
+  def _relayout(self):
+    while self._grid.count():
+      self._grid.takeAt(0)
+    width = self.viewport().width() - 20
+    cols = max(1, (width + self.SPACING) // (self.MIN_CARD_W + self.SPACING))
+    self._cols = cols
+    shown = [c for c in self.cards if not c.filtered]
+    for i, c in enumerate(shown):
+      self._grid.addWidget(c, i // cols, i % cols)
+    for j in range(max(cols, 1)):
+      self._grid.setColumnStretch(j, 1)
+    if self.cards and not shown:
+      self.set_empty_text("No tunnels match the current filter")
+    elif self.cards:
+      self.set_empty_text("")
+
+  def resizeEvent(self, event):
+    super().resizeEvent(event)
+    width = self.viewport().width() - 20
+    cols = max(1, (width + self.SPACING) // (self.MIN_CARD_W + self.SPACING))
+    if cols != self._cols:
+      self._relayout()
+
+  def refresh_theme(self):
+    self.empty_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 13px; padding: 40px;")
+    for c in self.cards:
+      c.refresh_theme()
 
 
 def _contains_completer(combo: QComboBox) -> QCompleter:

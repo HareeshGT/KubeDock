@@ -13,30 +13,20 @@ class KubernetesTunnelsMixin:
     the status-toggle handler and after a status refresh.
     """
     text = self.tunnel_search.text().strip().lower()
+    mode = self._tunnel_status_filter
 
-    for i in range(self.tunnel_list.count()):
-      item = self.tunnel_list.item(i)
+    def keep(card):
+      svc = card.svc
+      searchable = f"{svc['name']} {svc['namespace']} {svc['port']}".lower()
+      if text not in searchable:
+        return False
+      if mode == "active":
+        return card.exposed is True
+      if mode == "inactive":
+        return card.exposed is False
+      return True
 
-      svc = item.data(Qt.UserRole)
-      if svc is None:
-        continue
-
-      searchable = (
-        f"{svc['name']} "
-        f"{svc['namespace']} "
-        f"{svc['port']}"
-      ).lower()
-      text_match = text in searchable
-
-      exposed = item.data(self.TUNNEL_STATUS_ROLE)
-      if self._tunnel_status_filter == "active":
-        status_match = exposed is True
-      elif self._tunnel_status_filter == "inactive":
-        status_match = exposed is False
-      else:
-        status_match = True
-
-      item.setHidden(not (text_match and status_match))
+    self.tunnel_list.apply_filter(keep)
 
 
   def _on_tunnel_status_filter_clicked(self, btn):
@@ -44,17 +34,6 @@ class KubernetesTunnelsMixin:
     self._filter_tunnel_services()
 
   # ── Namespace helpers ─────────────────────────────────────
-
-  def _format_tunnel_label(self, svc: dict, glyph: str) -> str:
-    max_name, max_ns = self._tunnel_col_widths
-    return (
-      f"{glyph} "
-      f"{svc['name']:<{max_name}}"
-      f"{'ns/' + svc['namespace']:<{max_ns}}"
-      f" : {svc['container_port']}"
-      f" → {svc['port']}"
-    )
-
 
   def _open_manage_tunnel_services(self):
     """Open the card-based dialog for adding/editing/removing tunnel
@@ -99,14 +78,13 @@ class KubernetesTunnelsMixin:
   def _load_tunnel_csv(self):
     """Load tunnel services from the currently connected VM."""
 
-    self.tunnel_list.blockSignals(True)
     self.tunnel_list.clear()
     self._tunnel_services = []
 
     # No VM connected
     if not self.ssh:
+      self.tunnel_list.set_empty_text("Connect to a VM to see its tunnel services")
       self.tunnel_cmd_preview.clear()
-      self.tunnel_list.blockSignals(False)
       return
 
     # Load services from the connected VM
@@ -116,36 +94,11 @@ class KubernetesTunnelsMixin:
     )
 
     if not self._tunnel_services:
-      item = QListWidgetItem("(No tunnel services found on the connected VM)")
-      item.setFlags(Qt.NoItemFlags)
-      item.setForeground(QColor(T["TEXT_MUTED"]))
-      self.tunnel_list.addItem(item)
+      self.tunnel_list.set_empty_text("No tunnel services found on the connected VM")
     else:
-      # Use the system's fixed-width font
-      font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
-      font.setPointSize(10)
+      self.tunnel_list.set_services(self._tunnel_services)
+      self._sync_forwarded_badges()
 
-      # Determine column widths (shared with _refresh_tunnel_status
-      # so updating the status glyph later doesn't reflow anything)
-      max_name = max(len(svc["name"]) for svc in self._tunnel_services) + 4
-      max_ns = max(len(f"ns/{svc['namespace']}") for svc in self._tunnel_services) + 4
-      self._tunnel_col_widths = (max_name, max_ns)
-
-      for svc in self._tunnel_services:
-        label = self._format_tunnel_label(svc, self.STATUS_UNKNOWN)
-
-        item = QListWidgetItem(label)
-        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-        item.setCheckState(Qt.Unchecked)
-        item.setData(Qt.UserRole, svc)
-        item.setData(self.TUNNEL_STATUS_ROLE, None)
-        item.setFont(font)
-        item.setForeground(QColor(T["TEXT_MUTED"]))
-        item.setToolTip("Checking whether this port is exposed on the VM…")
-
-        self.tunnel_list.addItem(item)
-
-    self.tunnel_list.blockSignals(False)
     self._update_tunnel_cmd_preview()
     self._filter_tunnel_services()
     self._refresh_tunnel_status()
@@ -154,12 +107,30 @@ class KubernetesTunnelsMixin:
   def _refresh_tunnel_status(self):
     """Check, in a single SSH round-trip, which configured local ports
     are currently listening on the VM — i.e. whether each service's
-    'kubectl port-forward' is actually up right now — and update the
-    checklist with a / status glyph per row."""
+    'kubectl port-forward' is actually up right now — and update each
+    card's status dot (green = listening, red = not)."""
     if not self.ssh or not self._tunnel_services:
       return
+    self._tunnel_status_last = time.monotonic()
     cmd = "ss -ltn 2>/dev/null | awk 'NR>1{print $4}'"
-    self._run_cmd(cmd, self._on_tunnel_status_result)
+    self._run_cmd(cmd, self._on_tunnel_status_result,
+                  on_error=self._on_tunnel_status_error)
+
+
+  def _poll_tunnel_status(self):
+    """Timer tick: throttled, and only while the Tunnels tab is visible."""
+    if not self.ssh or not self._tunnel_services or not self.tunnel_list.isVisible():
+      return
+    if time.monotonic() - getattr(self, "_tunnel_status_last", 0) < 5:
+      return
+    self._refresh_tunnel_status()
+
+
+  def _on_tunnel_status_error(self, _err):
+    # Can't confirm the ports are listening → never leave a stale green.
+    for card in self.tunnel_list.cards:
+      card.set_exposed(False)
+    self._filter_tunnel_services()
 
 
   def _on_tunnel_status_result(self, out: str):
@@ -172,52 +143,32 @@ class KubernetesTunnelsMixin:
       if port_s.isdigit():
         listening_ports.add(int(port_s))
 
-    for i in range(self.tunnel_list.count()):
-      item = self.tunnel_list.item(i)
-      svc = item.data(Qt.UserRole)
-      if not svc:
-        continue
-      exposed = svc["port"] in listening_ports
-      glyph  = self.STATUS_UP if exposed else self.STATUS_DOWN
-      item.setText(self._format_tunnel_label(svc, glyph))
-      item.setData(self.TUNNEL_STATUS_ROLE, exposed)
-      item.setForeground(QColor(T["SUCCESS"] if exposed else T["DANGER"]))
-      item.setToolTip(
-        "Port {} is {} on the VM.".format(
-          svc["port"], "listening (exposed)" if exposed else "NOT listening"
-        )
-      )
+    for card in self.tunnel_list.cards:
+      card.set_exposed(card.svc["port"] in listening_ports)
 
     # Statuses just changed — re-apply the Active/Inactive toggle (and
-    # the text search) now that they're known, rather than waiting for
-    # the user to touch the search box again.
+    # the text search) now that they're known.
     self._filter_tunnel_services()
 
 
+  def _sync_forwarded_badges(self):
+    """Mark cards whose port is carried by the running local SSH -L tunnel."""
+    running = self._tunnel_process is not None and self._tunnel_process.state() != QProcess.NotRunning
+    ports = getattr(self, "_tunnel_forwarded_ports", set()) if running else set()
+    for card in self.tunnel_list.cards:
+      card.set_forwarded(card.svc["port"] in ports)
+
+
   def _set_all_tunnel_checks(self, checked: bool):
-    """Check/uncheck every currently VISIBLE row — i.e. respects
+    """Check/uncheck every currently VISIBLE card — i.e. respects
     whatever the search box and Active/Inactive toggle are currently
-    hiding, rather than reaching through the filter to rows the user
+    hiding, rather than reaching through the filter to cards the user
     can't see."""
-    state = Qt.Checked if checked else Qt.Unchecked
-    self.tunnel_list.blockSignals(True)
-    for i in range(self.tunnel_list.count()):
-      item = self.tunnel_list.item(i)
-      if item.isHidden():
-        continue
-      if item.flags() & Qt.ItemIsUserCheckable:
-        item.setCheckState(state)
-    self.tunnel_list.blockSignals(False)
-    self._update_tunnel_cmd_preview()
+    self.tunnel_list.set_checked_visible(checked)
 
 
   def _selected_tunnel_services(self) -> list:
-    selected = []
-    for i in range(self.tunnel_list.count()):
-      item = self.tunnel_list.item(i)
-      if (item.flags() & Qt.ItemIsUserCheckable) and item.checkState() == Qt.Checked:
-        selected.append(item.data(Qt.UserRole))
-    return selected
+    return self.tunnel_list.selected_services()
 
 
   def _build_tunnel_cmd(self, services: list):
@@ -274,6 +225,8 @@ class KubernetesTunnelsMixin:
     proc.finished.connect(self._on_tunnel_finished)
     proc.start(cmd[0], cmd[1:])
     self._tunnel_process = proc
+    self._tunnel_forwarded_ports = {svc["port"] for svc in services}
+    self._sync_forwarded_badges()
 
     self.tunnel_start_btn.setEnabled(False)
     self.tunnel_stop_btn.setEnabled(True)
@@ -350,6 +303,8 @@ class KubernetesTunnelsMixin:
     self.tunnel_status_lbl.setText("● Not tunnelling")
     self.tunnel_status_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
     self._tunnel_process = None
+    self._sync_forwarded_badges()
+    self._refresh_tunnel_status()
 
   # ── Remote kubectl port-forward restart ───────────────────
   # Distinct from the SSH -L tunnel above: this runs 'kubectl port-forward'
