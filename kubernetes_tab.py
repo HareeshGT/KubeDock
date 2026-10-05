@@ -37,6 +37,7 @@ class KubernetesTab(KubernetesCoreMixin, KubernetesUiMixin, KubernetesWorkloadsM
   def __init__(self, parent=None):
     super().__init__(parent)
     self.ssh     = None
+    self._sudo_user = None
     self._current_ns = "default"
     self._current_context = ""
     self._cluster_available = False
