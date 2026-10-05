@@ -278,8 +278,13 @@ class HistoryChart(QWidget):
             if i == self._hover_i:
                 hover_xy = (x, y)
         p.setPen(QColor(_dashboard_text('muted')))
-        p.drawText(left, self.height() - 6, self.points[0][0])
-        p.drawText(max(left, self.width() - 55), self.height() - 6, self.points[-1][0])
+        first, last = self.points[0][0], self.points[-1][0]
+        fm = p.fontMetrics()
+        if fm.horizontalAdvance(first) + fm.horizontalAdvance(last) + 16 > w:
+            # Too narrow for two full "YYYY-MM-DD HH:MM" labels: drop the year.
+            first, last = (t[5:] if len(t) > 10 else t for t in (first, last))
+        p.drawText(left, self.height() - 6, first)
+        p.drawText(max(left, left + w - fm.horizontalAdvance(last)), self.height() - 6, last)
         if hover_xy is not None:
             hx, hy = hover_xy
             h_time, h_val = self.points[self._hover_i]
@@ -295,6 +300,7 @@ class HistoryChart(QWidget):
             bx = hx + 8
             if bx + box_w > self.width():
                 bx = hx - 8 - box_w
+            bx = max(2, bx)
             by = max(2, hy - box_h - 8)
             path = QPainterPath()
             path.addRoundedRect(bx, by, box_w, box_h, 4, 4)

@@ -211,10 +211,10 @@ class DashboardNodesHistoryMixin:
   
   def _render_history(self):
       rows = self._history[-120:]
-      self.history_cpu.set_points([(x["time"][11:16], x.get("cpu")) for x in rows])
-      self.history_mem.set_points([(x["time"][11:16], x.get("memory")) for x in rows])
-      self.history_pods.set_points([(x["time"][11:16], x.get("pods")) for x in rows])
-      self.history_nodes.set_points([(x["time"][11:16], x.get("ready_nodes")) for x in rows])
+      self.history_cpu.set_points([(x["time"][:16], x.get("cpu")) for x in rows])
+      self.history_mem.set_points([(x["time"][:16], x.get("memory")) for x in rows])
+      self.history_pods.set_points([(x["time"][:16], x.get("pods")) for x in rows])
+      self.history_nodes.set_points([(x["time"][:16], x.get("ready_nodes")) for x in rows])
   
       self.history_events.clear()
       seen = set()
