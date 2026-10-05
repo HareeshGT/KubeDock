@@ -78,6 +78,14 @@ html,body,#editor{width:100%;height:100%;margin:0;overflow:hidden;background:#0f
 <script>
 let editor = null;
 let decorations = [];
+// Python-driven edits (setText/appendText) already update Python's own copy,
+// so their change events must not echo the whole document back over the
+// QWebChannel: for a streamed file that was one full-document transfer per
+// 64KB chunk (O(n^2) bytes, GBs of transient strings for a ~30MB file).
+let quiet = 0;
+// In large-file mode Python never reads the payload (it pulls text on demand
+// via getValue()), so user edits only send a payload-free notification.
+let notifyPayload = true;
 function boot() {
   if (!window.require) {
     document.getElementById("editor").innerText = "Monaco could not be loaded.";
@@ -110,7 +118,8 @@ function boot() {
       quickSuggestions: true
     });
     editor.onDidChangeModelContent(() => {
-      if (window._bridge) _bridge.onTextChanged(editor.getValue());
+      if (quiet || !window._bridge) return;
+      _bridge.onTextChanged(notifyPayload ? editor.getValue() : "");
     });
     editor.onDidChangeCursorPosition(e => {
       if (window._bridge) _bridge.onCursorChanged(e.position.lineNumber, e.position.column);
@@ -131,7 +140,8 @@ function boot() {
 function setText(v) {
   if (!editor) return;
   const p = editor.getPosition();
-  editor.setValue(v || "");
+  quiet++;
+  try { editor.setValue(v || ""); } finally { quiet--; }
   if (p) editor.setPosition(p);
 }
 function appendText(v) {
@@ -144,11 +154,14 @@ function appendText(v) {
   if (!model) return;
   const lastLine = model.getLineCount();
   const lastCol = model.getLineMaxColumn(lastLine);
-  model.applyEdits([{
-    range: new monaco.Range(lastLine, lastCol, lastLine, lastCol),
-    text: v,
-    forceMoveMarkers: true
-  }]);
+  quiet++;
+  try {
+    model.applyEdits([{
+      range: new monaco.Range(lastLine, lastCol, lastLine, lastCol),
+      text: v,
+      forceMoveMarkers: true
+    }]);
+  } finally { quiet--; }
 }
 function setLanguage(v) {
   if (editor) monaco.editor.setModelLanguage(editor.getModel(), v || "plaintext");
@@ -181,6 +194,7 @@ function clearDecorations() {
 function getValue() { return editor ? editor.getValue() : ""; }
 function setLargeMode() {
   if (!editor) return;
+  notifyPayload = false;
   editor.updateOptions({
     minimap: {enabled:false}, folding:false, wordWrap:"off",
     stickyScroll:{enabled:false}, quickSuggestions:false,
@@ -448,7 +462,13 @@ class MonacoEditor(QWidget):
             self._shadow.redo()
 
     def setUndoRedoEnabled(self, enabled):
-        pass
+        # The dialog turns undo off during the bulk streamed load so the
+        # document doesn't keep a second copy of every inserted chunk. This
+        # used to be a no-op, leaving the shadow QTextDocument recording each
+        # chunk insert (a full extra copy of the file). Monaco owns undo/redo
+        # when it is active, so the shadow's own history is never needed.
+        if self._shadow is not None:
+            self._shadow.setUndoRedoEnabled(bool(enabled) and self._view is None)
 
     def setLineWrapMode(self, mode):
         wrap = mode != 0

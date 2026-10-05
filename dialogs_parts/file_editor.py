@@ -29,7 +29,7 @@ class FileEditorDialog(QDialog):
       self._remote_size = int(self._sftp.stat(remote_path).st_size)
     except Exception:
       pass
-    self._large_file = bool(self._remote_size and self._remote_size >= 50 * 1024 * 1024)
+    self._large_file = bool(self._remote_size and self._remote_size >= self.LARGE_FILE_BYTES)
 
     fname = os.path.basename(remote_path)
     self.setWindowTitle(f"Edit — {fname}")
@@ -503,6 +503,15 @@ class FileEditorDialog(QDialog):
   # back-to-back (each one replacing the whole Monaco model) right before
   # the user starts typing into Find was what made Find crash the app.
   SMALL_FILE_BYTES = 256 * 1024
+
+  # At/above this size the editor runs in "large-file mode": no full-text
+  # shadow QTextDocument, no per-edit full-document sync to Python (text is
+  # pulled on demand for Save), and Monaco's whole-document features off.
+  # In normal mode every keystroke ships the entire document across the
+  # QWebChannel and rebuilds the shadow document, which measured ~0.09s/MB
+  # (~3s and +360MB per keystroke at 30MB) — hence this is well below
+  # MAX_EDIT_BYTES.
+  LARGE_FILE_BYTES = 8 * 1024 * 1024
 
   def _start_live_load(self):
     self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -1021,5 +1030,18 @@ class FileEditorDialog(QDialog):
     """
     dlg = cls(parent, sftp, ssh, remote_path, content=None, sudo_user=sudo_user)
     dlg.exec_()
+    dlg._release_resources()
     return dlg
 
+  def _release_resources(self):
+    """Free the editor after the dialog closes. The dialog is parented to
+    the main window and nothing else holds it, so without this every closed
+    editor kept its Monaco page (the whole document), the shadow
+    QTextDocument and ``_original`` alive until the app exited."""
+    self._original = ""
+    try:
+      if hasattr(self.editor, "dispose"):
+        self.editor.dispose()
+    except Exception:
+      pass
+    self.deleteLater()
