@@ -509,10 +509,15 @@ class FileEditorDialog(QDialog):
     self._cursor_lbl.setText(f"Ln {ln}, Col {col}")
 
   def _set_status(self, msg, color=None):
-    self._status_lbl.setText(msg)
-    self._status_lbl.setStyleSheet(
-      f"color: {color or T['TEXT_MUTED']}; font-size: 13px;"
-    )
+    # Delayed "Ready" resets (QTimer.singleShot) can fire after the dialog
+    # was closed and its widgets deleted; PyQt5 aborts on that exception.
+    try:
+      self._status_lbl.setText(msg)
+      self._status_lbl.setStyleSheet(
+        f"color: {color or T['TEXT_MUTED']}; font-size: 13px;"
+      )
+    except RuntimeError:
+      pass
 
   # ── Live streaming load ─────────────────────────────────────
   # The editor opens immediately (empty) and content is appended as it
