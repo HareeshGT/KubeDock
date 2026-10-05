@@ -137,6 +137,7 @@ class ConnectionMixin:
       self._conn_password = password
       self._set_connected(True)
       self.k8s_tab.set_ssh(self.ssh)
+      self.k8s_tab.set_sudo_user(None)
       self.dashboard_tab.set_connection("ssh", ssh=self.ssh, host=host, port=port, user=user)
       # Local (client-side) connection details for the port-tunnel
       # feature, which runs `ssh` on this machine rather than over
