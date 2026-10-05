@@ -270,20 +270,31 @@ class KubernetesTunnelsMixin:
       return
     ports = [str(svc["port"]) for svc in services]
     # Kill anything listening on the selected ports
-    cmd = " ; ".join(
-      [
-        f"pid=$(lsof -ti:{port} 2>/dev/null); "
-        f'[ -n "$pid" ] && kill -9 $pid || echo "Nothing running on {port}"'
-        for port in ports
-      ]
-    )
+    # Keep the kill operation in the same sudo context as the integrated
+    # terminal. Also make failures explicit: the old &&/|| expression
+    # treated a failed kill as "Nothing running" and still exited 0.
+    steps = [
+      f'pid=$(lsof -ti:{port} 2>/dev/null); '
+      f'if [ -n "$pid" ]; then '
+      f'if kill -9 $pid 2>&1; then echo "Killed PID(s) $pid on {port}"; '
+      f'else echo "Failed to kill PID(s) $pid on {port}" >&2; failed=1; fi; '
+      f'else echo "Nothing running on {port}"; fi'
+      for port in ports
+    ]
+    cmd = "failed=0; " + " ; ".join(steps) + " ; exit $failed"
     cmd = f"bash -lc {shlex.quote(cmd)}"
     append_terminal_html(
       self.tunnel_log,
       f"<span style='color:{T['ACCENT2']}'>$ {self._esc(cmd)}</span>"
     )
-    self._run_cmd(cmd, self._on_ports_killed)
+    self._run_cmd(cmd, self._on_ports_killed, on_error=self._on_ports_kill_error)
 
+
+  def _on_ports_kill_error(self, err):
+    append_terminal_html(
+      self.tunnel_log,
+      f"<span style='color:{T['DANGER']}'>[kill port error] {self._esc(str(err))}</span>"
+    )
 
   def _on_tunnel_output(self, proc):
     data = bytes(proc.readAllStandardOutput()).decode(errors="replace")
