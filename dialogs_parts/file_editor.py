@@ -421,9 +421,9 @@ class FileEditorDialog(QDialog):
     self.editor.cursorPositionChanged.connect(self._update_cursor_pos)
 
     QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._save)
-    QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(
-      lambda: (self._find_btn.setChecked(True), self._find_inp.setFocus())
-    )
+    QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._open_find)
+    if hasattr(self.editor, "findRequested"):
+      self.editor.findRequested.connect(self._open_find)
     QShortcut(QKeySequence("Escape"), self._find_bar).activated.connect(
       lambda: self._find_btn.setChecked(False)
     )
@@ -451,6 +451,33 @@ class FileEditorDialog(QDialog):
   def _toggle_wrap(self, on: bool):
     self.editor.setLineWrapMode(QPlainTextEdit.WidgetWidth if on else QPlainTextEdit.NoWrap)
 
+  def _editor_selection(self) -> str:
+    # Both editors: Monaco mirrors its selection; CodeEditor uses Qt's cursor.
+    if hasattr(self.editor, "selected_text"):
+      txt = self.editor.selected_text()
+    else:
+      txt = self.editor.textCursor().selectedText().replace("\u2029", "\n")
+    return txt
+
+  def _seed_find_from_selection(self):
+    # Selection wins over the previous query. Multiline selections are
+    # skipped: the Find field is single-line, so keep existing semantics.
+    sel = self._editor_selection()
+    if sel and "\n" not in sel:
+      self._find_inp.setText(sel)
+
+  def _open_find(self):
+    # Cmd/Ctrl+F entry point. If the bar is closed, the toggle handler
+    # opens it (and seeds it); if already open, just re-seed and refocus.
+    if self._find_btn.isChecked():
+      self._seed_find_from_selection()
+      self._find_inp.setFocus()
+      self._find_inp.selectAll()
+      if self._find_inp.text():
+        self._do_highlight()
+    else:
+      self._find_btn.setChecked(True)
+
   def _toggle_find_bar(self, on: bool):
     if on and self._loading:
       # Ctrl+F can still fire this while a big file is mid-stream (the
@@ -461,6 +488,7 @@ class FileEditorDialog(QDialog):
       return
     self._find_bar.setVisible(on)
     if on:
+      self._seed_find_from_selection()
       self._find_inp.setFocus()
       self._find_inp.selectAll()
       if self._find_inp.text():

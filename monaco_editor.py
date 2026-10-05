@@ -47,6 +47,8 @@ class _Bridge(QObject):
     textChanged = pyqtSignal(str)
     saveRequested = pyqtSignal(str)
     cursorChanged = pyqtSignal(int, int)
+    selectionChanged = pyqtSignal(str)
+    findRequested = pyqtSignal(str)
     editorReady = pyqtSignal()
 
     @pyqtSlot(str)
@@ -60,6 +62,14 @@ class _Bridge(QObject):
     @pyqtSlot(int, int)
     def onCursorChanged(self, line, column):
         self.cursorChanged.emit(line, column)
+
+    @pyqtSlot(str)
+    def onSelectionChanged(self, text):
+        self.selectionChanged.emit(text)
+
+    @pyqtSlot(str)
+    def onFindRequested(self, text):
+        self.findRequested.emit(text)
 
     @pyqtSlot()
     def onEditorReady(self):
@@ -123,6 +133,21 @@ function boot() {
     });
     editor.onDidChangeCursorPosition(e => {
       if (window._bridge) _bridge.onCursorChanged(e.position.lineNumber, e.position.column);
+    });
+    // Mirror the selected text to Python (capped) so the Qt Find bar can
+    // seed its query without going through the clipboard.
+    const selText = () => {
+      const sel = editor.getSelection();
+      const m = editor.getModel();
+      if (!sel || !m || sel.isEmpty()) return "";
+      return m.getValueInRange(sel).slice(0, 5000);
+    };
+    editor.onDidChangeCursorSelection(() => {
+      if (window._bridge) _bridge.onSelectionChanged(selText());
+    });
+    // Route Cmd/Ctrl+F to the Qt Find bar instead of Monaco's built-in widget.
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+      if (window._bridge) _bridge.onFindRequested(selText());
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       if (window._bridge) _bridge.onSaveRequested(editor.getValue());
@@ -245,6 +270,7 @@ class MonacoEditor(QWidget):
     saveRequested = pyqtSignal(str)
     textChanged = pyqtSignal()
     cursorPositionChanged = pyqtSignal()
+    findRequested = pyqtSignal()
 
     MIN_PT, MAX_PT = 8, 28
 
@@ -257,6 +283,7 @@ class MonacoEditor(QWidget):
         self._syncing = False
         self._filename = ""
         self._language = "plaintext"
+        self._selected = ""
         self._large_file = bool(large_file)
         self._shadow = None if self._large_file else QPlainTextEdit(self)
         if self._shadow is not None:
@@ -278,6 +305,8 @@ class MonacoEditor(QWidget):
         self._bridge.textChanged.connect(self._on_js_text)
         self._bridge.saveRequested.connect(self.saveRequested)
         self._bridge.cursorChanged.connect(self._on_js_cursor)
+        self._bridge.selectionChanged.connect(self._on_js_selection)
+        self._bridge.findRequested.connect(self._on_js_find)
         self._bridge.editorReady.connect(self._on_editor_ready)
 
         channel = QWebChannel(self._view.page())
@@ -315,6 +344,17 @@ class MonacoEditor(QWidget):
         self._shadow.setPlainText(text or "")
         self._shadow.blockSignals(False)
         self.textChanged.emit()
+
+    def _on_js_selection(self, text):
+        self._selected = text or ""
+
+    def _on_js_find(self, text):
+        self._selected = text or ""
+        self.findRequested.emit()
+
+    def selected_text(self):
+        """Current selection (single source for Find seeding; no clipboard)."""
+        return self._selected
 
     def _on_js_cursor(self, line, column):
         if self._large_file:
