@@ -8,12 +8,13 @@ conditions. Double-clicking a node opens a separate window with the
 pods actually running on it, including each pod's own CPU/memory usage,
 restart count, and ready state (see NodeDetailWindow below).
 
-Polling behaviour: the tab only ticks its refresh timer while it is BOTH
-(a) connected to an instance and (b) the currently visible tab in
-main_tabs. The owner (main_window.py) calls set_active(True/False) from
-its main_tabs.currentChanged handler; navigating away calls
-set_active(False), which stops the timer outright rather than merely
-skipping a paint — so an unattended tab does zero SSH round-trips.
+Polling behaviour: while the tab is the visible tab in main_tabs it ticks
+its normal refresh timer (REFRESH_MS). The owner (main_window.py) calls
+set_active(True/False) from its main_tabs.currentChanged handler;
+navigating away stops that timer and starts a separate background timer
+that runs the SAME collection cycle at most once per BACKGROUND_REFRESH_MS.
+Background results are cached (not rendered) and shown when the tab is
+re-opened.
 
 Node/pod layout: the nodes table itself only ever shows one row per node
 (no inline pod children — that's what made the panel feel cramped).
@@ -41,6 +42,7 @@ from workers import CommandWorker, track_worker
 from utils import monospace_font, size_fmt
 from progress_ring import CircularProgress
 REFRESH_MS = 3000
+BACKGROUND_REFRESH_MS = 60000  # unfocused cadence: at most one collection per minute
 _PODMAP_CMD = '\npodmap_status=0\npodmap_output=$(kubectl get pods --all-namespaces -o custom-columns=\'NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODE:.spec.nodeName\' --no-headers 2>/dev/null) || podmap_status=$?\necho __PODNODEMAP__\nprintf \'%s\\n\' "$podmap_output"\necho __PODNODEMAP_STATUS__\nprintf \'%s\\n\' "$podmap_status"\n'
 
 class _FTPDashboardWorker(QThread):
@@ -1066,6 +1068,13 @@ class DashboardTab(DashboardConnectionMixin, DashboardUIMixin, DashboardRefreshM
         self.ftp = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
+        # Single unfocused-cadence timer. Mutually exclusive with self._timer
+        # (see set_active) and restarted, never duplicated, on tab switches.
+        self._bg_timer = QTimer(self)
+        self._bg_timer.setInterval(BACKGROUND_REFRESH_MS)
+        self._bg_timer.timeout.connect(self._background_refresh)
+        self._bg_cache = None          # latest unfocused collection, not yet rendered
+        self._cycle_background = False  # True while the in-flight cycle is a background one
         self._process_timer = QTimer(self)
         self._process_timer.setInterval(1000)
         self._process_timer.timeout.connect(self._refresh_processes)

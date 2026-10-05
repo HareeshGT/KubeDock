@@ -204,20 +204,26 @@ class DashboardRefreshMixin:
   def _process_worker_done(self):
       self._process_busy = False
 
-  def _refresh(self):
+  def _refresh(self, background=False):
       """Start one dashboard collection cycle.
   
       Host and Kubernetes collection run in parallel, but a new cycle is
       blocked until BOTH workers have finished. This prevents a slow
       kubectl snapshot from overlapping the next timer tick.
+
+      background=True is the unfocused cadence: the identical collection
+      runs, but the result is cached instead of rendered (see
+      _worker_finished) and the same _busy guard prevents overlap.
       """
       if self.ftp and not self.ssh:
-        self._refresh_ftp()
+        if not background:
+          self._refresh_ftp()
         return
-      if not self.ssh or not self._active or self._busy:
+      if not self.ssh or self._busy or (not self._active and not background):
         return
   
       self._busy = True
+      self._cycle_background = background
       self._host_done = False
       self._k8s_done = False
       self._podmap_done = False
@@ -282,17 +288,36 @@ class DashboardRefreshMixin:
       k8s_out = self._k8s_snapshot
       k8s_error = getattr(self, "_k8s_error", None)
       self._k8s_error = None
+      if k8s_out is not None and self._podmap_snapshot is not None:
+        k8s_out += "\n" + self._podmap_snapshot
+
+      if self._cycle_background:
+        # Unfocused: keep the newest result for when the tab is re-opened;
+        # don't touch (or rebuild) any Dashboard widgets.
+        self._bg_cache = {
+          "host": host_out, "k8s": k8s_out, "k8s_error": k8s_error,
+          "elapsed": elapsed, "at": time.monotonic(),
+          "kube_context": self._kube_context,
+        }
+        self._busy = False
+        return
+
+      self._bg_cache = None
+      self._publish_snapshot(host_out, k8s_out, k8s_error, elapsed)
+      self._busy = False
+      self._update_live_label()
+      self.status_msg.emit("Dashboard updated")
   
-      # Render as one transaction. No visible dashboard section is changed
-      # until the complete cycle has been collected.
+  
+  def _publish_snapshot(self, host_out, k8s_out, k8s_error, elapsed):
+      """Render one complete collected cycle as a single transaction. No
+      visible dashboard section is changed until the whole cycle exists."""
       if host_out is not None:
         self._render_host_stats(host_out)
       else:
         self._on_host_render_error()
   
       if k8s_out is not None:
-        if self._podmap_snapshot is not None:
-          k8s_out += "\n" + self._podmap_snapshot
         self._render_k8s_stats(k8s_out)
       else:
         self._render_k8s_error(k8s_error or "snapshot collection failed")
@@ -300,9 +325,6 @@ class DashboardRefreshMixin:
       self.updated_lbl.setText(
         f"Updated {time.strftime('%H:%M:%S')} · snapshot {elapsed:.1f}s"
       )
-      self._busy = False
-      self._update_live_label()
-      self.status_msg.emit("Dashboard updated")
   
   
   def _on_host_render_error(self):
@@ -1027,4 +1049,3 @@ class DashboardRefreshMixin:
       self._k8s_snapshot = None
       self._k8s_error = err
       self._worker_finished("k8s")
-

@@ -1,5 +1,5 @@
 from dashboard_tab import *
-from dashboard_tab import REFRESH_MS, _FTPDashboardWorker, QEvent, size_fmt
+from dashboard_tab import REFRESH_MS, BACKGROUND_REFRESH_MS, _FTPDashboardWorker, QEvent, size_fmt
 
 """DashboardTab implementation mixin.
 
@@ -33,6 +33,9 @@ class DashboardConnectionMixin:
   def _set_ftp_connection(self, fs):
       self._snapshot_generation += 1
       self._busy = False
+      self._cycle_background = False
+      self._bg_cache = None
+      self._bg_timer.stop()
       self.ssh = None
       self.ftp = fs
       self._history_key = None
@@ -152,6 +155,8 @@ class DashboardConnectionMixin:
       # previous SSH connection.
       self._snapshot_generation += 1
       self._busy = False
+      self._cycle_background = False
+      self._bg_cache = None
       self.ssh = ssh
       self._history_key = self._derive_history_key(ssh)
       self._history = self._load_history()
@@ -163,8 +168,11 @@ class DashboardConnectionMixin:
           self._refresh()
           self._timer.start(REFRESH_MS)
           self._process_timer.start()
+        else:
+          self._bg_timer.start(BACKGROUND_REFRESH_MS)
       else:
         self._timer.stop()
+        self._bg_timer.stop()
         self._process_timer.stop()
         self._process_generation += 1
         self._process_busy = False
@@ -203,10 +211,21 @@ class DashboardConnectionMixin:
   
   def set_active(self, active: bool):
       """Called by main_window whenever this tab becomes the visible
-      (active=True) or is navigated away from (active=False)."""
+      dashboard (active=True) or is navigated away from (active=False).
+
+      Focused: the normal REFRESH_MS timer drives collection (unchanged).
+      Unfocused: that timer is stopped and _bg_timer runs the same
+      collection at most once per BACKGROUND_REFRESH_MS."""
+      active = bool(active)
+      if not active and not self._active:
+        # Already unfocused (main_window re-reports this on every tab
+        # change). Don't restart the background cadence or invalidate an
+        # in-flight background cycle.
+        return
       self._active = active
       if active and self.ssh:
-        self._refresh()     # snap up-to-date immediately on return
+        self._bg_timer.stop()
+        self._resume_focused()
         self._timer.start(REFRESH_MS)
         self._process_timer.start()
       elif active and self.ftp:
@@ -221,6 +240,51 @@ class DashboardConnectionMixin:
         # cannot publish data after the dashboard has been paused.
         self._snapshot_generation += 1
         self._busy = False
+        self._cycle_background = False
+        if self.ssh:
+          self._bg_timer.start(BACKGROUND_REFRESH_MS)
+        else:
+          self._bg_timer.stop()
+
+
+  def _resume_focused(self):
+      """Back on the Dashboard: show the newest background result at once,
+      then resume the normal refresh without duplicating a fresh/in-flight one."""
+      cache, self._bg_cache = self._bg_cache, None
+      fresh = False
+      if cache and cache["kube_context"] == self._kube_context:
+        self._publish_snapshot(cache["host"], cache["k8s"], cache["k8s_error"], cache["elapsed"])
+        fresh = (time.monotonic() - cache["at"]) * 1000 < REFRESH_MS
+      if self._busy and self._cycle_background:
+        # A background cycle is already running: adopt it instead of
+        # starting a second one; it will render when it completes.
+        self._cycle_background = False
+        self._update_live_label()
+        return
+      self._update_live_label()
+      if not fresh:
+        self._refresh()
+
+
+  def _background_refresh(self):
+      """Unfocused tick (<= once per BACKGROUND_REFRESH_MS)."""
+      if self._active or not self.ssh:
+        return
+      self._refresh(background=True)
+
+
+  def shutdown(self):
+      """Stop every timer and invalidate in-flight work (app closing)."""
+      self._active = False
+      self._timer.stop()
+      self._bg_timer.stop()
+      self._process_timer.stop()
+      self._process_generation += 1
+      self._process_busy = False
+      self._snapshot_generation += 1
+      self._busy = False
+      self._cycle_background = False
+      self._bg_cache = None
   
   
   def changeEvent(self, event):
@@ -244,4 +308,3 @@ class DashboardConnectionMixin:
         card.refresh_theme()
       for win in self._node_windows.values():
         win.refresh_theme()
-

@@ -136,7 +136,7 @@ class LifecycleMixin:
         if self._term_ai_worker is not None:
           self._term_ai_worker.quit()
         self.k8s_tab.clear_connection_info() # also stops any active tunnel
-        self.dashboard_tab.set_active(False) # stop the dashboard's polling timer
+        self.dashboard_tab.shutdown() # stop all dashboard timers (focused + background)
         if self._health_worker:
           worker = self._health_worker
           self._health_worker = None
@@ -147,4 +147,3 @@ class LifecycleMixin:
       except Exception:
         pass
       event.accept()
-
