@@ -115,6 +115,10 @@ class KubernetesCoreMixin:
 
   # ── SSH wiring ────────────────────────────────────────────
 
+  def set_sudo_user(self, username=None):
+    """Keep Kubernetes remote commands in sync with the terminal's sudo context."""
+    self._sudo_user = (username or "").strip() or None
+
   def set_ssh(self, ssh):
     self.ssh = ssh
     if hasattr(self, "k8s_ai_ops"):
@@ -430,13 +434,13 @@ class KubernetesCoreMixin:
 
   # ── Terminal tab ──────────────────────────────────────────
 
-  def _run_cmd(self, cmd: str, callback, apply_context: bool = True, on_error=None):
+  def _run_cmd(self, cmd: str, callback, apply_context: bool = True, on_error=None, sudo_user=None):
     if not self.ssh:
       return
     if apply_context:
       cmd = self._apply_context_to_command(cmd)
     self.progress.show()
-    worker = CommandWorker(self.ssh, cmd)
+    worker = CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
 
     def on_done(out):
       self.progress.hide()
