@@ -123,6 +123,7 @@ class UserSwitchMixin:
       if not home or not home.startswith("/"):
         home = "/root" if username == "root" else "/home/{}".format(username)
       self._sudo_user  = username
+      self.k8s_tab.set_sudo_user(username)
       self._terminal_cwd = home
       self.sftp.set_sudo_user(username)
       self._update_sudo_badge()
@@ -140,6 +141,7 @@ class UserSwitchMixin:
       if self.sftp:
         self.sftp.set_sudo_user(None)
       self._sudo_user = None
+      self.k8s_tab.set_sudo_user(None)
       with managed_exec_command(self.ssh, "echo $HOME") as (_stdin, _stdout, _stderr):
         self._terminal_cwd = _stdout.read().decode().strip() or None
       self._update_sudo_badge()
