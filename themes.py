@@ -35,45 +35,44 @@ THEMES = {
         "SUCCESS": "#22c55e", "DANGER": "#ef4444", "WARNING": "#f59e0b", "INFO": "#60a5fa",
     },
 
-        "Cyberpunk Neon": {
-        "BG_DARK": "#08060f", "BG_PANEL": "#100b1e", "BG_SIDEBAR": "#060411",
-        "BG_ITEM": "#1a1330", "BG_ITEM_SEL": "#ff2e88", "BG_HOVER": "#241a3f",
-        "ACCENT": "#ff2e88", "ACCENT2": "#00f0ff", "TEXT_PRIMARY": "#f5f0ff",
-        "TEXT_DIM": "#d9c9f0", "TEXT_MUTED": "#8a7aab", "BORDER": "#2e2350",
-        "SUCCESS": "#39ff14", "DANGER": "#ff2e63", "WARNING": "#fce83a", "INFO": "#00f0ff",
+    "Cyberpunk Neon": {
+        "BG_DARK": "#07060d", "BG_PANEL": "#130f26", "BG_SIDEBAR": "#0c0a18",
+        "BG_ITEM": "#1c1737", "BG_ITEM_SEL": "#3a2166", "BG_HOVER": "#241e46",
+        "ACCENT": "#f0359a", "ACCENT2": "#2fd8ea", "TEXT_PRIMARY": "#eeeaff",
+        "TEXT_DIM": "#bdb4e0", "TEXT_MUTED": "#9189b8", "BORDER": "#2b2452",
+        "SUCCESS": "#3ddc97", "DANGER": "#ff5c57", "WARNING": "#ffc23d", "INFO": "#6aa8ff",
     },
 
     "Rose Gold": {
-        "BG_DARK": "#140c0e", "BG_PANEL": "#1e1315", "BG_SIDEBAR": "#0f0809",
-        "BG_ITEM": "#2b1a1d", "BG_ITEM_SEL": "#7a3a3f", "BG_HOVER": "#372023",
-        "ACCENT": "#f0a6a3", "ACCENT2": "#e8b4bc", "TEXT_PRIMARY": "#fff0ee",
-        "TEXT_DIM": "#e8c4c0", "TEXT_MUTED": "#b98d8a", "BORDER": "#3d2529",
-        "SUCCESS": "#4ade80", "DANGER": "#f87171", "WARNING": "#fbbf24", "INFO": "#93c5fd",
+        "BG_DARK": "#110b0c", "BG_PANEL": "#1f1518", "BG_SIDEBAR": "#171012",
+        "BG_ITEM": "#2b1c20", "BG_ITEM_SEL": "#5c2b3a", "BG_HOVER": "#38242a",
+        "ACCENT": "#dca08e", "ACCENT2": "#e6cba4", "TEXT_PRIMARY": "#f7ece7",
+        "TEXT_DIM": "#d3bbb5", "TEXT_MUTED": "#a98e89", "BORDER": "#3b282d",
+        "SUCCESS": "#6fcf97", "DANGER": "#e8485a", "WARNING": "#f59e0b", "INFO": "#7fb2e8",
     },
 
     "Arctic Frost": {
-        "BG_DARK": "#080d13", "BG_PANEL": "#0f161f", "BG_SIDEBAR": "#060a0f",
-        "BG_ITEM": "#16202c", "BG_ITEM_SEL": "#1e5f7a", "BG_HOVER": "#1c2a38",
-        "ACCENT": "#7dd3fc", "ACCENT2": "#e0f2fe", "TEXT_PRIMARY": "#f0f9ff",
-        "TEXT_DIM": "#cfe8f7", "TEXT_MUTED": "#8fb4c9", "BORDER": "#233647",
-        "SUCCESS": "#5eead4", "DANGER": "#fb7185", "WARNING": "#fde047", "INFO": "#7dd3fc",
+        "BG_DARK": "#090e15", "BG_PANEL": "#121b27", "BG_SIDEBAR": "#0d141d",
+        "BG_ITEM": "#1a2636", "BG_ITEM_SEL": "#1f4668", "BG_HOVER": "#233347",
+        "ACCENT": "#62b6e8", "ACCENT2": "#b4e1f5", "TEXT_PRIMARY": "#e9f2f9",
+        "TEXT_DIM": "#b6c8d8", "TEXT_MUTED": "#8ba2b6", "BORDER": "#263648",
+        "SUCCESS": "#4fd1a5", "DANGER": "#f0627a", "WARNING": "#e8b84a", "INFO": "#98a8ff",
     },
 
     "Toxic Lime": {
-        "BG_DARK": "#0a0f08", "BG_PANEL": "#121a0e", "BG_SIDEBAR": "#080c06",
-        "BG_ITEM": "#1a2614", "BG_ITEM_SEL": "#3f6b1a", "BG_HOVER": "#233118",
-        "ACCENT": "#a3e635", "ACCENT2": "#d9f99d", "TEXT_PRIMARY": "#f7ffe8",
-        "TEXT_DIM": "#dbf0b0", "TEXT_MUTED": "#9cb87a", "BORDER": "#2e4020",
-        "SUCCESS": "#a3e635", "DANGER": "#f87171", "WARNING": "#fbbf24", "INFO": "#60a5fa",
+        "BG_DARK": "#080b07", "BG_PANEL": "#121910", "BG_SIDEBAR": "#0c110a",
+        "BG_ITEM": "#1b2517", "BG_ITEM_SEL": "#2f4d22", "BG_HOVER": "#263422",
+        "ACCENT": "#b2e335", "ACCENT2": "#a9e5a0", "TEXT_PRIMARY": "#eef5e6",
+        "TEXT_DIM": "#bccbad", "TEXT_MUTED": "#8b9d7c", "BORDER": "#2a3a24",
+        "SUCCESS": "#2dd4a7", "DANGER": "#f2606a", "WARNING": "#f5a524", "INFO": "#5eb0f0",
     },
 
     "Snow Light": {
-    # High-contrast light palette: muted/semantic colors are dark enough for normal UI text on white/light cards.
-        "BG_DARK": "#f5f5f7", "BG_PANEL": "#ffffff", "BG_SIDEBAR": "#eceef2",
-        "BG_ITEM": "#f0f1f4", "BG_ITEM_SEL": "#dbe4fe", "BG_HOVER": "#e6e9ee",
-        "ACCENT": "#2563eb", "ACCENT2": "#3b82f6", "TEXT_PRIMARY": "#1c1c1e",
-        "TEXT_DIM": "#4b5563", "TEXT_MUTED": "#52525b", "BORDER": "#d1d5db",
-        "SUCCESS": "#15803d", "DANGER": "#b91c1c", "WARNING": "#b45309", "INFO": "#1d4ed8",
+        "BG_DARK": "#f3f4f8", "BG_PANEL": "#ffffff", "BG_SIDEBAR": "#e9ebf1",
+        "BG_ITEM": "#eef0f6", "BG_ITEM_SEL": "#d6defb", "BG_HOVER": "#e5e8f0",
+        "ACCENT": "#4352d6", "ACCENT2": "#2f6fe0", "TEXT_PRIMARY": "#171a26",
+        "TEXT_DIM": "#434a5e", "TEXT_MUTED": "#5d657b", "BORDER": "#d9dce6",
+        "SUCCESS": "#16803f", "DANGER": "#c42a3a", "WARNING": "#9a5700", "INFO": "#0e7490",
     },
 }
 
