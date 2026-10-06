@@ -322,7 +322,7 @@ class DashboardUIMixin:
       self._content_layout.addWidget(self.ftp_card["frame"])
   
       # ── Kubernetes cluster overview ─────────────────────
-      self.k8s_summary_card = self._make_card(" Kubernetes Overview")
+      self.k8s_summary_card = self._make_card(" Kubernetes Overview", icon="kubernetes-white")
       summary_grid = QGridLayout()
       summary_grid.setHorizontalSpacing(12)
       summary_grid.setVerticalSpacing(10)
@@ -377,7 +377,7 @@ class DashboardUIMixin:
       self._content_layout.addWidget(self.services_card["frame"])
   
       # ── Phase 2: recent Kubernetes events ───────────────
-      self.events_card = self._make_card(" Recent Kubernetes Events")
+      self.events_card = self._make_card(" Recent Kubernetes Events", icon="kubernetes-white")
       self.events_tree = QTreeWidget()
       self.events_tree.setHeaderLabels([
         "Time", "Type", "Reason", "Object", "Namespace", "Message"
@@ -393,7 +393,7 @@ class DashboardUIMixin:
       # of each node, which made this card feel cramped. They now live in
       # a separate NodeDetailWindow opened per-node (see _on_node_double_
       # clicked), so this table stays one clean row per node.
-      self.k8s_card = self._make_card(" Kubernetes Nodes")
+      self.k8s_card = self._make_card(" Kubernetes Nodes", icon="kubernetes-white")
       self.k8s_note = QLabel("")
       self.k8s_note.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 12px;")
       self.k8s_note.hide()
@@ -475,7 +475,7 @@ class DashboardUIMixin:
         tile.setStyleSheet(f"QFrame#ftp_metric_tile {{ background: {T['BG_PANEL']}; border: 1px solid {T['BORDER']}; border-radius: 10px; }}")
   
   
-  def _make_card(self, title: str) -> dict:
+  def _make_card(self, title: str, icon: str = None) -> dict:
       frame = QFrame()
       frame.setObjectName("dash_card")
       outer = QVBoxLayout(frame)
@@ -483,6 +483,10 @@ class DashboardUIMixin:
       outer.setSpacing(8)
       lbl = QLabel()
       name, cleaned = split_icon_text(title)
+      if icon:
+        # Explicit icon override (e.g. the white Kubernetes logo); the label
+        # text is still the title, minus the leading space.
+        name, cleaned = icon, title.strip()
       if name:
         lbl.setPixmap(icon_pixmap(name, size=18))
         # Keep title in a compact row so the SVG never relies on an emoji font.
