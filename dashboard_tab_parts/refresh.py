@@ -1,9 +1,14 @@
+import logging
 from dashboard_tab import *
 from dashboard_tab import (
   _CPU_VAL_RE, _HOST_CMD, _K8S_CMD, _MEM_VAL_RE, _PODMAP_CMD,
   _looks_like_node_row, _parse_df_size, _pct_color,
   _short_age, _split_sections,
 )
+
+from dashboard_tab_parts import windows_metrics as _winm
+
+_log = logging.getLogger("kubedock.dashboard")
 
 """DashboardTab implementation mixin.
 
@@ -49,6 +54,13 @@ class DashboardRefreshMixin:
   def _refresh_processes(self):
       """Collect one finite top snapshot without blocking the Qt thread."""
       if not self.ssh or not self._active or self._process_busy:
+        return
+      if self._remote_os is None:
+        return  # OS not detected yet; `top` must not run on a Windows host
+      if self._remote_os == "windows":
+        # `top` is POSIX-only; no Windows equivalent is collected here.
+        self.process_status.setText("Live process monitor is not available for Windows hosts")
+        self.process_status.setStyleSheet(f"color: {T['WARNING']}; font-size: 11px;")
         return
       self._process_busy = True
       generation = self._process_generation
@@ -234,7 +246,73 @@ class DashboardRefreshMixin:
       generation = self._snapshot_generation
       self._refresh_started_at = time.monotonic()
       self._update_live_label()
-  
+
+      if self._remote_os == "windows":
+        self._start_windows_collection(generation)
+      elif self._remote_os is None:
+        self._probe_remote_os(generation)
+      else:
+        self._start_posix_collection(generation)
+
+
+  def _probe_remote_os(self, generation: int):
+      """Detect Windows once per SSH connection (result cached in
+      self._remote_os, reset by set_ssh) and then continue the cycle."""
+      worker = CommandWorker(self.ssh, _winm.WINDOWS_PROBE_CMD, timeout=10, raw=True)
+
+      def _done(out, _err, _code, g=generation):
+        if g != self._snapshot_generation:
+          return  # connection/cycle changed while probing
+        self._remote_os = "windows" if _winm.is_windows_probe_output(out) else "posix"
+        self._refresh_started_at = time.monotonic()
+        (self._start_windows_collection if self._remote_os == "windows"
+         else self._start_posix_collection)(g)
+
+      def _error(err, g=generation):
+        if g != self._snapshot_generation:
+          return
+        # Not cached: retry next cycle. Fall back to the existing POSIX path
+        # for this one so Linux/macOS behaviour is unchanged.
+        _log.warning("remote OS probe failed (%s); using POSIX collection this cycle", err)
+        self._start_posix_collection(g)
+
+      worker.result.connect(_done)
+      worker.error.connect(_error)
+      track_worker(self._workers, worker)
+      worker.start()
+
+
+  def _start_windows_collection(self, generation: int):
+      worker = CommandWorker(self.ssh, _winm.build_windows_host_command(), timeout=25, raw=True)
+      worker.done.connect(lambda out, g=generation: self._on_windows_host_stats(out) if g == self._snapshot_generation else None)
+      worker.error.connect(lambda err, g=generation: self._on_host_error(err) if g == self._snapshot_generation else None)
+      track_worker(self._workers, worker)
+      worker.start()
+
+      # The Kubernetes / pod-placement collectors are POSIX shell scripts.
+      # Report that honestly instead of running them against cmd.exe.
+      self._k8s_snapshot = None
+      self._k8s_error = "not collected for Windows SSH hosts"
+      self._worker_finished("k8s")
+      self._podmap_snapshot = None
+      self._podmap_error = "not collected for Windows SSH hosts"
+      self._worker_finished("podmap")
+
+
+  def _on_windows_host_stats(self, raw: str):
+      try:
+        normalized = _winm.normalize_host_output(raw)
+      except Exception as e:
+        _log.exception("windows host metric normalization failed")
+        self._on_host_error(f"Windows metrics parse error: {e}")
+        return
+      if not _split_sections(normalized):
+        self._on_host_error("Windows metrics unavailable (no metric could be collected; is PowerShell available over SSH?)")
+        return
+      self._on_host_stats(normalized)
+
+
+  def _start_posix_collection(self, generation: int):
       host_worker = CommandWorker(self.ssh, _HOST_CMD)
       host_worker.done.connect(lambda out, g=generation: self._on_host_stats(out) if g == self._snapshot_generation else None)
       host_worker.error.connect(lambda err, g=generation: self._on_host_error(err) if g == self._snapshot_generation else None)

@@ -43,18 +43,25 @@ class CommandWorker(QThread):
     # at all — no output, no error, no next prompt.
     DEFAULT_TIMEOUT = 45  # seconds
 
-    def __init__(self, ssh, cmd, cwd=None, sudo_user=None, timeout=None):
-        # type: (object, str, Optional[str], Optional[str], Optional[int]) -> None
+    def __init__(self, ssh, cmd, cwd=None, sudo_user=None, timeout=None, raw=False):
+        # type: (object, str, Optional[str], Optional[str], Optional[int], bool) -> None
         super().__init__()
         self.ssh       = ssh
         self.cmd       = cmd
         self.cwd       = cwd
         self.sudo_user = sudo_user
         self.timeout   = timeout or self.DEFAULT_TIMEOUT
+        # raw=True: send self.cmd exactly as given. Skips the POSIX-only
+        # `echo $HOME` / `export PATH=...` preamble, which cmd.exe/PowerShell
+        # (Windows SSH hosts) cannot run.
+        self.raw       = raw
         self.finished.connect(self.deleteLater)
 
     def run(self):
         try:
+            if self.raw:
+                self._run_raw()
+                return
             home_cmd = (
                 "sudo -u {} sh -c 'echo $HOME'".format(self.sudo_user)
                 if self.sudo_user else "echo $HOME"
@@ -93,6 +100,22 @@ class CommandWorker(QThread):
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
         except Exception as e:
             self.error.emit(str(e))
+
+    def _run_raw(self):
+        with managed_exec_command(self.ssh, self.cmd) as (_stdin, stdout, stderr):
+            stdout.channel.settimeout(self.timeout)
+            try:
+                out = stdout.read().decode(errors="replace")
+                err = stderr.read().decode(errors="replace")
+            except Exception as read_err:
+                self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
+                return
+            try:
+                exit_code = stdout.channel.recv_exit_status()
+            except Exception:
+                exit_code = -1
+        self.result.emit(out, err, exit_code)
+        self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
 
 
 class PodExecStreamWorker(QThread):

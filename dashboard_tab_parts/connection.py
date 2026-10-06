@@ -158,6 +158,7 @@ class DashboardConnectionMixin:
       self._cycle_background = False
       self._bg_cache = None
       self.ssh = ssh
+      self._remote_os = None  # re-detected once per SSH connection
       self._history_key = self._derive_history_key(ssh)
       self._history = self._load_history()
       self._last_history_time = 0

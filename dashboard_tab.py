@@ -1030,6 +1030,7 @@ class DashboardTab(DashboardConnectionMixin, DashboardUIMixin, DashboardRefreshM
         self._ftp_busy = False
         self._process_busy = False
         self._process_generation = 0
+        self._remote_os = None
         self._ftp_worker = None
         self._ftp_snapshot = None
         self._ftp_current_path = '/'
