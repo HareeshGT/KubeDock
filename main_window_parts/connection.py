@@ -33,7 +33,7 @@ from workers import (
     close_ssh_connection_pool,
 )
 from dialogs import (
-    ConnectDialog, EFSConnectDialog, FileTransferDialog, FileEditorDialog, FileExecDialog,
+    ConnectDialog, FileTransferDialog, FileEditorDialog, FileExecDialog,
     SearchDialog, ConnectingDialog, MediaPlayerDialog, AIExplainDialog,
 )
 from large_file_viewer import LargeFileViewerDialog
