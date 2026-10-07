@@ -137,7 +137,7 @@ class ConnectionMixin:
       self._set_connected(True)
       self.k8s_tab.set_ssh(None)
       self.k8s_tab.clear_connection_info()
-      self.dashboard_tab.set_connection("efs", fs=self.sftp, host=None, port=0, user=None)
+      self.dashboard_tab.set_ssh(None)
       self.sidebar.populate_remote(self.sftp)
       self._nav_to(mount_path)
       self._terminal_cwd = mount_path
