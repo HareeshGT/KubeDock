@@ -201,8 +201,27 @@ class EFSManager:
             raise EFSException("Mount path is already in use: {}".format(mount_path))
 
         system = platform.system()
-        if system == "Darwin":
-            # macOS ships /sbin/mount_nfs. EFS exposes NFSv4.1.
+        helper_available = bool(
+            shutil.which("mount.efs") or shutil.which("mount.efs.real")
+        )
+
+        if helper_available:
+            # amazon-efs-utils performs TLS and IAM authorization using the
+            # same AWS credential chain as boto3. If a named profile is
+            # selected, pass it explicitly; otherwise the helper uses the
+            # default profile/credential chain.
+            options = ["tls", "iam"]
+            if self.profile:
+                options.append("awsprofile={}".format(self.profile))
+            cmd = [
+                "mount", "-t", "efs",
+                "-o", ",".join(options),
+                "{}:/".format(filesystem_id), mount_path,
+            ]
+        elif system == "Darwin":
+            # Fallback for machines without amazon-efs-utils. This path uses
+            # ordinary NFS and therefore cannot apply EFS IAM authorization
+            # or TLS; network/VPC access and EFS NFS permissions must allow it.
             source = "{}:/".format(ip)
             cmd = [
                 "mount_nfs",
@@ -213,7 +232,7 @@ class EFSManager:
             source = "{}:/".format(ip)
             cmd = [
                 "mount", "-t", "nfs4",
-                "-o", "nfsvers=4.1,proto=tcp,port=2049",
+                "-o", "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport",
                 source, mount_path,
             ]
         else:
