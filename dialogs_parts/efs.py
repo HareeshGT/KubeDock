@@ -135,7 +135,11 @@ class EFSConnectDialog(QDialog):
         filesystem_id = self.fs_combo.currentData()
         if not filesystem_id:
             raise EFSException("Load EFS first and select a filesystem.")
-        return self._manager, filesystem_id
+        return {
+            "region": self._manager.region,
+            "profile": self._manager.profile,
+            "filesystem_id": filesystem_id,
+        }
 
     def accept(self):
         try:
