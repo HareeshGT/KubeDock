@@ -21,6 +21,7 @@ from typing import Optional
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from .ssh import open_managed_session, close_managed_session
+from elevated_read import ElevatedReadError, download_elevated, is_permission_denied
 
 class FileStreamReadWorker(QThread):
     """Reads a remote file in 64KB chunks on a background QThread.
@@ -312,30 +313,15 @@ class _TransferWorker(QThread):
                 self._sftp._ftp.retrbinary("RETR " + self._sftp.normalize(self._remote), cb, blocksize=256*1024)
             return
         if self._sftp.sudo_user:
-            # sudo path — stream via cat
+            # Explicit sudo-user mode: every read already runs as that user.
+            # (The previous body unpacked SudoFS._run()'s 3-tuple as 2 values
+            # — a ValueError on every call — and round-tripped the bytes
+            # through str, which corrupts binary files. Stream raw bytes.)
             try:
-                st    = self._sftp.stat(self._remote)
-                total = st.st_size
+                total = self._sftp.stat(self._remote).st_size
             except Exception:
                 total = 0
-
-            out, _ = self._sftp._run(
-                "{}cat {} 2>/dev/null".format(
-                    self._sftp._sudo_prefix, self._sftp._sq(self._remote))
-            )
-            if self._cancelled:
-                return
-            data  = out.encode("utf-8", errors="replace")
-            total = total or len(data)
-            chunk = 65536
-            done  = 0
-            with open(self._local, "wb") as f:
-                for i in range(0, len(data), chunk):
-                    if self._cancelled:
-                        return
-                    f.write(data[i : i + chunk])
-                    done = min(i + chunk, len(data))
-                    self.progress.emit(done, total)
+            self._download_elevated(self._sftp.sudo_user, total)
         else:
             # Direct SFTP with real progress.
             #
@@ -352,11 +338,23 @@ class _TransferWorker(QThread):
             # a round trip each time — this is the same technique
             # paramiko's own sftp.get() uses internally.
             REQUEST_SIZE = 256 * 1024
-            st    = self._sftp._sftp.stat(self._remote)
-            total = st.st_size
+            # Only the *remote* stat/open is guarded: a remote
+            # permission-denied here (unreadable file or non-searchable
+            # parent dir) is retried once as ``sudo -n cat``. Anything else
+            # — not found, network/SSH failure, timeout — is re-raised
+            # untouched, and a local write error below never escalates.
+            try:
+                total    = self._sftp._sftp.stat(self._remote).st_size
+                remote_f = self._sftp._sftp.open(self._remote, "rb")
+            except Exception as exc:
+                if (is_permission_denied(exc)
+                        and getattr(self._sftp, "_ssh", None) is not None):
+                    self._download_elevated(None, 0, exc)
+                    return
+                raise
             done  = 0
             chunk = REQUEST_SIZE
-            with self._sftp._sftp.open(self._remote, "rb") as remote_f:
+            with remote_f:
                 remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
                 remote_f.prefetch(total)
                 with open(self._local, "wb") as local_f:
@@ -369,6 +367,18 @@ class _TransferWorker(QThread):
                         local_f.write(buf)
                         done += len(buf)
                         self.progress.emit(done, total)
+
+    def _download_elevated(self, sudo_user, total, original_exc=None):
+        """Read the remote file with ``sudo -n cat`` (see elevated_read.py)."""
+        try:
+            download_elevated(
+                self._sftp._ssh, self._remote, self._local,
+                sudo_user=sudo_user, total=total,
+                on_progress=lambda d, t: self.progress.emit(d, t),
+                is_cancelled=lambda: self._cancelled,
+            )
+        except ElevatedReadError as err:
+            raise IOError(str(err))
 
     def _upload(self):
         if hasattr(self._sftp, "_ftp"):
