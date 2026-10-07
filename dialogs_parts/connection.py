@@ -1,4 +1,5 @@
 from .common import *
+from .efs import EFSConnectDialog
 
 class MarqueeLabel(QWidget):
   """A single-line label that behaves like a normal elided label, but
