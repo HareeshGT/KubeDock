@@ -135,9 +135,10 @@ class EFSManager:
         """Run a mount/unmount command with OS-native privilege escalation."""
         system = platform.system()
         if system == "Darwin":
+            import json
             import shlex
             shell_cmd = " ".join(shlex.quote(str(x)) for x in cmd)
-            script = 'do shell script ' + repr(shell_cmd) + ' with administrator privileges'
+            script = 'do shell script ' + json.dumps(shell_cmd) + ' with administrator privileges'
             result = subprocess.run(
                 ["osascript", "-e", script],
                 check=False, capture_output=True, text=True, timeout=timeout
