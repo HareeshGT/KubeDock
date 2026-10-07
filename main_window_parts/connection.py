@@ -28,12 +28,12 @@ from utils import classify, icon_for, size_fmt, add_recent_instance, monospace_f
 from sudo_fs import SudoFS
 from ftp_fs import FTPFS
 from workers import (
-    CommandWorker, ConnectWorker, FTPConnectionWorker, ConnectionHealthWorker,
+    CommandWorker, ConnectWorker, FTPConnectionWorker, EFSConnectionWorker, ConnectionHealthWorker,
     FileStreamReadWorker, DirectoryListWorker, track_worker, managed_exec_command,
     close_ssh_connection_pool,
 )
 from dialogs import (
-    ConnectDialog, FileTransferDialog, FileEditorDialog, FileExecDialog,
+    ConnectDialog, EFSConnectDialog, FileTransferDialog, FileEditorDialog, FileExecDialog,
     SearchDialog, ConnectingDialog, MediaPlayerDialog, AIExplainDialog,
 )
 from large_file_viewer import LargeFileViewerDialog
@@ -62,6 +62,12 @@ class ConnectionMixin:
       dlg = ConnectDialog(self)
       if dlg.exec_() != QDialog.Accepted:
         return
+
+      efs_values = dlg.efs_values()
+      if efs_values:
+        self._connect_efs(efs_values)
+        return
+
       protocol, host, port, user, pem, password, alias = dlg.values()
       if not host or not user:
         QMessageBox.warning(self, "Missing info", "Host and username are required.")
@@ -86,6 +92,60 @@ class ConnectionMixin:
         self._connect_worker.connected.connect(self._on_ftp_connect_success)
       self._connect_worker.error.connect(self._on_connect_error)
       self._connect_worker.start()
+
+    def _connect_efs(self, values):
+      region = values.get("region")
+      profile = values.get("profile")
+      filesystem_id = values.get("filesystem_id")
+      if not region or not filesystem_id:
+        QMessageBox.warning(self, "AWS EFS", "Region and filesystem are required.")
+        return
+
+      self._pending_conn = dict(
+        protocol="efs",
+        region=region,
+        profile=profile,
+        filesystem_id=filesystem_id,
+      )
+      self.progress.show()
+      self.status.showMessage("Mounting EFS {}…".format(filesystem_id))
+      self._connecting_dlg = ConnectingDialog(self, "AWS EFS {}".format(filesystem_id))
+      self._connecting_dlg.show()
+
+      self._connect_worker = EFSConnectionWorker(region, profile, filesystem_id)
+      self._connect_worker.connected.connect(self._on_efs_connect_success)
+      self._connect_worker.error.connect(self._on_connect_error)
+      self._connect_worker.start()
+
+    def _on_efs_connect_success(self, manager, mount_path, filesystem_id):
+      if self.ssh is not None or self.sftp is not None:
+        self._disconnect(reason="Switching to AWS EFS")
+
+      from local_fs import LocalFS
+      self._efs_manager = manager
+      self._efs_mount_path = mount_path
+      self.ssh = None
+      self.sftp = LocalFS(mount_path)
+      self._conn_protocol = "efs"
+      self.host_label = "EFS {}".format(filesystem_id)
+      self._conn_host = None
+      self._conn_port = 0
+      self._conn_user = None
+      self._conn_pem = None
+      self._conn_password = None
+      self._sudo_user = None
+      self._set_connected(True)
+      self.k8s_tab.set_ssh(None)
+      self.k8s_tab.clear_connection_info()
+      self.dashboard_tab.set_connection("efs", fs=self.sftp, host=None, port=0, user=None)
+      self.sidebar.populate_remote(self.sftp)
+      self._nav_to(mount_path)
+      self._terminal_cwd = mount_path
+      self.terminal.clear()
+      self.terminal.write_output("Connected to AWS EFS {}.".format(filesystem_id))
+      self.terminal.show_prompt("(EFS) $ ")
+      self.status.showMessage("EFS {} mounted at {}".format(filesystem_id, mount_path))
+      self._finish_connect_ui()
 
     def _on_ftp_connect_success(self, fs, home):
       info = self._pending_conn
