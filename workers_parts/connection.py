@@ -161,6 +161,34 @@ class ConnectWorker(QThread):
             self.error.emit(str(e))
 
 
+class EFSConnectionWorker(QThread):
+    """Mount an AWS EFS filesystem without blocking the Qt UI thread."""
+    connected = pyqtSignal(object, object, str)  # manager, mount_path, filesystem_id
+    error = pyqtSignal(str)
+
+    def __init__(self, region, profile, filesystem_id):
+        super().__init__()
+        self.region = region
+        self.profile = profile
+        self.filesystem_id = filesystem_id
+        self.finished.connect(self.deleteLater)
+
+    def run(self):
+        manager = None
+        try:
+            from efs_manager import EFSManager
+            manager = EFSManager(region=self.region, profile=self.profile)
+            manager.connect_aws()
+            mount_path = manager.mount(self.filesystem_id)
+            self.connected.emit(manager, mount_path, self.filesystem_id)
+        except Exception as exc:
+            if manager is not None:
+                try:
+                    manager.close()
+                except Exception:
+                    pass
+            self.error.emit(str(exc))
+
 class FTPConnectionWorker(QThread):
     """Connects to FTP or explicit FTPS without blocking the Qt UI."""
     connected = pyqtSignal(object, str)   # FTPFS, initial path
