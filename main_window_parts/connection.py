@@ -294,6 +294,13 @@ class ConnectionMixin:
         if self.ssh: self.ssh.close()
       except Exception:
         pass
+      try:
+        if self._efs_manager:
+          self._efs_manager.close()
+      except Exception:
+        pass
+      self._efs_manager = None
+      self._efs_mount_path = None
       self.ssh = self.sftp = None
       self._sudo_user = None
       self._conn_host = self._conn_user = self._conn_pem = None
