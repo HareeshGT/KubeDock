@@ -24,7 +24,7 @@ from workers_parts.ssh import (
     track_worker,
 )
 from workers_parts.directory import DirectoryListWorker
-from workers_parts.connection import ConnectWorker, FTPConnectionWorker, ConnectionHealthWorker
+from workers_parts.connection import ConnectWorker, FTPConnectionWorker, EFSConnectionWorker, ConnectionHealthWorker
 from workers_parts.command import CommandWorker, PodExecStreamWorker
 from workers_parts.transfer import FileStreamReadWorker, _TransferWorker, _PtyProc, ScpTransferWorker
 from workers_parts.media import (
@@ -42,6 +42,7 @@ __all__ = [
     "DirectoryListWorker",
     "ConnectWorker",
     "FTPConnectionWorker",
+    "EFSConnectionWorker",
     "ConnectionHealthWorker",
     "CommandWorker",
     "PodExecStreamWorker",
