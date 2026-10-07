@@ -64,6 +64,8 @@ class LocalFS:
 
     def _resolve(self, path):
         path = path or "/"
+        if path in ("/", "~"):
+            return self.root
         if os.path.isabs(path):
             # KubeDock stores absolute paths for local/mounted filesystems.
             candidate = os.path.realpath(path)
