@@ -62,6 +62,8 @@ class LifecycleMixin:
       super().__init__()
       self.ssh      = None
       self.sftp     = None
+      self._efs_manager = None
+      self._efs_mount_path = None
       self._health_worker = None
       self._preview_worker = None # FileStreamReadWorker backing _fetch_preview
       self._directory_worker = None
@@ -144,6 +146,10 @@ class LifecycleMixin:
         if self.ssh: close_ssh_connection_pool(self.ssh)
         if self.sftp: self.sftp.close()
         if self.ssh: self.ssh.close()
+        if self._efs_manager:
+          self._efs_manager.close()
+          self._efs_manager = None
+          self._efs_mount_path = None
       except Exception:
         pass
       event.accept()
