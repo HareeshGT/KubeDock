@@ -131,6 +131,44 @@ class EFSManager:
             raise EFSException("Command timed out: {}".format(" ".join(cmd)))
 
     @staticmethod
+    def _run_privileged(cmd, timeout=45):
+        """Run a mount/unmount command with OS-native privilege escalation."""
+        system = platform.system()
+        if system == "Darwin":
+            import shlex
+            shell_cmd = " ".join(shlex.quote(str(x)) for x in cmd)
+            script = 'do shell script ' + repr(shell_cmd) + ' with administrator privileges'
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                check=False, capture_output=True, text=True, timeout=timeout
+            )
+            if result.returncode != 0 and not result.stderr.strip():
+                result.stderr = result.stdout
+            return result
+        if system == "Linux":
+            for launcher in (["pkexec"], ["sudo", "-n"]):
+                try:
+                    result = subprocess.run(
+                        launcher + cmd, check=False,
+                        capture_output=True, text=True, timeout=timeout
+                    )
+                    if result.returncode != 127:
+                        if result.returncode != 0 and launcher == ["sudo", "-n"]:
+                            continue
+                        return result
+                except FileNotFoundError:
+                    continue
+                except subprocess.TimeoutExpired:
+                    raise EFSException("Privileged command timed out.")
+            raise EFSException(
+                "KubeDock needs administrator permission to mount EFS. "
+                "Install/enable pkexec or configure passwordless sudo for mount/umount."
+            )
+        raise EFSException(
+            "Privileged EFS mounting is not implemented for {}.".format(system)
+        )
+
+    @staticmethod
     def _is_mounted(path):
         if platform.system() == "Darwin":
             result = EFSManager._run(["mount"])
@@ -167,7 +205,7 @@ class EFSManager:
             source = "{}:/".format(ip)
             cmd = [
                 "mount_nfs",
-                "-o", "vers=4,proto=tcp,port=2049",
+                "-o", "nfsvers=4.0,rsize=65536,wsize=65536,hard,timeo=600,retrans=2,noresvport,mountport=2049",
                 source, mount_path,
             ]
         elif system == "Linux":
@@ -182,7 +220,7 @@ class EFSManager:
                 "EFS NFS mounting is not implemented for {}.".format(system)
             )
 
-        result = self._run(cmd, timeout=45)
+        result = self._run_privileged(cmd, timeout=45)
         if result.returncode != 0:
             shutil.rmtree(mount_path, ignore_errors=True)
             detail = (result.stderr or result.stdout).strip()
@@ -203,7 +241,7 @@ class EFSManager:
             return
         system = platform.system()
         cmd = ["umount", path] if system != "Darwin" else ["umount", path]
-        result = self._run(cmd, timeout=30)
+        result = self._run_privileged(cmd, timeout=30)
         if result.returncode != 0 and self._is_mounted(path):
             # macOS sometimes needs diskutil's unmount path for a busy NFS mount.
             if system == "Darwin":
