@@ -130,14 +130,32 @@ class EFSManager:
         except subprocess.TimeoutExpired:
             raise EFSException("Command timed out: {}".format(" ".join(cmd)))
 
-    @staticmethod
-    def _run_privileged(cmd, timeout=45):
-        """Run a mount/unmount command with OS-native privilege escalation."""
+    def _run_privileged(self, cmd, timeout=45):
+        """Run a mount/unmount command with OS-native privilege escalation.
+
+        The privileged process is still pointed at the logged-in user's AWS
+        shared config/credentials files, so mounting never falls back to
+        /root/.aws just because the OS mount operation needs elevation.
+        """
         system = platform.system()
+        user_home = os.path.expanduser("~")
+        env_vars = [
+            "HOME={}".format(user_home),
+            "AWS_CONFIG_FILE={}".format(os.path.join(user_home, ".aws", "config")),
+            "AWS_SHARED_CREDENTIALS_FILE={}".format(
+                os.path.join(user_home, ".aws", "credentials")
+            ),
+        ]
+        if self.profile:
+            env_vars.append("AWS_PROFILE={}".format(self.profile))
+
         if system == "Darwin":
             import json
             import shlex
-            shell_cmd = " ".join(shlex.quote(str(x)) for x in cmd)
+            env_prefix = " ".join(shlex.quote(x) for x in env_vars)
+            shell_cmd = "{} {}".format(
+                env_prefix, " ".join(shlex.quote(str(x)) for x in cmd)
+            )
             script = 'do shell script ' + json.dumps(shell_cmd) + ' with administrator privileges'
             result = subprocess.run(
                 ["osascript", "-e", script],
@@ -149,8 +167,9 @@ class EFSManager:
         if system == "Linux":
             for launcher in (["pkexec"], ["sudo", "-n"]):
                 try:
+                    elevated = launcher + ["env"] + env_vars + cmd
                     result = subprocess.run(
-                        launcher + cmd, check=False,
+                        elevated, check=False,
                         capture_output=True, text=True, timeout=timeout
                     )
                     if result.returncode != 127:
