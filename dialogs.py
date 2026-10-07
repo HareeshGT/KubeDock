@@ -7,6 +7,7 @@ while existing imports such as ``from dialogs import ExecDialog`` remain valid.
 from dialogs_parts.transfer import FileTransferDialog
 from PyQt5.QtGui import QTextDocument  # compatibility export from the former monolith
 from dialogs_parts.connection import MarqueeLabel, _RecentCard, ConnectDialog, ConnectingDialog
+from dialogs_parts.efs import EFSConnectDialog
 from dialogs_parts.ai_explain import AIExplainDialog
 from dialogs_parts.log_viewer import LogViewerDialog
 from dialogs_parts.exec_dialog import ContainerPickerDialog, ExecDialog
@@ -18,7 +19,7 @@ from dialogs_parts.tunnel import _IconButton, _ServiceCard, TunnelCard, TunnelCa
 
 __all__ = [
     "FileTransferDialog", "MarqueeLabel", "_RecentCard", "ConnectDialog",
-    "ConnectingDialog", "AIExplainDialog", "LogViewerDialog",
+    "ConnectingDialog", "EFSConnectDialog", "AIExplainDialog", "LogViewerDialog",
     "ContainerPickerDialog", "ExecDialog", "FileEditorDialog",
     "MediaPlayerDialog", "FileExecDialog", "SearchDialog",
     "ManageTunnelServicesDialog", "TunnelCard", "TunnelCardGrid",
