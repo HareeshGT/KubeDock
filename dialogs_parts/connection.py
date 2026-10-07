@@ -169,6 +169,7 @@ class ConnectDialog(QDialog):
     self.pem_input  = self._field("/home/user/.ssh/key.pem")
     self.password  = self._field("password", password=True)
     self.alias_input = self._field("e.g. prod-web, staging-db (optional)")
+    self._efs_values = None
 
     pem_row = QHBoxLayout()
     pem_row.setSpacing(6)
@@ -199,6 +200,11 @@ class ConnectDialog(QDialog):
     localhost_btn.setObjectName("success")
     localhost_btn.clicked.connect(self._fill_localhost)
     layout.addWidget(localhost_btn)
+
+    efs_btn = icon_button(" Connect to AWS EFS")
+    efs_btn.setObjectName("primary")
+    efs_btn.clicked.connect(self._open_efs_dialog)
+    layout.addWidget(efs_btn)
     layout.addSpacing(4)
 
     btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -347,6 +353,15 @@ class ConnectDialog(QDialog):
     (the Connect button / double-click path on a Recent Instances card)."""
     self._fill_from_recent_dict(inst)
     self.accept()
+
+  def _open_efs_dialog(self):
+    dlg = EFSConnectDialog(self)
+    if dlg.exec_() == QDialog.Accepted:
+      self._efs_values = dlg.values()
+      self.accept()
+
+  def efs_values(self):
+    return self._efs_values
 
   def _fill_localhost(self):
     import getpass
