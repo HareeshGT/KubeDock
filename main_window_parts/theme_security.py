@@ -22,7 +22,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QFont, QColor, QPalette, QKeySequence
 
 import themes as _themes
-from ui_icons import set_icon, apply_text_icon, add_icon_tab, icon_button, icon_pixmap, split_icon_text
+from ui_icons import set_icon, apply_text_icon, add_icon_tab, icon_button, icon_pixmap, split_icon_text, refresh_theme_icons
 from themes import T, THEMES, apply_theme_vars, build_qss, apply_qss_to, save_settings
 from utils import classify, icon_for, size_fmt, add_recent_instance, monospace_font
 from sudo_fs import SudoFS
@@ -136,6 +136,9 @@ class ThemeSecurityMixin:
       self.dashboard_tab.apply_theme()
       self._rebuild_list_header()
       self.theme_picker.refresh_theme()
+      # SVG icons are drawn white by default; re-tint them for the new palette
+      # (otherwise they vanish on light themes like Lavender Light).
+      refresh_theme_icons()
 
       if self.sftp:
         self._refresh(push_history=True)

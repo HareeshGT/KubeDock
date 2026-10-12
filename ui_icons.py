@@ -27,19 +27,23 @@ icon/color/size is requested constantly while building the UI) are cheap.
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QSize, QRectF
+from PyQt5.QtCore import Qt, QSize, QRectF, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 from PyQt5.QtSvg import QSvgRenderer
-from PyQt5.QtWidgets import QApplication, QPushButton
+from PyQt5.QtWidgets import QApplication, QPushButton, QTabWidget, QWidget
 
 try:
-    from themes import T
+    from themes import T, on_color
 except Exception:
     T = {
         "TEXT_PRIMARY": "#E8EAF0",
         "TEXT_DIM": "#A7ACB8",
         "ACCENT": "#A855F7",
+        "DANGER": "#F87171",
     }
+
+    def on_color(hex_color):
+        return "#ffffff"
 
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
@@ -60,6 +64,39 @@ def _to_qcolor(value, fallback="#E8EAF0") -> QColor:
         color = QColor(fallback)
 
     return color
+
+
+def default_icon_color(widget=None) -> str:
+    """Theme-aware tint for icons that were not given an explicit color.
+
+    Every SVG under assets/icons is drawn with a hardcoded white stroke (it
+    was designed for dark themes), so an untinted icon is invisible on a
+    light theme such as Lavender Light. Tinting with the *live* theme
+    palette keeps them readable everywhere:
+
+    * ``primary`` buttons (solid accent fill) -> the readable on-accent color
+    * ``danger`` buttons                      -> the danger color
+    * checked buttons (solid accent fill)     -> the readable on-accent color
+    * everything else                         -> the primary text color
+    """
+    try:
+        if widget is not None:
+            name = widget.objectName()
+            if name == "primary":
+                return on_color(T["ACCENT"])
+            if name == "danger":
+                return T["DANGER"]
+            if (
+                hasattr(widget, "isCheckable")
+                and widget.isCheckable()
+                and widget.isChecked()
+            ):
+                return on_color(T["ACCENT"])
+    except RuntimeError:
+        # Underlying C++ widget already deleted.
+        pass
+
+    return T.get("TEXT_PRIMARY", "#E8EAF0")
 
 
 def _device_pixel_ratio() -> float:
@@ -186,6 +223,9 @@ def icon(
     if not path or not Path(path).is_file():
         return QIcon()
 
+    if color is None:
+        color = default_icon_color()
+
     pixmap = _render_pixmap(path, color, size)
     if pixmap is None:
         return QIcon()
@@ -201,13 +241,29 @@ def set_icon(
     color: Optional[str] = None,
     size: int = 18,
 ) -> None:
-    """Set an SVG icon on any Qt widget supporting setIcon()."""
+    """Set an SVG icon on any Qt widget supporting setIcon().
+
+    When ``color`` is omitted the icon follows the active theme (see
+    ``default_icon_color``) and is re-tinted automatically on theme change
+    via ``refresh_theme_icons()``.
+    """
     if widget is None:
         return
 
+    # Remember how this icon was requested so it can be re-tinted when the
+    # theme changes. An explicit color is the caller's choice and is kept.
+    try:
+        widget.setProperty("kd_icon_name", name)
+        widget.setProperty("kd_icon_size", int(size))
+        widget.setProperty("kd_icon_color", color if color is not None else "")
+    except Exception:
+        pass
+
+    tint = color if color is not None else default_icon_color(widget)
+
     qt_icon = icon(
         name,
-        color=color,
+        color=tint,
         size=size,
     )
 
@@ -215,6 +271,81 @@ def set_icon(
 
     if hasattr(widget, "setIconSize"):
         widget.setIconSize(QSize(size, size))
+
+    if color is None:
+        # Callers often set objectName("primary") / checkable state right
+        # after creating the button, i.e. after this call. Re-resolve once
+        # the current event-loop turn finishes so the tint matches the final
+        # widget state.
+        _schedule_retint(widget)
+
+
+def _retint_widget(widget) -> None:
+    """Re-apply a widget's remembered themed icon with the live theme."""
+    try:
+        name = widget.property("kd_icon_name")
+        if not name or widget.property("kd_icon_color"):
+            return  # no icon, or the caller chose an explicit color
+
+        size = int(widget.property("kd_icon_size") or 16)
+        widget.setIcon(icon(name, color=default_icon_color(widget), size=size))
+    except RuntimeError:
+        # Widget deleted before the deferred call ran.
+        pass
+
+
+def _schedule_retint(widget) -> None:
+    try:
+        QTimer.singleShot(0, lambda w=widget: _retint_widget(w))
+    except Exception:
+        pass
+
+
+def _tab_pixmap_icon(name: str, size: int) -> QIcon:
+    """Tab icon: dim when idle, full-strength when the tab is selected."""
+    path = icon_path(name)
+    if not path or not Path(path).is_file():
+        return QIcon()
+
+    normal = _render_pixmap(path, T.get("TEXT_DIM", "#A7ACB8"), size)
+    active = _render_pixmap(path, T.get("TEXT_PRIMARY", "#E8EAF0"), size)
+
+    result = QIcon()
+    if normal is not None:
+        result.addPixmap(normal, QIcon.Normal)
+    if active is not None:
+        result.addPixmap(active, QIcon.Selected)
+    return result
+
+
+def refresh_theme_icons(root=None) -> None:
+    """Re-tint every themed icon after a theme change.
+
+    Walks ``root`` (or every widget in the application) and re-applies the
+    icons that were created without an explicit color: button/label-less
+    icons registered through ``set_icon`` and tab icons registered through
+    ``add_icon_tab``. Call this after ``apply_theme_vars()``.
+    """
+    app = QApplication.instance()
+    if root is None:
+        widgets = app.allWidgets() if app is not None else []
+    else:
+        widgets = [root] + root.findChildren(QWidget)
+
+    for w in widgets:
+        try:
+            if w.property("kd_icon_name"):
+                _retint_widget(w)
+
+            if isinstance(w, QTabWidget):
+                for i in range(w.count()):
+                    page = w.widget(i)
+                    name = page.property("kd_tab_icon") if page is not None else None
+                    if name:
+                        size = int(page.property("kd_tab_icon_size") or 16)
+                        w.setTabIcon(i, _tab_pixmap_icon(name, size))
+        except RuntimeError:
+            continue
 
 
 def icon_pixmap(
@@ -235,6 +366,9 @@ def icon_pixmap(
 
     if not path or not Path(path).is_file():
         return QPixmap()
+
+    if color is None:
+        color = default_icon_color()
 
     pixmap = _render_pixmap(path, color, size)
     return pixmap if pixmap is not None else QPixmap()
@@ -434,9 +568,15 @@ def add_icon_tab(
     name, cleaned = split_icon_text(text)
 
     if name:
+        try:
+            widget.setProperty("kd_tab_icon", name)
+            widget.setProperty("kd_tab_icon_size", int(size))
+        except Exception:
+            pass
+
         return tab_widget.addTab(
             widget,
-            icon(name, size=size),
+            _tab_pixmap_icon(name, size),
             cleaned,
         )
 
@@ -455,6 +595,8 @@ __all__ = [
     "ICON_DIR",
     "LABEL_TO_ICON",
     "icon_path",
+    "default_icon_color",
+    "refresh_theme_icons",
     "icon",
     "set_icon",
     "icon_pixmap",
