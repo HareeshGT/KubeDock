@@ -1,0 +1,32 @@
+name: Ops Mind diagnostics tests
+
+on:
+  pull_request:
+    paths:
+      - "k8s_ai_ops_parts/**"
+      - "tests/test_ops_mind_diagnostics.py"
+      - ".github/workflows/ops-mind-diagnostics.yml"
+  push:
+    branches:
+      - main
+      - "improve/ops-mind-diagnostics"
+    paths:
+      - "k8s_ai_ops_parts/**"
+      - "tests/test_ops_mind_diagnostics.py"
+      - ".github/workflows/ops-mind-diagnostics.yml"
+
+jobs:
+  ops-mind-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip PyQt5 paramiko
+      - name: Run Ops Mind diagnostics tests
+        run: python -m unittest discover -s tests -p 'test_ops_mind_diagnostics.py' -v

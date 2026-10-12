@@ -23,6 +23,52 @@ from utils import monospace_font
 from .core import *
 
 
+def _kubectl_failure_hint(message: str) -> str:
+    """Return conservative, read-only troubleshooting guidance for common kubectl failures."""
+    text = str(message or "").lower()
+    hints = (
+        (("forbidden", "cannot list", "cannot get", "cannot patch", "cannot delete", "unauthorized"),
+         "Check the selected Kubernetes context and the user's/service account's RBAC permissions for this resource and namespace."),
+        (("notfound", "not found", "no matching resources"),
+         "Verify the resource name, resource type, selected context, and namespace. For namespaced resources, try a read-only list in the intended namespace."),
+        (("unable to connect to the server", "connection refused", "no route to host", "i/o timeout", "context deadline exceeded"),
+         "Check cluster/API-server reachability, VPN or network connectivity, and whether the selected context points to the intended cluster."),
+        (("no context exists", "current-context is not set", "context was not found"),
+         "Refresh the available Kubernetes contexts and select the intended context before retrying."),
+        (("tls handshake timeout", "x509:"),
+         "Check API-server availability, system time, and the selected context's certificate configuration."),
+        (("imagepullbackoff", "errimagepull", "failed to pull image"),
+         "Inspect the pod events and image name/tag, registry reachability, and imagePullSecrets. This operation did not automatically change the workload."),
+        (("crashloopbackoff",),
+         "Inspect the pod's previous/current container logs and events, then check startup configuration and probes."),
+    )
+    for markers, hint in hints:
+        if any(marker in text for marker in markers):
+            return hint
+    return ""
+
+
+def _kubectl_workload_hint(output: str) -> str:
+    """Suggest read-only next checks when a successful read shows an unhealthy pod state."""
+    text = str(output or "").lower()
+    hints = (
+        (("imagepullbackoff", "errimagepull"),
+         "Image pull is failing. Inspect pod events, the image name/tag, registry access, and imagePullSecrets."),
+        (("crashloopbackoff",),
+         "The container is repeatedly exiting. Inspect current and previous container logs, pod events, startup configuration, and probes."),
+        (("oomkilled",),
+         "The container was killed for exceeding memory. Inspect container memory usage/limits and previous logs before changing resources."),
+        (("createcontainerconfigerror",),
+         "Container configuration failed. Inspect pod events and verify referenced ConfigMaps, Secrets, keys, and volume mounts."),
+        (("failedscheduling",),
+         "The pod could not be scheduled. Inspect events, node capacity, taints/tolerations, affinity rules, and resource requests."),
+    )
+    for markers, hint in hints:
+        if any(marker in text for marker in markers):
+            return hint
+    return ""
+
+
 class K8sAIOpsOperationsMixin:
     def _submit(self):
         if not self._ai_access_allowed:
@@ -338,10 +384,18 @@ class K8sAIOpsOperationsMixin:
             return
         if output:
             self.output.append(f"""<br><span style="color:{T['TEXT_DIM']}">kubectl output:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(output).replace(chr(10), '<br>')}</span>""")
+        if exit_code == 0 and not error_text and action.get('action') in {'get', 'describe'}:
+            workload_hint = _kubectl_workload_hint(output)
+            if workload_hint:
+                self._write_info('\nRead-only troubleshooting suggestion:\n' + workload_hint)
         if exit_code != 0 or error_text:
             combined = error_text or output or 'kubectl returned a non-zero exit code.'
             self._remember_operation(action, command, 'failed', combined)
-            self._write_error(f'\n Kubernetes operation failed (exit code {exit_code}):\n{combined}')
+            hint = _kubectl_failure_hint(combined)
+            details = f'\n Kubernetes operation failed (exit code {exit_code}):\n{combined}'
+            if hint:
+                details += f'\n\nSuggested checks (read-only):\n{hint}'
+            self._write_error(details)
             self._speak(_spoken_done_phrase(action, success=False))
             return
         self._remember_operation(action, command, 'success', output)
