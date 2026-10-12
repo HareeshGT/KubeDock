@@ -27,11 +27,15 @@ Rules enforced here (see the feature spec):
     (rounded half up), so the number and its colour can't disagree.
 """
 
+import json
+import math
 import re
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
 TOP_MARKER = "__KD_TOP__"
 LIMITS_MARKER = "__KD_LIMITS__"
+TOP_NODES_MARKER = "__KD_TOP_NODES__"
+NODES_JSON_MARKER = "__KD_NODES_JSON__"
 
 # Utilization colour bands (whole percent): 0–59 low, 60–79 moderate, 80+ high.
 MODERATE_FROM = 60
@@ -60,40 +64,45 @@ _LIMITS_JSONPATH = (
 # ── command ──────────────────────────────────────────────────────────
 
 def build_pods_command(ns_flag: str, context_flag: str = "") -> str:
-  """The single combined command for one Pods refresh.
+  """Build all pod-card data collection into one worker invocation per refresh.
 
-  Every kubectl invocation carries the context flag explicitly: the tab's
-  _apply_context_to_command() only patches the FIRST `kubectl` in a string,
-  so chaining without this would send the later calls to whatever context
-  the jump host happens to have active. stderr is folded into each section
-  (2>&1) so nothing is left to trail after the worker's "[stderr]" marker.
+  Pod listing and container limits follow the selected namespace. Pod usage,
+  node usage, and node capacity are cluster-wide and each queried once.
+  Every kubectl command repeats the selected context because context
+  injection patches only the first command in a shell script.
   """
   base = " ".join(p for p in ("kubectl", context_flag) if p)
   timeout = f"--request-timeout={_REQUEST_TIMEOUT}"
   return "\n".join((
     f"{base} get pods {ns_flag} -o wide 2>&1",
     f"echo {TOP_MARKER}",
-    f"{base} top pods {ns_flag} --no-headers {timeout} 2>&1",
+    f"{base} top pods -A --no-headers {timeout} 2>&1",
     f"echo {LIMITS_MARKER}",
     f"{base} get pods {ns_flag} {timeout} -o jsonpath='{_LIMITS_JSONPATH}' 2>&1",
+    f"echo {TOP_NODES_MARKER}",
+    f"{base} top nodes --no-headers {timeout} 2>&1",
+    f"echo {NODES_JSON_MARKER}",
+    f"{base} get nodes {timeout} -o json 2>&1",
   ))
 
-
-def split_pod_sections(out: str) -> Tuple[str, str, str]:
-  """(pods_text, top_text, limits_text). Output without markers is treated
-  as a plain `get pods` listing, i.e. no metrics sections."""
-  sections = {"pods": [], "top": [], "limits": []}
+def split_pod_sections(out: str) -> Tuple[str, str, str, str, str]:
+  """Return pod list, pod usage, pod limits, node usage, and node JSON text."""
+  sections = {"pods": [], "top": [], "limits": [], "top_nodes": [], "nodes": []}
   current = "pods"
+  marker_sections = {
+    TOP_MARKER: "top",
+    LIMITS_MARKER: "limits",
+    TOP_NODES_MARKER: "top_nodes",
+    NODES_JSON_MARKER: "nodes",
+  }
   for line in (out or "").splitlines():
     stripped = line.strip()
-    if stripped == TOP_MARKER:
-      current = "top"
-    elif stripped == LIMITS_MARKER:
-      current = "limits"
+    if stripped in marker_sections:
+      current = marker_sections[stripped]
     else:
       sections[current].append(line)
-  return ("\n".join(sections["pods"]), "\n".join(sections["top"]),
-          "\n".join(sections["limits"]))
+  return tuple("\n".join(sections[name]) for name in
+               ("pods", "top", "limits", "top_nodes", "nodes"))
 
 
 # ── Kubernetes quantities ────────────────────────────────────────────
@@ -118,10 +127,15 @@ def parse_quantity(text) -> Optional[float]:
   if not m:
     return None
   number, exponent, suffix = m.groups()
-  value = float(number)
-  if exponent:
-    return value * (10.0 ** int(exponent[1:]))
-  return value * _SUFFIX[suffix or ""]
+  try:
+    value = float(number)
+    if exponent:
+      value *= 10.0 ** int(exponent[1:])
+    else:
+      value *= _SUFFIX[suffix or ""]
+  except (ValueError, OverflowError):
+    return None
+  return value if math.isfinite(value) else None
 
 
 def parse_cpu_millicores(text) -> Optional[float]:
@@ -231,6 +245,73 @@ def parse_limits_output(text: str) -> Dict[PodKey, PodLimits]:
   return limits
 
 
+class NodeResources(NamedTuple):
+  """Node denominator values and source labels, cached once per refresh."""
+  cpu_millicores: Optional[float]
+  memory_bytes: Optional[float]
+  cpu_source: str
+  memory_source: str
+
+
+def parse_top_nodes_output(text: str) -> Tuple[Dict[str, Usage], str]:
+  """Parse node usage output, keyed by node name.
+
+  Node usage stays separate from capacity and is never used as a denominator
+  for pod percentages.
+  """
+  usage: Dict[str, Usage] = {}
+  problem = ""
+  for line in (text or "").splitlines():
+    parts = line.split()
+    if not parts:
+      continue
+    if len(parts) >= 5:
+      cpu = parse_cpu_millicores(parts[1])
+      memory = parse_memory_bytes(parts[3])
+      if cpu is not None and memory is not None:
+        usage[parts[0]] = Usage(cpu, memory)
+        continue
+    if not problem and parts[0].upper() != "NAME":
+      problem = line.strip()
+  return usage, problem
+
+
+def _node_denominator(allocatable: dict, capacity: dict, resource: str,
+                      parser) -> Tuple[Optional[float], str]:
+  value = parser(allocatable.get(resource, ""))
+  if value is not None and value > 0:
+    return value, "Node allocatable"
+  value = parser(capacity.get(resource, ""))
+  if value is not None and value > 0:
+    return value, "Node capacity"
+  return None, "Node capacity/allocatable unavailable"
+
+
+def parse_nodes_json(text: str) -> Dict[str, NodeResources]:
+  """Parse one nodes JSON response into per-node CPU/memory denominators."""
+  try:
+    payload = json.loads(text or "")
+  except (TypeError, ValueError):
+    return {}
+  if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+    return {}
+  result: Dict[str, NodeResources] = {}
+  for item in payload["items"]:
+    if not isinstance(item, dict):
+      continue
+    metadata = item.get("metadata") or {}
+    name = metadata.get("name")
+    status = item.get("status") or {}
+    allocatable = status.get("allocatable") or {}
+    capacity = status.get("capacity") or {}
+    if not name:
+      continue
+    cpu, cpu_source = _node_denominator(allocatable, capacity, "cpu", parse_cpu_millicores)
+    memory, memory_source = _node_denominator(allocatable, capacity, "memory", parse_memory_bytes)
+    result[name] = NodeResources(cpu, memory, cpu_source, memory_source)
+  return result
+
+
 def _sum_limits(values: List[Optional[float]]) -> Optional[float]:
   # No containers, or any container without a usable (positive) limit,
   # means there is no honest total to divide by.
@@ -278,27 +359,35 @@ def unavailable_reading(reason: str) -> Reading:
   return Reading(False, NA, None, None, reason)
 
 
-def _reading(kind: str, usage: float, limit: Optional[float], limits_known: bool,
-             fmt) -> Reading:
+def _reading(kind: str, usage: float, denominator: Optional[float],
+             limits_known: bool, fmt, source: str = "Pod limit",
+             fallback_reason: str = "") -> Reading:
   value = fmt(usage)
-  pct = utilization_percent(usage, limit)
+  pct = utilization_percent(usage, denominator)
   if pct is not None:
-    tip = f"{kind} usage {value} of {fmt(limit)} limit ({pct}%)"
+    tip = f"{kind} usage {value} of {fmt(denominator)} {source} ({pct}%)"
   elif not limits_known:
     tip = (f"{kind} usage {value}. Container limits could not be read, "
-           "so utilization is unavailable.")
+           "so the percentage is unavailable.")
+  elif fallback_reason:
+    tip = f"{kind} usage {value}. {fallback_reason}"
   else:
-    tip = (f"{kind} usage {value}. At least one container has no {kind} "
-           "limit, so utilization can't be calculated.")
+    tip = (f"{kind} usage {value}. A valid {kind.lower()} denominator "
+           "is unavailable, so the percentage cannot be calculated.")
   return Reading(True, value, pct, usage_level(pct), tip)
 
 
 def build_pod_metrics(key: PodKey, usage: Dict[PodKey, Usage],
-                      limits: Dict[PodKey, PodLimits], problem: str = ""
+                      limits: Dict[PodKey, PodLimits], problem: str = "",
+                      node_name: str = "",
+                      node_resources: Optional[Dict[str, NodeResources]] = None
                       ) -> PodMetrics:
-  """Metrics for one pod. Looks up by (namespace, name) so same-named pods in
-  different namespaces never share values; a pod with no usage row (brand
-  new, metrics-server down, no permission, …) is N/A rather than zero."""
+  """Use pod limits when known and present; otherwise node allocatable/capacity.
+
+  CPU and memory fall back independently. If pod limits could not be read at
+  all, do not assume limits are absent. Node usage is never used as a proxy
+  for pod usage or as a denominator.
+  """
   u = usage.get(key)
   if u is None:
     reason = (f"Metrics unavailable: {problem[:160]}" if problem else
@@ -306,14 +395,47 @@ def build_pod_metrics(key: PodKey, usage: Dict[PodKey, Usage],
               "running, or metrics-server may be unavailable).")
     r = unavailable_reading(reason)
     return PodMetrics(r, r)
+
   pod_limits = limits.get(key)
-  known = pod_limits is not None
+  limits_known = pod_limits is not None
+  node_name = (node_name or "").strip()
+  assigned_node = None
+  if node_name and node_name not in ("-", "<none>", "<unknown>"):
+    assigned_node = (node_resources or {}).get(node_name)
+
+  def resource_reading(kind: str, actual: float, pod_limit: Optional[float],
+                       node_value: str, source_value: str, fmt) -> Reading:
+    if not limits_known:
+      return _reading(kind, actual, None, False, fmt)
+    if pod_limit is not None and pod_limit > 0:
+      return _reading(kind, actual, pod_limit, True, fmt, "Pod limit")
+    if assigned_node is not None:
+      denominator = getattr(assigned_node, node_value)
+      source = getattr(assigned_node, source_value)
+      if denominator is not None and denominator > 0:
+        return _reading(kind, actual, denominator, True, fmt, source)
+    if not node_name or node_name in ("-", "<none>", "<unknown>"):
+      reason = (f"No pod {kind.lower()} limit and this pod has no assigned "
+                "node, so the percentage is unavailable.")
+    else:
+      reason = (f"No pod {kind.lower()} limit and node '{node_name}' has no "
+                f"valid {kind.lower()} allocatable/capacity value.")
+    return _reading(kind, actual, None, True, fmt, fallback_reason=reason)
+
   return PodMetrics(
-    _reading("CPU", u.cpu_millicores,
-             pod_limits.cpu_millicores if known else None, known, format_cpu),
-    _reading("Memory", u.memory_bytes,
-             pod_limits.memory_bytes if known else None, known, format_memory),
+    resource_reading("CPU", u.cpu_millicores,
+      pod_limits.cpu_millicores if limits_known else None,
+      "cpu_millicores", "cpu_source", format_cpu),
+    resource_reading("Memory", u.memory_bytes,
+      pod_limits.memory_bytes if limits_known else None,
+      "memory_bytes", "memory_source", format_memory),
   )
+
+
+def refresh_result_is_current(request_generation: int, current_generation: int,
+                              request_key: tuple, current_key: tuple) -> bool:
+  """Reject a response invalidated by a newer refresh or changed view."""
+  return request_generation == current_generation and request_key == current_key
 
 
 # ── presentation (string-level; the card maps colour keys onto the theme) ─
