@@ -387,7 +387,7 @@ class K8sAIOpsOperationsMixin:
         if exit_code == 0 and not error_text and action.get('action') in {'get', 'describe'}:
             workload_hint = _kubectl_workload_hint(output)
             if workload_hint:
-                self._write_info('\\nRead-only troubleshooting suggestion:\\n' + workload_hint)
+                self._write_info('\nRead-only troubleshooting suggestion:\n' + workload_hint)
         if exit_code != 0 or error_text:
             combined = error_text or output or 'kubectl returned a non-zero exit code.'
             self._remember_operation(action, command, 'failed', combined)
