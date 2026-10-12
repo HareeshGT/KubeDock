@@ -313,9 +313,10 @@ def parse_nodes_json(text: str) -> Dict[str, NodeResources]:
 
 
 def _sum_limits(values: List[Optional[float]]) -> Optional[float]:
-  # No containers, or any container without a usable (positive) limit,
-  # means there is no honest total to divide by.
-  if not values or any(v is None or v <= 0 for v in values):
+  # Missing a limit means the aggregate is incomplete and should use the
+  # node fallback. Preserve an explicit zero so it is handled as a zero
+  # denominator (N/A), not mistaken for an absent limit.
+  if not values or any(v is None for v in values):
     return None
   return sum(values)
 
@@ -369,6 +370,9 @@ def _reading(kind: str, usage: float, denominator: Optional[float],
   elif not limits_known:
     tip = (f"{kind} usage {value}. Container limits could not be read, "
            "so the percentage is unavailable.")
+  elif denominator is not None and denominator <= 0:
+    tip = (f"{kind} usage {value}. The configured {source.lower()} is zero, "
+           "so the percentage cannot be calculated.")
   elif fallback_reason:
     tip = f"{kind} usage {value}. {fallback_reason}"
   else:
@@ -407,7 +411,7 @@ def build_pod_metrics(key: PodKey, usage: Dict[PodKey, Usage],
                        node_value: str, source_value: str, fmt) -> Reading:
     if not limits_known:
       return _reading(kind, actual, None, False, fmt)
-    if pod_limit is not None and pod_limit > 0:
+    if pod_limit is not None:
       return _reading(kind, actual, pod_limit, True, fmt, "Pod limit")
     if assigned_node is not None:
       denominator = getattr(assigned_node, node_value)
