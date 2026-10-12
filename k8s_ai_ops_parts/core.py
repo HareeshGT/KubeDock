@@ -546,6 +546,8 @@ Which resources each action accepts:
 - rollout_status: deployment, statefulset, daemonset
 
 If the request needs a combination not listed above, return unsupported with a short, helpful reason. For example, for "restart pod web" say that pods cannot be restarted directly and suggest restarting the owning deployment or deleting the pod.
+- Requests to inspect the live environment of a running container (for example, "show the actual environment variables inside pod X") are not supported by this operation set. Return unsupported and explain that `get pod` shows Kubernetes pod configuration, not necessarily the process environment inside the running container. Do not pretend a ConfigMap/Secret value or pod spec proves what a running process currently sees.
+- Do not convert requests to inspect logs, execute commands inside containers, or read live process state into an unrelated `get` operation. Return unsupported with a brief explanation.
 
 Normalize aliases to the exact resource value:
 deploy/deployments -> deployment; sts -> statefulset; ds -> daemonset; po/pods -> pod; svc/services -> service; ing -> ingress; cm -> configmap; secrets -> secret; cj -> cronjob; autoscaler/horizontalpodautoscaler -> hpa; persistent volume claim -> pvc; persistent volume -> pv.
