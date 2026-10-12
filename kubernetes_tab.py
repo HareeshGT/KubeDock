@@ -56,6 +56,11 @@ class KubernetesTab(KubernetesCoreMixin, KubernetesUiMixin, KubernetesWorkloadsM
     self._pod_ai_log_worker = None
     self._pod_ai_worker   = None
     self._pod_ai_dialog   = None
+    # Pods refresh is single-flight (see _load_pods): at most one combined
+    # pods+metrics command runs at a time; a request made meanwhile sets
+    # _pods_reload_pending and runs once the current one finishes.
+    self._pods_load_inflight = False
+    self._pods_reload_pending = False
     self._events_raw = ""
     self._events_warnings_only = False
     self._auto_refresh_timer = QTimer(self)

@@ -1,4 +1,8 @@
 from .common import *
+from k8s_metrics import (
+  build_pod_metrics, build_pods_command, parse_limits_output,
+  parse_top_output, split_pod_sections,
+)
 
 
 _PAREN_OPEN_RE = re.compile(r"^\(\S*$")
@@ -27,8 +31,49 @@ class KubernetesResourcesMixin:
     return cleaned, last_restart
 
 
+  def _pods_request_key(self):
+    return (self._current_context, self._current_ns)
+
+
   def _load_pods(self):
-    self._run_cmd(f"kubectl get pods {self._ns_flag()} -o wide 2>&1", self._populate_pods)
+    """One refresh = ONE worker/SSH command: the pod list plus the
+    `kubectl top pods` usage and container limits behind each card's
+    CPU/memory indicators (see k8s_metrics.build_pods_command). Requests
+    never overlap: a call made while one is in flight (auto-refresh timer,
+    manual refresh, namespace change, a pod action) is coalesced into a
+    single follow-up refresh once the current one lands."""
+    if not self.ssh:
+      return
+    if self._pods_load_inflight:
+      self._pods_reload_pending = True
+      return
+    self._pods_load_inflight = True
+    self._pods_reload_pending = False
+    key = self._pods_request_key()
+    cmd = build_pods_command(self._ns_flag(), self._context_flag())
+    # The context flag is already on every kubectl call in `cmd`;
+    # apply_context would only patch the first one.
+    self._run_cmd(cmd, lambda out: self._on_pods_loaded(key, out),
+                  apply_context=False, on_error=self._on_pods_load_failed)
+
+
+  def _on_pods_loaded(self, key, out: str):
+    self._pods_load_inflight = False  # first, so a failure below can't wedge refreshes
+    same_view = (key == self._pods_request_key())
+    if same_view:
+      self._populate_pods(out)
+    # A different namespace/context was picked meanwhile (the response is
+    # stale and not shown), or another refresh was requested: run it now.
+    if self._pods_reload_pending or not same_view:
+      self._load_pods()
+
+
+  def _on_pods_load_failed(self, err):
+    # _run_cmd has already logged the error; just free the slot, and honour
+    # a refresh that was requested while this one was running.
+    self._pods_load_inflight = False
+    if self._pods_reload_pending:
+      self._load_pods()
 
 
   def _populate_pods(self, out: str):
@@ -36,10 +81,15 @@ class KubernetesResourcesMixin:
     all_ns = (self._current_ns == "(all namespaces)")
     total  = 0
     running = 0
+    # `out` is the combined refresh output; split it into the pod listing
+    # and the usage / limits sections, parsed once for the whole list.
+    pods_text, top_text, limits_text = split_pod_sections(out)
+    usage, usage_problem = parse_top_output(top_text, self._current_ns or "default")
+    limits = parse_limits_output(limits_text)
     # The namespace chip on each card is only shown in "(all namespaces)"
     # view (i.e. rows can differ) — when one namespace is selected it's
     # implied by ns_combo already, so the chip would just repeat itself.
-    for line in out.strip().splitlines()[1:]:
+    for line in pods_text.strip().splitlines()[1:]:
       parts, last_restart = self._split_pod_line(line)
       if all_ns:
         # `kubectl get pods --all-namespaces -o wide` prepends NAMESPACE.
@@ -64,7 +114,10 @@ class KubernetesResourcesMixin:
       item.setData(Qt.UserRole, meta)
       item.setSizeHint(QSize(0, PodCardWidget.CARD_HEIGHT))
       self.pod_list.addItem(item)
-      card = PodCardWidget(meta, all_ns)
+      # Matched on (namespace, name): identical pod names in different
+      # namespaces must never share usage figures.
+      card = PodCardWidget(meta, all_ns, metrics=build_pod_metrics(
+        (ns, name), usage, limits, usage_problem))
       card.ai_requested.connect(self._on_pod_card_ai_requested)
       self.pod_list.setItemWidget(item, card)
       if meta.get("name") == self._pod_ai_pod:

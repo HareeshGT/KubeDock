@@ -19,6 +19,7 @@ from ui_icons import set_icon, icon_pixmap, icon_button, apply_text_icon
 from themes import T
 from ui_kit import pill_qss, chip_qss, RADIUS_CARD
 from utils import monospace_font
+from k8s_metrics import color_key, indicator_text, unavailable_reading
 
 
 def _hex_to_rgb(h: str) -> str:
@@ -64,6 +65,20 @@ def _chip(text: str) -> QLabel:
 def _meta_label(text: str) -> QLabel:
   lbl = QLabel(text)
   lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+  return lbl
+
+
+def _metric_label(widest_sample: str) -> QLabel:
+  """Right-aligned CPU/memory usage indicator. Reserves room for the widest
+  expected text so the CPU and memory columns line up from card to card
+  (same trick as _age_label / _pill). Colour and text are set later by
+  PodCardWidget.set_metrics()."""
+  lbl = _meta_label("")
+  f = QFont(lbl.font())
+  f.setPixelSize(12)
+  f.setBold(True)
+  lbl.setMinimumWidth(QFontMetrics(f).horizontalAdvance(widest_sample) + 4)
+  lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
   return lbl
 
 
@@ -198,7 +213,9 @@ class PodCardWidget(_CardBase):
 
   ai_requested = pyqtSignal(dict)
 
-  def __init__(self, meta: dict, show_namespace: bool, parent=None):
+  def __init__(self, meta: dict, show_namespace: bool, parent=None, metrics=None):
+    """`metrics` is a k8s_metrics.PodMetrics (live CPU/memory usage for this
+    pod), or None when none is available — shown as N/A, never as zero."""
     super().__init__(_status_accent(meta.get("status", "")), parent)
 
     outer = QVBoxLayout(self)
@@ -256,10 +273,33 @@ class PodCardWidget(_CardBase):
 
     node_lbl = _meta_label(meta.get("node", "-") or "-")
     node_lbl.setToolTip(meta.get("node", ""))
-    node_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+    # Ignored (not Expanding) so a long node name gives way to the usage
+    # indicators on narrow windows instead of pushing the card wider.
+    node_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     bottom.addWidget(node_lbl, 1)
 
+    # Live usage, right-aligned so the two columns line up under the pills.
+    self._cpu_lbl = _metric_label("CPU: 1500m (100%)")
+    self._mem_lbl = _metric_label("Memory: 1023Mi (100%)")
+    bottom.addWidget(self._cpu_lbl)
+    bottom.addWidget(self._mem_lbl)
+    self.set_metrics(metrics)
+
     outer.addLayout(bottom)
+
+  def set_metrics(self, metrics):
+    """Show (or refresh in place) this pod's CPU/memory usage. `metrics` is a
+    k8s_metrics.PodMetrics or None. Only the two labels change — selection,
+    hover, the AI button and the rest of the card are untouched."""
+    self._metrics = metrics
+    na = unavailable_reading("Metrics not loaded")
+    cpu, mem = (metrics.cpu, metrics.memory) if metrics is not None else (na, na)
+    for lbl, name, reading in ((self._cpu_lbl, "CPU", cpu),
+                               (self._mem_lbl, "Memory", mem)):
+      color = T.get(color_key(reading), T["TEXT_MUTED"])
+      lbl.setText(indicator_text(name, reading))
+      lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
+      lbl.setToolTip(reading.tooltip)
 
   def set_ai_busy(self, busy: bool):
     """Called by KubernetesTab while a diagnosis for this pod is in

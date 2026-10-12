@@ -446,14 +446,17 @@ class KubernetesCoreMixin:
       self.progress.hide()
       callback(out)
 
-    def on_error(e):
+    # Not named `on_error`: that would shadow the parameter of the same name,
+    # so the caller's handler could never run and `if on_error:` below would
+    # call this function again (infinite recursion on any worker error).
+    def handle_error(e):
       self.progress.hide()
       self._log(f"[error] {e}")
       if on_error:
         on_error(e)
 
     worker.done.connect(on_done)
-    worker.error.connect(on_error)
+    worker.error.connect(handle_error)
     track_worker(self._workers, worker)
     worker.start()
 
@@ -657,5 +660,3 @@ class KubernetesCoreMixin:
     f.setStyleSheet(f"color: {T['BORDER']};")
     f.setFixedWidth(1)
     return f
-
-
