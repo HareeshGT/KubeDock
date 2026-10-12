@@ -61,6 +61,7 @@ class KubernetesTab(KubernetesCoreMixin, KubernetesUiMixin, KubernetesWorkloadsM
     # _pods_reload_pending and runs once the current one finishes.
     self._pods_load_inflight = False
     self._pods_reload_pending = False
+    self._pods_refresh_generation = 0
     self._events_raw = ""
     self._events_warnings_only = False
     self._auto_refresh_timer = QTimer(self)
