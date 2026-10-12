@@ -296,6 +296,44 @@ def _groq_truncated(data):
     return bool(choices) and choices[0].get("finish_reason") == "length"
 
 
+def _cerebras_request(prompt, api_key, model):
+    """Build a Cerebras Chat Completions request."""
+    url = "https://api.cerebras.ai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    body = json.dumps({
+        "model": model,
+        "max_completion_tokens": MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+    return url, headers, body
+
+
+def _cerebras_parse(data):
+    try:
+        return (data["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def _cerebras_error(detail, code):
+    if isinstance(detail, dict):
+        error = detail.get("error")
+        if isinstance(error, dict):
+            return error.get("message")
+        if isinstance(error, str):
+            return error
+    return detail.strip() if isinstance(detail, str) and detail.strip() else None
+
+
+def _cerebras_truncated(data):
+    choices = data.get("choices") or []
+    return bool(choices) and choices[0].get("finish_reason") == "length"
+
+
 
 PROVIDERS = {
     "anthropic": {
@@ -383,6 +421,20 @@ PROVIDERS = {
         ],
 
         "default_model": "openai/gpt-oss-120b",
+    },
+    "cerebras": {
+        "label": "Cerebras (free tier)",
+        "key_placeholder": "csk-…",
+        "build_request": _cerebras_request,
+        "parse_response": _cerebras_parse,
+        "parse_error": _cerebras_error,
+        "was_truncated": _cerebras_truncated,
+        "model_samples": [
+            "gpt-oss-120b",
+            "llama3.1-8b",
+            "qwen-3-235b-a22b-instruct-2507",
+        ],
+        "default_model": "gpt-oss-120b",
     },
 }
 
