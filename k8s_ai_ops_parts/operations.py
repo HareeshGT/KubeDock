@@ -367,9 +367,9 @@ class K8sAIOpsOperationsMixin:
             combined = error_text or output or 'kubectl returned a non-zero exit code.'
             self._remember_operation(action, command, 'failed', combined)
             hint = _kubectl_failure_hint(combined)
-            details = f'\\n Kubernetes operation failed (exit code {exit_code}):\\n{combined}'
+            details = f'\n Kubernetes operation failed (exit code {exit_code}):\n{combined}'
             if hint:
-                details += f'\\n\\nSuggested checks (read-only):\\n{hint}'
+                details += f'\\n\\nSuggested checks (read-only):\n{hint}'
             self._write_error(details)
             self._speak(_spoken_done_phrase(action, success=False))
             return
