@@ -48,6 +48,27 @@ def _kubectl_failure_hint(message: str) -> str:
     return ""
 
 
+def _kubectl_workload_hint(output: str) -> str:
+    """Suggest read-only next checks when a successful read shows an unhealthy pod state."""
+    text = str(output or "").lower()
+    hints = (
+        (("imagepullbackoff", "errimagepull"),
+         "Image pull is failing. Inspect pod events, the image name/tag, registry access, and imagePullSecrets."),
+        (("crashloopbackoff",),
+         "The container is repeatedly exiting. Inspect current and previous container logs, pod events, startup configuration, and probes."),
+        (("oomkilled",),
+         "The container was killed for exceeding memory. Inspect container memory usage/limits and previous logs before changing resources."),
+        (("createcontainerconfigerror",),
+         "Container configuration failed. Inspect pod events and verify referenced ConfigMaps, Secrets, keys, and volume mounts."),
+        (("failedscheduling",),
+         "The pod could not be scheduled. Inspect events, node capacity, taints/tolerations, affinity rules, and resource requests."),
+    )
+    for markers, hint in hints:
+        if any(marker in text for marker in markers):
+            return hint
+    return ""
+
+
 class K8sAIOpsOperationsMixin:
     def _submit(self):
         if not self._ai_access_allowed:
@@ -363,6 +384,10 @@ class K8sAIOpsOperationsMixin:
             return
         if output:
             self.output.append(f"""<br><span style="color:{T['TEXT_DIM']}">kubectl output:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(output).replace(chr(10), '<br>')}</span>""")
+        if exit_code == 0 and not error_text and action.get('action') in {'get', 'describe'}:
+            workload_hint = _kubectl_workload_hint(output)
+            if workload_hint:
+                self._write_info('\\nRead-only troubleshooting suggestion:\\n' + workload_hint)
         if exit_code != 0 or error_text:
             combined = error_text or output or 'kubectl returned a non-zero exit code.'
             self._remember_operation(action, command, 'failed', combined)
