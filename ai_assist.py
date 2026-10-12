@@ -240,6 +240,59 @@ def _deepseek_truncated(data):
     return bool(choices) and choices[0].get("finish_reason") == "length"
 
 
+
+def _mistral_request(prompt, api_key, model):
+    """Build a Mistral Studio chat-completions request."""
+    url = "https://api.mistral.ai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    body = json.dumps({
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+    return url, headers, body
+
+
+def _mistral_parse(data):
+    try:
+        message = data["choices"][0]["message"]
+        content = message.get("content")
+        # Text chat completions normally return a string. Be defensive if
+        # the API ever returns structured content blocks.
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            return "".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ).strip()
+        return ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def _mistral_error(detail, code):
+    if isinstance(detail, dict):
+        err = detail.get("error")
+        if isinstance(err, dict):
+            return err.get("message") or err.get("detail")
+        if isinstance(err, str):
+            return err
+        return detail.get("message") or detail.get("detail")
+    if isinstance(detail, str):
+        return detail.strip() or None
+    return None
+
+
+def _mistral_truncated(data):
+    choices = data.get("choices") or []
+    return bool(choices) and choices[0].get("finish_reason") == "length"
+
+
 def _groq_request(prompt, api_key, model):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -368,6 +421,21 @@ PROVIDERS = {
             "deepseek-v4-pro",
         ],
         "default_model": "deepseek-flash",
+    },
+    "mistral": {
+        "label": "Mistral AI (free mode)",
+        "key_placeholder": "API key from Mistral Studio",
+        "build_request": _mistral_request,
+        "parse_response": _mistral_parse,
+        "parse_error": _mistral_error,
+        "was_truncated": _mistral_truncated,
+        "model_samples": [
+            "mistral-small-latest",
+            "ministral-8b-latest",
+            "mistral-large-latest",
+            "labs-leanstral-2603",
+        ],
+        "default_model": "mistral-small-latest",
     },
     "groq": {
         "label": "Groq (free tier)",
