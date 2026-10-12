@@ -288,10 +288,43 @@ def _retint_widget(widget) -> None:
             return  # no icon, or the caller chose an explicit color
 
         size = int(widget.property("kd_icon_size") or 16)
-        widget.setIcon(icon(name, color=default_icon_color(widget), size=size))
+        tint = default_icon_color(widget)
+
+        if hasattr(widget, "setIcon"):
+            widget.setIcon(icon(name, color=tint, size=size))
+        elif hasattr(widget, "setPixmap"):
+            # QLabel-style icon (card headers, badges, ...)
+            widget.setPixmap(icon_pixmap(name, color=tint, size=size))
     except RuntimeError:
         # Widget deleted before the deferred call ran.
         pass
+
+
+def set_label_icon(
+    label,
+    name: str,
+    size: int = 18,
+    color: Optional[str] = None,
+) -> None:
+    """Show an SVG icon on a QLabel (the label counterpart of ``set_icon``).
+
+    Without an explicit ``color`` the icon follows the active theme and is
+    re-tinted by ``refresh_theme_icons()`` when the theme changes — a plain
+    ``label.setPixmap(icon_pixmap(...))`` is rendered once and stays stuck
+    on the colors of whatever theme was active when it was built.
+    """
+    if label is None:
+        return
+
+    try:
+        label.setProperty("kd_icon_name", name)
+        label.setProperty("kd_icon_size", int(size))
+        label.setProperty("kd_icon_color", color if color is not None else "")
+    except Exception:
+        pass
+
+    tint = color if color is not None else default_icon_color(label)
+    label.setPixmap(icon_pixmap(name, color=tint, size=size))
 
 
 def _schedule_retint(widget) -> None:
@@ -597,6 +630,7 @@ __all__ = [
     "icon_path",
     "default_icon_color",
     "refresh_theme_icons",
+    "set_label_icon",
     "icon",
     "set_icon",
     "icon_pixmap",

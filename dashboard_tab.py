@@ -36,7 +36,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame, QScrollArea, QTreeWidget, QTreeWidgetItem, QGraphicsDropShadowEffect, QSizePolicy, QComboBox
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QVariantAnimation, QEasingCurve, QEvent
 from PyQt5.QtGui import QColor, QPainter, QPen, QPainterPath
-from ui_icons import set_icon, icon_pixmap, apply_text_icon, add_icon_tab, split_icon_text, icon_button
+from ui_icons import set_icon, icon_pixmap, apply_text_icon, add_icon_tab, split_icon_text, icon_button, set_label_icon, refresh_theme_icons
 from themes import T
 from workers import CommandWorker, track_worker
 from utils import monospace_font, size_fmt
