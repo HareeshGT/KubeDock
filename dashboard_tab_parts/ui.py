@@ -451,6 +451,8 @@ class DashboardUIMixin:
       self._apply_styles()
       for tile in self.findChildren(QFrame, "ftp_metric_tile"):
         tile.setStyleSheet(f"QFrame#ftp_metric_tile {{ background: {T['BG_PANEL']}; border: 1px solid {T['BORDER']}; border-radius: 10px; }}")
+      # Palette the widgets above were styled with; apply_theme() remaps from it.
+      self._styled_palette = snapshot_palette()
   
   
   def _make_card(self, title: str, icon: str = None) -> dict:

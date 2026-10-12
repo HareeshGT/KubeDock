@@ -224,7 +224,7 @@ class PodCardWidget(_CardBase):
 
     top = QHBoxLayout()
     top.setSpacing(8)
-    top.addWidget(_icon_badge("pods", self._accent, tint=False))
+    top.addWidget(_icon_badge("pods", self._accent))
     name_lbl = QLabel(meta.get("name", ""))
     name_lbl.setFont(monospace_font(13, bold=True))
     name_lbl.setStyleSheet(f"color: {T['TEXT_PRIMARY']};")
