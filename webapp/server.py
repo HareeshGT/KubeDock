@@ -937,6 +937,11 @@ def stop_server(timeout: float = 3.0) -> None:
         _server_thread = None
         _server_port = None
 
+    # A stop/restart must invalidate browser sessions, even when it occurs
+    # inside the same desktop process rather than via a full app shutdown.
+    with _SESSION_LOCK:
+        _WEB_SESSIONS.clear()
+
     if server is not None:
         logger.info("Stopping KubeDock Web server")
         server.should_exit = True

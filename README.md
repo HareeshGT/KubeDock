@@ -248,7 +248,7 @@ The Web App provides a mobile-friendly interface for monitoring and performing c
 - Deployment restart
 - Deployment scaling
 - Pod deletion
-- Basic authentication
+- TOTP-based login with expiring sessions
 - Health endpoint
 
 ### Existing SSH connection is reused
