@@ -224,10 +224,11 @@
 
   #login-gate {
     position: fixed; inset: 0; background: var(--bg); z-index: 100;
-    display: flex; align-items: center; justify-content: center; text-align: center;
+    display: none; align-items: center; justify-content: center; text-align: center;
     padding: 20px; color: var(--text-dim); font-size: 13.5px;
     font-family: 'IBM Plex Mono', monospace;
   }
+  #login-gate.open { display: flex; }
 </style>
 </head>
 <body class="app-locked">

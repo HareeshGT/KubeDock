@@ -67,5 +67,5 @@ def test_missing_secure_keyring_fails_closed(web_client, monkeypatch):
 
 def test_http_from_remote_client_is_rejected(web_client, monkeypatch):
     monkeypatch.setattr(server, "_client_ip", lambda request: "192.0.2.12")
-    response = web_client.post("/api/login", json={"code": totp(TEST_SECRET)})
+    response = web_client.post("http://testserver/api/login", json={"code": totp(TEST_SECRET)})
     assert response.status_code == 403
