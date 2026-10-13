@@ -23,7 +23,6 @@ NAV_ITEMS = [
   ("tunnels",    "Tunnels",    "tunnel"),
 ]
 
-
 class NavRail(QFrame):
   navigate = pyqtSignal(str)
 
