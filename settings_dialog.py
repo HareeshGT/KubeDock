@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QFrame,
     QLineEdit,
+    QApplication,
 )
 from PyQt5.QtGui import QFont
 
@@ -178,9 +179,9 @@ class SettingsDialog(QDialog):
         self._hidden = set(settings.get("k8s_hidden_tabs", []))
         self._lock = security.get_lock_settings()
         self._pending_pin = None
-        self._webapp_username = str(settings.get("webapp_username", ""))
+        self._webapp_otp_secret = None
+        self._webapp_otp_timer = None
         self._webapp_enabled = bool(settings.get("webapp_enabled", False))
-        self._webapp_legacy_password = str(settings.get("webapp_password", ""))
         self._webapp_original_enabled = self._webapp_enabled
 
         lay = QVBoxLayout(self)
@@ -422,9 +423,8 @@ class SettingsDialog(QDialog):
     def _build_webapp_tab(self):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setSpacing(10)
+        v.setSpacing(8)
         v.setContentsMargins(4, 14, 4, 4)
-
         self.webapp_enable_btn = QPushButton()
         self.webapp_enable_btn.setCheckable(True)
         self.webapp_enable_btn.setChecked(self._webapp_enabled)
@@ -433,59 +433,82 @@ class SettingsDialog(QDialog):
         v.addWidget(self.webapp_enable_btn)
 
         self.webapp_status_lbl = QLabel()
-        self.webapp_status_lbl.setStyleSheet(
-            f"color: {T['TEXT_DIM']}; font-size: 12px;"
-        )
+        self.webapp_status_lbl.setWordWrap(True)
+        self.webapp_status_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
         v.addWidget(self.webapp_status_lbl)
         self._update_webapp_toggle_button(self._webapp_enabled)
-
-        desc = QLabel(
-            "Enable or disable the local web dashboard. When enabled, KubeDock "
-            "starts the web server automatically and reuses the current SSH connection."
-        )
+        desc = QLabel("The dashboard uses a six-digit TOTP code that changes every 30 seconds. The shared seed stays in the OS credential vault.")
+        desc.setWordWrap(True)
         v.addWidget(desc)
-        v.addSpacing(6)
-
-        v.addWidget(QLabel("Web App username"))
-        self.web_username_edit = QLineEdit(self._webapp_username)
-        self.web_username_edit.setPlaceholderText("admin")
-        v.addWidget(self.web_username_edit)
-
-        v.addWidget(QLabel("Web App password"))
-        row = QHBoxLayout()
-        self.web_password_edit = QLineEdit()
-        self.web_password_edit.setEchoMode(QLineEdit.Password)
-        self.web_password_edit.setPlaceholderText("Leave blank to keep the stored password")
-        row.addWidget(self.web_password_edit, 1)
-
-        self.show_web_password_btn = QPushButton("Show")
-        self.show_web_password_btn.setCheckable(True)
-        self.show_web_password_btn.setFixedWidth(60)
-        self.show_web_password_btn.toggled.connect(self._on_toggle_show_web_password)
-        row.addWidget(self.show_web_password_btn)
-        v.addLayout(row)
-
+        v.addWidget(QLabel("Current Web App OTP"))
+        self.webapp_otp_code = QLabel("------")
+        self.webapp_otp_code.setAlignment(Qt.AlignCenter)
+        self.webapp_otp_code.setMinimumHeight(46)
+        self.webapp_otp_code.setStyleSheet(f"color: {T['ACCENT']}; font-size: 27px; font-weight: 600; letter-spacing: 5px; font-family: monospace;")
+        v.addWidget(self.webapp_otp_code)
+        otp_row = QHBoxLayout()
+        self.webapp_otp_countdown = QLabel("Remaining: --s")
+        self.webapp_otp_countdown.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+        otp_row.addWidget(self.webapp_otp_countdown, 1)
+        self.webapp_copy_otp_btn = QPushButton("Copy code")
+        self.webapp_copy_otp_btn.setEnabled(False)
+        self.webapp_copy_otp_btn.clicked.connect(self._copy_webapp_otp)
+        otp_row.addWidget(self.webapp_copy_otp_btn)
+        v.addLayout(otp_row)
+        warning = QLabel("Remote devices require HTTPS. Set WEBAPP_TLS_CERTFILE and WEBAPP_TLS_KEYFILE before exposing the Web App.")
+        warning.setWordWrap(True)
+        warning.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
+        v.addWidget(warning)
         try:
             from webapp import get_server_url
             login_url = get_server_url()
         except (ImportError, AttributeError):
             login_url = "http://127.0.0.1:8000"
-
-        self.webapp_link = QLabel(
-            f'<a href="{login_url}">🔗 Open Web App Login</a>'
-        )
+        self.webapp_link = QLabel(f'<a href="{login_url}">🔗 Open Web App Login</a>')
         self.webapp_link.setOpenExternalLinks(True)
         self.webapp_link.setStyleSheet(f"color: {T['ACCENT']};")
         self.webapp_link.setToolTip(login_url)
         v.addWidget(self.webapp_link)
-
         self.webapp_url_label = QLabel(login_url)
-        self.webapp_url_label.setStyleSheet(
-            f"color: {T['TEXT_DIM']}; font-size: 12px;"
-        )
+        self.webapp_url_label.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
         v.addWidget(self.webapp_url_label)
         v.addStretch()
+        try:
+            from webapp.otp_auth import get_or_create_secret
+            self._webapp_otp_secret = get_or_create_secret()
+            self._refresh_webapp_otp()
+            self._webapp_otp_timer = QTimer(self)
+            self._webapp_otp_timer.setInterval(250)
+            self._webapp_otp_timer.timeout.connect(self._refresh_webapp_otp)
+            self._webapp_otp_timer.start()
+        except Exception:
+            self.webapp_otp_code.setText("Unavailable")
+            self.webapp_otp_countdown.setText("Secure OS credential vault unavailable")
+            self.webapp_copy_otp_btn.setEnabled(False)
+            self.webapp_status_lbl.setText("OTP is unavailable. Enable a supported OS credential vault before using Web App login.")
         return w
+
+    def _refresh_webapp_otp(self):
+        if not self._webapp_otp_secret:
+            return
+        try:
+            import time
+            from webapp.otp_auth import TOTP_PERIOD_SECONDS, totp
+            now = time.time()
+            self._webapp_current_otp = totp(self._webapp_otp_secret, now)
+            self.webapp_otp_code.setText(f"{self._webapp_current_otp[:3]} {self._webapp_current_otp[3:]}")
+            self.webapp_otp_countdown.setText(f"Refreshes in {TOTP_PERIOD_SECONDS - (int(now) % TOTP_PERIOD_SECONDS)}s")
+            self.webapp_copy_otp_btn.setEnabled(True)
+        except Exception:
+            self.webapp_otp_code.setText("Unavailable")
+            self.webapp_otp_countdown.setText("Unable to generate current code")
+            self.webapp_copy_otp_btn.setEnabled(False)
+
+    def _copy_webapp_otp(self):
+        code = getattr(self, "_webapp_current_otp", "")
+        if code:
+            QApplication.clipboard().setText(code)
+            self.webapp_status_lbl.setText("Current OTP copied. It expires at the end of this time window.")
 
     def _on_webapp_toggle(self, checked):
         """Apply the Web App state immediately when the toggle is clicked."""
@@ -519,12 +542,6 @@ class SettingsDialog(QDialog):
             "Web App is currently disabled."
         )
 
-    def _on_toggle_show_web_password(self, checked):
-        self.web_password_edit.setEchoMode(
-            QLineEdit.Normal if checked else QLineEdit.Password
-        )
-        self.show_web_password_btn.setText("Hide" if checked else "Show")
-
     def _on_save(self):
         if self.lock_chk.isChecked():
             if self._pending_pin:
@@ -553,24 +570,17 @@ class SettingsDialog(QDialog):
             self._ai_keys,
             self._ai_models,
         )
-        webapp_extra = {
-            "webapp_enabled": self.webapp_enable_btn.isChecked(),
-            "webapp_username": self.web_username_edit.text().strip(),
-        }
-        new_web_password = self.web_password_edit.text()
-        if not new_web_password and self._webapp_legacy_password:
-            new_web_password = self._webapp_legacy_password
-        if new_web_password:
-            from webapp.server import hash_web_password
-            salt, digest = hash_web_password(new_web_password)
-            webapp_extra.update({
-                "webapp_password_salt": salt,
-                "webapp_password_hash": digest,
-                "webapp_password": "",
-            })
-        save_settings(**webapp_extra)
+        save_settings(
+            webapp_enabled=self.webapp_enable_btn.isChecked(),
+            webapp_username="",
+            webapp_password="",
+            webapp_password_salt="",
+            webapp_password_hash="",
+        )
 
         self._webapp_original_enabled = self.webapp_enable_btn.isChecked()
+        if self._webapp_otp_timer:
+            self._webapp_otp_timer.stop()
         self.accept()
 
     def reject(self):
@@ -584,6 +594,8 @@ class SettingsDialog(QDialog):
                 webapp_app.stop_server()
         except Exception:
             pass
+        if self._webapp_otp_timer:
+            self._webapp_otp_timer.stop()
         super().reject()
 
     def hidden_k8s_tabs(self):

@@ -26,12 +26,12 @@ from typing import Callable, Optional
 
 import paramiko
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
 from themes import load_settings, save_settings
+from webapp.otp_auth import OTPConfigurationError, check_totp, get_or_create_secret
 try:
     from workers import managed_exec_command
 except ImportError:  # pragma: no cover
@@ -94,52 +94,65 @@ def _ssh() -> paramiko.SSHClient:
     return client
 
 
-_WEB_PASSWORD_ITERATIONS = 200_000
 _AUTH_FAIL_LOCK = threading.RLock()
 _AUTH_FAILURES: dict[str, list[float]] = {}
 _AUTH_MAX_FAILURES = 5
 _AUTH_WINDOW_SECONDS = 300.0
 _AUTH_LOCKOUT_SECONDS = 60.0
+_SESSION_LOCK = threading.RLock()
+_WEB_SESSIONS: dict[str, tuple[str, float]] = {}
+_SESSION_TTL_SECONDS = 8 * 60 * 60
+_SESSION_COOKIE = "kubedock_web_session"
+_OTP_VERIFY_LOCK = threading.RLock()
 
 
-def hash_web_password(password: str) -> tuple[str, str]:
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), bytes.fromhex(salt),
-        _WEB_PASSWORD_ITERATIONS,
-    ).hex()
-    return salt, digest
+class LoginRequest(BaseModel):
+    code: str
 
 
-def verify_web_password(password: str, salt: str, expected: str) -> bool:
+def _ensure_secure_transport(request: Request) -> None:
     try:
-        digest = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), bytes.fromhex(salt),
-            _WEB_PASSWORD_ITERATIONS,
-        ).hex()
-        return secrets.compare_digest(digest, expected)
-    except (TypeError, ValueError):
-        return False
+        client = ipaddress.ip_address(_client_ip(request))
+    except ValueError:
+        client = None
+    if request.url.scheme != "https" and not (client and client.is_loopback):
+        raise HTTPException(
+            403,
+            "HTTPS is required for remote WebApp login. Configure "
+            "WEBAPP_TLS_CERTFILE and WEBAPP_TLS_KEYFILE, or use a secure tunnel.",
+        )
 
 
-def _credentials() -> tuple[str, str, str, str]:
-    settings = load_settings() or {}
-    username = str(settings.get("webapp_username", "")).strip()
-    password_hash = str(settings.get("webapp_password_hash", ""))
-    password_salt = str(settings.get("webapp_password_salt", ""))
-    legacy_password = str(settings.get("webapp_password", ""))
-    if legacy_password and not (password_hash and password_salt):
-        try:
-            password_salt, password_hash = hash_web_password(legacy_password)
-            save_settings(
-                webapp_password_salt=password_salt,
-                webapp_password_hash=password_hash,
-                webapp_password="",
-            )
-            legacy_password = ""
-        except Exception:
-            logger.exception("Failed to migrate legacy web password")
-    return username, password_hash, password_salt, legacy_password
+def _new_session(username: str) -> tuple[str, int]:
+    token = secrets.token_urlsafe(32)
+    expires = perf_counter() + _SESSION_TTL_SECONDS
+    with _SESSION_LOCK:
+        now = perf_counter()
+        for old_token, (_user, expiry) in list(_WEB_SESSIONS.items()):
+            if expiry <= now:
+                _WEB_SESSIONS.pop(old_token, None)
+        _WEB_SESSIONS[token] = (username, expires)
+    return token, _SESSION_TTL_SECONDS
+
+
+def require_login(request: Request) -> None:
+    _ensure_secure_transport(request)
+    token = request.cookies.get(_SESSION_COOKIE, "")
+    username = None
+    now = perf_counter()
+    if token:
+        with _SESSION_LOCK:
+            session = _WEB_SESSIONS.get(token)
+            if session and session[1] > now:
+                username = session[0]
+            elif session:
+                _WEB_SESSIONS.pop(token, None)
+    if not username:
+        raise HTTPException(401, "Authentication required")
+    request.state.auth_user = username
+    _AUTH_USER.set(username)
+    _log_client_identity(request, username)
+
 
 def _auth_block_seconds(client_ip: str) -> int:
     now = perf_counter()
@@ -400,68 +413,74 @@ def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
         raise HTTPException(502, "kubectl returned non-JSON output")
 
 
-security = HTTPBasic()
+app = FastAPI(title="KubeDock Web")
 
 
-def require_login(
-    request: Request,
-    credentials: HTTPBasicCredentials = Depends(security),
-) -> None:
-    username, password_hash, password_salt, legacy_password = _credentials()
-    if not username or not (password_hash and password_salt or legacy_password):
-        raise HTTPException(503, "Web App login is not configured in KubeDock Settings")
-
+@app.post("/api/login")
+def login(body: LoginRequest, request: Request, response: Response) -> dict:
+    _ensure_secure_transport(request)
     client_ip = _client_ip(request)
     retry_after = _auth_block_seconds(client_ip)
     if retry_after:
-        raise HTTPException(
-            429, "Too many login attempts; try again later.",
-            headers={"Retry-After": str(retry_after)},
-        )
+        raise HTTPException(429, "Too many login attempts; try again later.",
+                            headers={"Retry-After": str(retry_after)})
+    try:
+        secret = get_or_create_secret()
+    except OTPConfigurationError:
+        raise HTTPException(503, "OTP authentication is not configured. Open KubeDock Settings and ensure the OS credential vault is available.")
 
-    valid = (
-        secrets.compare_digest(credentials.username, username)
-        and (
-            verify_web_password(credentials.password, password_salt, password_hash)
-            if password_hash and password_salt
-            else secrets.compare_digest(credentials.password, legacy_password)
+    with _OTP_VERIFY_LOCK:
+        settings = load_settings() or {}
+        try:
+            previous = settings.get("webapp_totp_last_counter")
+            last_counter = int(previous) if previous is not None else None
+        except (TypeError, ValueError):
+            last_counter = None
+        valid, reason, accepted_counter = check_totp(
+            secret, body.code, last_accepted_counter=last_counter
         )
-    )
-
-    if not valid:
-        _record_auth_failure(client_ip)
-        logger.warning(
-            "[req=%s] Rejected web login username=%r client_ip=%s user_agent=%r",
-            _REQUEST_ID.get(), credentials.username, client_ip,
-            _safe_user_agent(request),
-        )
-        retry_after = _auth_block_seconds(client_ip)
-        headers = {"WWW-Authenticate": "Basic"}
-        if retry_after:
-            headers["Retry-After"] = str(retry_after)
-            raise HTTPException(429, "Too many login attempts; try again later.", headers=headers)
-        raise HTTPException(401, "Invalid credentials", headers=headers)
+        if not valid:
+            _record_auth_failure(client_ip)
+            retry_after = _auth_block_seconds(client_ip)
+            if retry_after:
+                raise HTTPException(429, "Too many login attempts; try again later.",
+                                    headers={"Retry-After": str(retry_after)})
+            messages = {
+                "invalid": "Invalid OTP. Enter the current six-digit code.",
+                "expired": "OTP expired. Use the newly displayed code.",
+                "replayed": "This OTP has already been used. Wait for the next code.",
+            }
+            raise HTTPException(401, messages.get(reason, "OTP authentication failed."))
+        try:
+            save_settings(webapp_totp_last_counter=accepted_counter)
+        except Exception:
+            logger.exception("Unable to persist WebApp OTP replay state")
+            raise HTTPException(503, "Unable to securely record OTP use; try again.")
 
     _clear_auth_failures(client_ip)
-
-    # Migrate legacy plaintext passwords after a successful login.
-    if legacy_password and not (password_hash and password_salt):
-        try:
-            salt, digest = hash_web_password(legacy_password)
-            save_settings(
-                webapp_password_salt=salt,
-                webapp_password_hash=digest,
-                webapp_password="",
-            )
-        except Exception:
-            logger.exception("Failed to migrate legacy web password to a hash")
-
-    _AUTH_USER.set(username)
-    request.state.auth_user = username
-    _log_client_identity(request, username)
+    username = str(settings.get("webapp_username", "")).strip() or "webapp"
+    token, ttl = _new_session(username)
+    response.set_cookie(
+        key=_SESSION_COOKIE, value=token, max_age=ttl, httponly=True,
+        secure=request.url.scheme == "https", samesite="strict", path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"ok": True, "expires_in": ttl}
 
 
-app = FastAPI(title="KubeDock Web")
+@app.post("/api/logout")
+def logout(request: Request, response: Response) -> dict:
+    with _SESSION_LOCK:
+        _WEB_SESSIONS.pop(request.cookies.get(_SESSION_COOKIE, ""), None)
+    response.delete_cookie(key=_SESSION_COOKIE, path="/", httponly=True,
+                           secure=request.url.scheme == "https", samesite="strict")
+    response.headers["Cache-Control"] = "no-store"
+    return {"ok": True}
+
+
+@app.get("/api/session")
+def session_info(request: Request, _: None = Depends(require_login)) -> dict:
+    return {"authenticated": True, "user": getattr(request.state, "auth_user", "webapp")}
 
 
 @app.middleware("http")
@@ -773,7 +792,8 @@ def _static_response():
 
 
 @app.get("/")
-def index(_: None = Depends(require_login)):
+def index(request: Request):
+    _ensure_secure_transport(request)
     return _static_response()
 
 
@@ -838,7 +858,8 @@ def get_server_url() -> str:
             port = int(os.environ.get("WEBAPP_PORT", "8000"))
         except ValueError:
             port = 8000
-    return f"http://{_get_lan_host()}:{port}"
+    scheme = "https" if os.environ.get("WEBAPP_TLS_CERTFILE") and os.environ.get("WEBAPP_TLS_KEYFILE") else "http"
+    return f"{scheme}://{_get_lan_host()}:{port}"
 
 
 def start_server(
@@ -867,13 +888,16 @@ def start_server(
             logger.exception("Unable to start KubeDock Web server")
             return False
 
+        tls_certfile = os.environ.get("WEBAPP_TLS_CERTFILE", "").strip()
+        tls_keyfile = os.environ.get("WEBAPP_TLS_KEYFILE", "").strip()
+        if bool(tls_certfile) != bool(tls_keyfile):
+            logger.error("WebApp TLS requires both WEBAPP_TLS_CERTFILE and WEBAPP_TLS_KEYFILE")
+            reserved_socket.close()
+            return False
         config = uvicorn.Config(
-            app,
-            host=host,
-            port=selected_port,
-            log_level="info",
-            access_log=True,
-            log_config=None,
+            app, host=host, port=selected_port, log_level="info",
+            access_log=True, log_config=None,
+            ssl_certfile=tls_certfile or None, ssl_keyfile=tls_keyfile or None,
         )
         server = uvicorn.Server(config)
         _server = server

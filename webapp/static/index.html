@@ -40,6 +40,19 @@
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 
   #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  body.app-locked #app { visibility:hidden; }
+  #login-gate { display:none; }
+  #login-gate.open { display:flex; }
+  #login-panel { width:min(380px,100%); background:var(--bg-panel); border:1px solid var(--border); border-radius:12px; padding:24px; text-align:left; box-shadow:0 18px 50px rgba(0,0,0,.35); }
+  #login-panel h2 { margin:0 0 8px; font-size:18px; }
+  #login-panel p { color:var(--text-dim); font-size:13px; line-height:1.5; }
+  #login-panel label { display:block; margin:16px 0 6px; font-size:12px; color:var(--text-dim); }
+  #login-code { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:7px; padding:12px; color:var(--text); font:20px 'IBM Plex Mono',monospace; letter-spacing:5px; text-align:center; }
+  #login-submit, #logout-btn { background:var(--accent-dim); border:1px solid rgba(92,225,198,.35); color:var(--accent); border-radius:7px; padding:10px 14px; font-weight:600; }
+  #login-submit { width:100%; margin-top:14px; }
+  #login-submit:disabled { opacity:.5; }
+  #login-error { min-height:18px; color:var(--err)!important; }
+  #logout-btn { font-size:12px; padding:6px 9px; margin-left:8px; }
 
   /* ---------- header ---------- */
   header {
@@ -217,7 +230,7 @@
   }
 </style>
 </head>
-<body>
+<body class="app-locked">
 <div id="app">
   <header>
     <h1><span class="glyph">⎈</span>KubeDock</h1>
@@ -226,6 +239,7 @@
         <select id="ns-select" class="ns-select"><option value="all">all</option></select>
       </div>
       <button id="refresh-btn" title="Refresh">⟳</button>
+      <button id="logout-btn" title="Sign out">Sign out</button>
     </div>
   </header>
 
@@ -260,7 +274,16 @@
 </div>
 
 <div id="toast"></div>
-
+<div id="login-gate" class="open" role="dialog" aria-modal="true" aria-labelledby="login-title">
+  <form id="login-panel">
+    <h2 id="login-title">Sign in to KubeDock</h2>
+    <p>Enter the current six-digit code from KubeDock → Settings → Web App. Codes rotate every 30 seconds.</p>
+    <label for="login-code">One-time password</label>
+    <input id="login-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required aria-describedby="login-error">
+    <p id="login-error" role="status" aria-live="polite"></p>
+    <button id="login-submit" type="submit">Connect</button>
+  </form>
+</div>
 <script>
 const state = { tab: "pods", namespace: "all", queries: { pods: "", deployments: "", services: "", nodes: "", events: "" }, rawData: null };
 
@@ -322,7 +345,7 @@ function toast(msg, isError) {
 async function api(path, opts) {
   const res = await fetch(path, opts);
   if (res.status === 401) {
-    document.body.innerHTML = '<div id="login-gate">Session expired.<br>Reload the page to sign in again.</div>';
+    showLoginGate("Session expired. Sign in with a new OTP.");
     throw new Error("unauthorized");
   }
   const data = await res.json().catch(() => ({}));
@@ -623,8 +646,65 @@ document.getElementById("search-clear").onclick = () => {
   renderFiltered();
 };
 
-loadNamespaces();
-loadCurrentTab();
+function showLoginGate(message) {
+  document.body.classList.add("app-locked");
+  document.getElementById("login-gate").classList.add("open");
+  document.getElementById("login-error").textContent = message || "";
+  document.getElementById("login-code").value = "";
+  document.getElementById("login-code").focus();
+}
+function hideLoginGate() {
+  document.body.classList.remove("app-locked");
+  document.getElementById("login-gate").classList.remove("open");
+  document.getElementById("login-error").textContent = "";
+  loadNamespaces();
+  loadCurrentTab();
+}
+let loginBusy = false;
+document.getElementById("login-panel").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (loginBusy) return;
+  const input = document.getElementById("login-code");
+  const submit = document.getElementById("login-submit");
+  const error = document.getElementById("login-error");
+  const code = input.value.trim();
+  if (!/^\d{6}$/.test(code)) { error.textContent = "Enter a six-digit OTP."; return; }
+  loginBusy = true;
+  submit.disabled = true;
+  submit.textContent = "Verifying…";
+  error.textContent = "";
+  try {
+    const response = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin", cache: "no-store",
+      body: JSON.stringify({ code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { error.textContent = data.detail || "OTP authentication failed."; input.select(); return; }
+    hideLoginGate();
+  } catch (_) {
+    error.textContent = "Unable to reach the WebApp. Check the connection and retry.";
+  } finally {
+    loginBusy = false;
+    submit.disabled = false;
+    submit.textContent = "Connect";
+  }
+});
+document.getElementById("logout-btn").onclick = async () => {
+  try { await fetch("/api/logout", { method: "POST", credentials: "same-origin" }); } catch (_) {}
+  state.rawData = null;
+  showLoginGate("Signed out. Enter a new OTP to continue.");
+};
+async function checkSession() {
+  try {
+    await api("/api/session", { cache: "no-store" });
+    document.body.classList.remove("app-locked");
+    document.getElementById("login-gate").classList.remove("open");
+    loadNamespaces();
+    loadCurrentTab();
+  } catch (_) { showLoginGate(""); }
+}
+checkSession();
 </script>
 </body>
 </html>

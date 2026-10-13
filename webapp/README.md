@@ -20,7 +20,7 @@ KubeDock restart.
 
 ## Open the web app
 
-Keep KubeDock running, connect to the VM as usual, then open:
+Keep KubeDock running, connect to the VM as usual, configure HTTPS, then open:
 
 ```text
 http://<KubeDock-machine-LAN-IP>:8000
@@ -44,3 +44,15 @@ source `static/` directory.
 The dashboard can delete pods and restart/scale deployments. Keep it on a
 trusted LAN/VPN or put HTTPS/TLS in front of it before exposing it outside a
 trusted network.
+
+
+## HTTPS requirement
+
+Remote non-loopback clients are rejected unless requests use HTTPS. Configure
+`WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` in the KubeDock process environment
+to enable built-in Uvicorn TLS. The URL shown in Settings switches to https when both
+are configured. Never expose the login endpoint over plain LAN HTTP.
+
+The OTP seed is stored in the OS credential vault under
+`KubeDock.WebApp.TOTP`. The last accepted TOTP counter (not the secret) is
+persisted in settings to prevent replay after restart. Sessions expire after eight hours.

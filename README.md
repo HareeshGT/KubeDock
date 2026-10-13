@@ -259,20 +259,11 @@ KubeDock passes its existing live SSH client to the Web App runtime, and Web App
 
 This keeps the desktop and Web App on the same connection path and avoids unnecessary duplicate SSH sessions.
 
-### Web App credentials
+### Web App OTP authentication
 
-Web App credentials are configured from:
+The Web App uses a six-digit RFC 6238 TOTP rotating every 30 seconds. Open Settings → Web App to view/copy the code. The seed is generated once and stored in the OS credential vault, never ordinary settings or a network API. The FastAPI backend independently validates codes, rate-limits failures, prevents time-step reuse, and issues an expiring HttpOnly session. Username/password Basic Authentication is no longer accepted.
 
-```text
-Settings → Web App
-```
-
-You can configure:
-
-- Web App username
-- Web App password
-
-The settings are loaded dynamically by the embedded server, so credential changes take effect without duplicating them in a separate Web App `.env` file.
+**Remote access requires HTTPS.** Configure both `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` before using a phone or any non-loopback client. Without TLS, remote page/API access is refused; loopback remains available for development. Never send OTPs over plain LAN HTTP.
 
 ### Web App logging
 
@@ -361,7 +352,7 @@ PBKDF2-SHA256 is used for PIN-related security.
 
 ## Web App Authentication
 
-The embedded Web App requires a username and password configured in KubeDock Settings.
+The embedded Web App requires a one-time TOTP login and an expiring session. Remote use must be protected by HTTPS.
 
 ## Credential Handling
 
