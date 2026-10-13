@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import mimetypes
+import logging
 import shutil
 import stat
 import subprocess
@@ -21,6 +22,9 @@ from typing import Optional
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from .ssh import managed_exec_command, open_managed_session, close_managed_session
+from command_utils import build_prepared_command, command_operation_label
+
+_LOG = logging.getLogger(__name__)
 
 class CommandWorker(QThread):
     """Runs a single SSH command in a background thread."""
@@ -58,28 +62,19 @@ class CommandWorker(QThread):
         self.finished.connect(self.deleteLater)
 
     def run(self):
+        started = time.monotonic()
+        operation = command_operation_label(self.cmd)
         try:
             if self.raw:
                 self._run_raw()
                 return
-            home_cmd = (
-                "sudo -u {} sh -c 'echo $HOME'".format(self.sudo_user)
-                if self.sudo_user else "echo $HOME"
-            )
-            with managed_exec_command(self.ssh, home_cmd) as (_stdin, stdout, _stderr):
-                home = stdout.read().decode(errors="replace").strip()
 
-            prefix = "cd {} 2>/dev/null; ".format(self.cwd) if self.cwd else ""
-            inner = (
-                "export PATH={h}:{h}/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH;".format(h=home)
-                + prefix + self.cmd
-            )
-            if self.sudo_user:
-                safe_inner = inner.replace("'", "'\\''")
-                cmd = "sudo -u {} sh -c '{}'".format(self.sudo_user, safe_inner)
-            else:
-                cmd = inner
-
+            # Environment setup and the requested command share one SSH exec
+            # channel. The previous implementation opened a first channel to
+            # run `echo $HOME`, then a second for the actual command. That
+            # extra SSH round-trip affected every normal command throughout
+            # KubeDock, including Kubernetes resource navigation.
+            cmd = build_prepared_command(self.cmd, self.cwd, self.sudo_user)
             with managed_exec_command(self.ssh, cmd) as (_stdin, stdout, stderr):
                 stdout.channel.settimeout(self.timeout)
                 try:
@@ -100,6 +95,11 @@ class CommandWorker(QThread):
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            _LOG.debug(
+                "ssh_command_complete operation=%s raw=%s duration_ms=%.1f",
+                operation, self.raw, (time.monotonic() - started) * 1000.0,
+            )
 
     def _run_raw(self):
         with managed_exec_command(self.ssh, self.cmd) as (_stdin, stdout, stderr):
