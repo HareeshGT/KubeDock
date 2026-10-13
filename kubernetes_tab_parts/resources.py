@@ -1,6 +1,14 @@
 from .common import *
+import logging
+from k8s_metrics import (
+  build_pod_metrics, build_pod_list_command, build_pod_metrics_command,
+  parse_limits_output,
+  parse_nodes_json, parse_top_output,
+  refresh_result_is_current, split_pod_sections,
+)
 
 
+_LOG = logging.getLogger(__name__)
 _PAREN_OPEN_RE = re.compile(r"^\(\S*$")
 _PAREN_CLOSE_RE = re.compile(r"^\S*\)$")
 
@@ -27,8 +35,126 @@ class KubernetesResourcesMixin:
     return cleaned, last_restart
 
 
+  def _pods_request_key(self):
+    return (self._current_context, self._current_ns)
+
+
   def _load_pods(self):
-    self._run_cmd(f"kubectl get pods {self._ns_flag()} -o wide 2>&1", self._populate_pods)
+    """Load pod rows first, then enrich their CPU/memory indicators.
+
+    The old combined command waited for five sequential kubectl calls before
+    creating any cards. The primary list now runs independently from three
+    supporting metrics/capacity calls, so slow metrics-server responses do
+    not delay first useful pod data. Both requests remain single-flight and
+    stale results are rejected by generation + context/namespace.
+    """
+    if not self.ssh:
+      return
+    self._pods_refresh_generation += 1
+    generation = self._pods_refresh_generation
+    if self._pods_load_inflight:
+      self._pods_reload_pending = True
+      return
+
+    self._pods_load_inflight = True
+    self._pods_reload_pending = False
+    self._pods_active_requests = 2
+    self._pods_primary_loaded_generation = None
+    self._pods_metrics_pending = None
+    key = self._pods_request_key()
+    request_started = time.monotonic()
+    context_flag = self._context_flag()
+    ns_flag = self._ns_flag()
+    _LOG.debug(
+      "pods_refresh_started primary_kubectl_commands=1 metrics_kubectl_commands=3 mode=parallel"
+    )
+
+    self._run_cmd(
+      build_pod_list_command(ns_flag, context_flag),
+      lambda out: self._on_pods_primary_loaded(key, generation, out, request_started),
+      apply_context=False,
+      on_error=self._on_pods_load_failed,
+    )
+    self._run_cmd(
+      build_pod_metrics_command(ns_flag, context_flag),
+      lambda out: self._on_pods_metrics_loaded(key, generation, out),
+      apply_context=False,
+      on_error=self._on_pods_load_failed,
+    )
+
+
+  def _pods_result_is_current(self, key, generation):
+    return refresh_result_is_current(
+      generation, self._pods_refresh_generation, key, self._pods_request_key())
+
+
+  def _on_pods_primary_loaded(self, key, generation, out: str, request_started=None):
+    try:
+      if self._pods_result_is_current(key, generation):
+        render_started = time.monotonic()
+        self._populate_pods(out)
+        _LOG.debug(
+          "kubernetes_first_data operation=list_pods time_to_first_data_ms=%.1f population_ms=%.1f",
+          ((time.monotonic() - request_started) * 1000.0) if request_started is not None else -1.0,
+          (time.monotonic() - render_started) * 1000.0,
+        )
+        self._pods_primary_loaded_generation = generation
+        pending = self._pods_metrics_pending
+        if pending and pending[0] == key and pending[1] == generation:
+          self._pods_metrics_pending = None
+          self._apply_pod_metrics(pending[2])
+    finally:
+      self._finish_pods_request()
+
+
+  def _on_pods_metrics_loaded(self, key, generation, out: str):
+    try:
+      if self._pods_result_is_current(key, generation):
+        if self._pods_primary_loaded_generation == generation:
+          self._apply_pod_metrics(out)
+        else:
+          # Metrics can finish before the primary request under unusual
+          # cluster scheduling. Keep them until the corresponding cards exist.
+          self._pods_metrics_pending = (key, generation, out)
+    finally:
+      self._finish_pods_request()
+
+
+  def _finish_pods_request(self):
+    self._pods_active_requests = max(0, self._pods_active_requests - 1)
+    if self._pods_active_requests:
+      return
+    self._pods_load_inflight = False
+    if self._pods_reload_pending:
+      self._load_pods()
+
+
+  def _on_pods_load_failed(self, _err):
+    # A failed worker must not prevent the other request from completing or
+    # leave the single-flight gate stuck forever.
+    self._finish_pods_request()
+
+
+  def _apply_pod_metrics(self, out: str):
+    """Update existing pod cards in place after optional metrics arrive."""
+    (_pods_text, top_text, limits_text,
+     _top_nodes_text, nodes_json_text) = split_pod_sections(out)
+    usage, usage_problem = parse_top_output(top_text)
+    limits = parse_limits_output(limits_text)
+    node_resources = parse_nodes_json(nodes_json_text)
+
+    for index in range(self.pod_list.count()):
+      item = self.pod_list.item(index)
+      meta = item.data(Qt.UserRole) or {}
+      card = self.pod_list.itemWidget(item)
+      if card is None:
+        continue
+      namespace = meta.get("namespace") or self._current_ns or "default"
+      name = meta.get("name") or ""
+      node = meta.get("node") or ""
+      card.set_metrics(build_pod_metrics(
+        (namespace, name), usage, limits, usage_problem, node,
+        node_resources))
 
 
   def _populate_pods(self, out: str):
@@ -36,10 +162,19 @@ class KubernetesResourcesMixin:
     all_ns = (self._current_ns == "(all namespaces)")
     total  = 0
     running = 0
+    # Parse each section of the shared snapshot once. No kubectl calls are
+    # performed within the card loop; all cards reuse the same mappings.
+    (pods_text, _top_text, _limits_text,
+     _top_nodes_text, _nodes_json_text) = split_pod_sections(out)
+    # The cards are created with unavailable metric indicators initially;
+    # _apply_pod_metrics() enriches them in place when supporting data lands.
+    usage, usage_problem = {}, ""
+    limits = {}
+    node_resources = {}
     # The namespace chip on each card is only shown in "(all namespaces)"
     # view (i.e. rows can differ) — when one namespace is selected it's
     # implied by ns_combo already, so the chip would just repeat itself.
-    for line in out.strip().splitlines()[1:]:
+    for line in pods_text.strip().splitlines()[1:]:
       parts, last_restart = self._split_pod_line(line)
       if all_ns:
         # `kubectl get pods --all-namespaces -o wide` prepends NAMESPACE.
@@ -64,7 +199,10 @@ class KubernetesResourcesMixin:
       item.setData(Qt.UserRole, meta)
       item.setSizeHint(QSize(0, PodCardWidget.CARD_HEIGHT))
       self.pod_list.addItem(item)
-      card = PodCardWidget(meta, all_ns)
+      # Matched on (namespace, name): identical pod names in different
+      # namespaces must never share usage figures.
+      card = PodCardWidget(meta, all_ns, metrics=build_pod_metrics(
+        (ns, name), usage, limits, usage_problem, node, node_resources))
       card.ai_requested.connect(self._on_pod_card_ai_requested)
       self.pod_list.setItemWidget(item, card)
       if meta.get("name") == self._pod_ai_pod:

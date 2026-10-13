@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
-ICON = "VM_Visualizer.ico"
+ICON = "KubeDock.ico"
 BUILD_ID = "WINDOWS-PYAUDIO-FIX-2026-09-20-R3"
 RECOMMENDED_PYTHON = "3.13"
 

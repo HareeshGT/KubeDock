@@ -298,6 +298,14 @@ class DashboardConnectionMixin:
   
   
   def apply_theme(self):
+      # Widgets that baked palette colors into their own stylesheet at build
+      # time (summary tiles, hint labels, ring captions, ...) are still on the
+      # previous theme; remap them first, then let _apply_styles() re-bake the
+      # ones it owns.
+      last = getattr(self, "_styled_palette", None)
+      if last is not None:
+        retheme_inline_styles(self, last)
+      self._styled_palette = snapshot_palette()
       self._apply_styles()
       self.cpu_ring["ring"].refresh_theme()
       self.mem_ring["ring"].refresh_theme()

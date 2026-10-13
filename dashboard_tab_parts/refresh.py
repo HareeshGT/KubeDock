@@ -10,6 +10,25 @@ from dashboard_tab_parts import windows_metrics as _winm
 
 _log = logging.getLogger("kubedock.dashboard")
 
+# A Kubernetes namespace name is a DNS-1123 label (max 63 chars). Anything
+# else in the NAMESPACES section (a stray pod row, a swallowed marker, kubectl
+# noise) is not a namespace and must never be counted as one.
+_NAMESPACE_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+
+
+def _count_namespaces(lines, pod_namespaces):
+  """Number of namespaces from the `kubectl get namespaces` section.
+
+  Returns None (rendered as "—") when nothing usable came back and there is
+  no pod-derived fallback, so a failed/denied listing never shows as "0".
+  `pod_namespaces` is the existing fallback for a denied listing."""
+  names = {x.strip() for x in lines if _NAMESPACE_NAME_RE.match(x.strip())}
+  if names:
+    return len(names)
+  if pod_namespaces:
+    return len(pod_namespaces)
+  return None
+
 """DashboardTab implementation mixin.
 
 The public DashboardTab class remains in dashboard_tab.py; this module only
@@ -958,12 +977,10 @@ class DashboardRefreshMixin:
       running_pods = sum(1 for p in all_pods if p["phase"].lower() == "running")
       pending_pods = sum(1 for p in all_pods if p["phase"].lower() == "pending")
       failed_pods = sum(1 for p in all_pods if p["phase"].lower() == "failed")
-      namespace_lines = [x.strip() for x in sec.get("NAMESPACES", []) if x.strip()]
-      if namespace_lines:
-        namespaces = len(set(namespace_lines))
-      else:
-        # Fallback only when namespace listing was denied/unavailable.
-        namespaces = len({p["namespace"] for p in all_pods if p["namespace"]})
+      namespaces = _count_namespaces(
+        sec.get("NAMESPACES", []),
+        {p["namespace"] for p in all_pods if p["namespace"]},
+      )
       pressure_nodes = 0
       for node_name in cond:
         c = cond.get(node_name, {})
@@ -982,7 +999,9 @@ class DashboardRefreshMixin:
       self._k8s_summary["running"].setText(str(running_pods))
       self._k8s_summary["pending"].setText(str(pending_pods))
       self._k8s_summary["failed"].setText(str(failed_pods))
-      self._k8s_summary["namespaces"].setText(str(namespaces))
+      self._k8s_summary["namespaces"].setText(
+        "—" if namespaces is None else str(namespaces)
+      )
       self._k8s_summary["pressure"].setText(str(pressure_nodes))
       self._k8s_summary["metrics"].setText(metrics_state)
       metrics_color = T["SUCCESS"] if metrics_state == "Available" else T["WARNING"]

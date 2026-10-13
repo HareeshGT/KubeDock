@@ -135,9 +135,6 @@ class DashboardUIMixin:
       process_header.addWidget(self.process_status)
       process_header.addStretch()
       self.process_interval_lbl = QLabel("LIVE · 1s")
-      self.process_interval_lbl.setStyleSheet(
-        f"color: {_dashboard_text('muted')}; font-size: 10px; font-weight: 700;"
-      )
       process_header.addWidget(self.process_interval_lbl)
       process_body.addLayout(process_header)
 
@@ -147,6 +144,7 @@ class DashboardUIMixin:
       # snapshot, so the dashboard remains lightweight while presenting the
       # important information consistently.
       self.process_metrics = {}
+      self._process_tiles = []
       metric_row = QHBoxLayout()
       metric_row.setSpacing(8)
       for key, label in [
@@ -155,21 +153,12 @@ class DashboardUIMixin:
       ]:
         tile = QFrame()
         tile.setObjectName("process_metric_tile")
-        tile.setStyleSheet(
-          f"QFrame#process_metric_tile {{ background: {T['BG_DARK']}; "
-          f"border: 1px solid {T['BORDER']}; border-radius: 7px; }}"
-        )
         tl = QVBoxLayout(tile)
         tl.setContentsMargins(10, 7, 10, 7)
         tl.setSpacing(1)
         value = QLabel("—")
-        value.setStyleSheet(
-          f"color: {_dashboard_text('primary')}; font-size: 14px; font-weight: 700;"
-        )
         caption = QLabel(label)
-        caption.setStyleSheet(
-          f"color: {_dashboard_text('muted')}; font-size: 9px; font-weight: 600;"
-        )
+        self._process_tiles.append((tile, value, caption))
         tl.addWidget(value)
         tl.addWidget(caption)
         metric_row.addWidget(tile, 1)
@@ -177,9 +166,6 @@ class DashboardUIMixin:
       process_body.addLayout(metric_row)
 
       self.process_detail_lbl = QLabel("CPU — · Memory — · Load —")
-      self.process_detail_lbl.setStyleSheet(
-        f"color: {_dashboard_text('muted')}; font-size: 10px;"
-      )
       process_body.addWidget(self.process_detail_lbl)
 
       self.process_tree = QTreeWidget()
@@ -194,15 +180,6 @@ class DashboardUIMixin:
       self.process_tree.sortItems(2, Qt.DescendingOrder)
       self.process_tree.setMinimumHeight(255)
       self.process_tree.setMaximumHeight(390)
-      self.process_tree.setStyleSheet(
-        f"QTreeWidget {{ background: {T['BG_DARK']}; color: {_dashboard_text('primary')}; "
-        f"border: 1px solid {T['BORDER']}; border-radius: 8px; padding: 2px; "
-        f"alternate-background-color: {T.get('BG_ITEM', T['BG_DARK'])}; }} "
-        f"QTreeWidget::item {{ padding: 3px 2px; }} "
-        f"QHeaderView::section {{ background: {T['BG_PANEL']}; "
-        f"color: {_dashboard_text('muted')}; border: 0; border-bottom: 1px solid {T['BORDER']}; "
-        f"padding: 6px 5px; font-size: 10px; font-weight: 700; }}"
-      )
       header = self.process_tree.header()
       header.setStretchLastSection(True)
       header.setDefaultSectionSize(70)
@@ -214,6 +191,7 @@ class DashboardUIMixin:
       header.resizeSection(5, 78)
       self.process_tree.setColumnWidth(6, 420)
       process_body.addWidget(self.process_tree)
+      self._style_process_card()
 
       self._content_layout.addWidget(self.process_card["frame"])
 
@@ -473,6 +451,8 @@ class DashboardUIMixin:
       self._apply_styles()
       for tile in self.findChildren(QFrame, "ftp_metric_tile"):
         tile.setStyleSheet(f"QFrame#ftp_metric_tile {{ background: {T['BG_PANEL']}; border: 1px solid {T['BORDER']}; border-radius: 10px; }}")
+      # Palette the widgets above were styled with; apply_theme() remaps from it.
+      self._styled_palette = snapshot_palette()
   
   
   def _make_card(self, title: str, icon: str = None) -> dict:
@@ -487,8 +467,10 @@ class DashboardUIMixin:
         # Explicit icon override (e.g. the white Kubernetes logo); the label
         # text is still the title, minus the leading space.
         name, cleaned = icon, title.strip()
+      icon_lbl = None
       if name:
-        lbl.setPixmap(icon_pixmap(name, size=18))
+        set_label_icon(lbl, name, size=18)
+        icon_lbl = lbl
         # Keep title in a compact row so the SVG never relies on an emoji font.
         title_row = QHBoxLayout()
         title_row.setSpacing(7)
@@ -506,7 +488,13 @@ class DashboardUIMixin:
         title_label = lbl
       body = QVBoxLayout()
       outer.addLayout(body)
-      return {"frame": frame, "title_lbl": title_label, "body": outer}
+      card = {"frame": frame, "title_lbl": title_label, "body": outer,
+              "icon_lbl": icon_lbl}
+      # Remember every card so the header text/icon can be re-themed later.
+      if not hasattr(self, "_dash_cards"):
+        self._dash_cards = []
+      self._dash_cards.append(card)
+      return card
   
   
   def _labeled_ring(self, label: str) -> dict:
@@ -653,6 +641,45 @@ class DashboardUIMixin:
         self._card_grid_pos[name] = (row, col)
   
   
+  def _style_process_card(self):
+      """(Re)apply the Live Processes card colors from the active theme.
+
+      Kept separate from _build_ui so a theme change can re-run it — the tiles,
+      labels and process table used to bake their colors at build time and
+      kept the startup theme after switching."""
+      self.process_interval_lbl.setStyleSheet(
+        f"color: {_dashboard_text('muted')}; font-size: 10px; font-weight: 700;"
+      )
+      # The status line is recolored (green/amber) by every live refresh; only
+      # the idle placeholder keeps a muted color that needs re-theming.
+      if self.process_status.text().startswith("Waiting"):
+        self.process_status.setStyleSheet(
+          f"color: {_dashboard_text('muted')}; font-size: 11px;")
+      self.process_detail_lbl.setStyleSheet(
+        f"color: {_dashboard_text('muted')}; font-size: 10px;"
+      )
+      for tile, value, caption in self._process_tiles:
+        tile.setStyleSheet(
+          f"QFrame#process_metric_tile {{ background: {T['BG_DARK']}; "
+          f"border: 1px solid {T['BORDER']}; border-radius: 7px; }}"
+        )
+        value.setStyleSheet(
+          f"color: {_dashboard_text('primary')}; font-size: 14px; font-weight: 700;"
+        )
+        caption.setStyleSheet(
+          f"color: {_dashboard_text('muted')}; font-size: 9px; font-weight: 600;"
+        )
+      self.process_tree.setStyleSheet(
+        f"QTreeWidget {{ background: {T['BG_DARK']}; color: {_dashboard_text('primary')}; "
+        f"border: 1px solid {T['BORDER']}; border-radius: 8px; padding: 2px; "
+        f"alternate-background-color: {T.get('BG_ITEM', T['BG_DARK'])}; }} "
+        f"QTreeWidget::item {{ padding: 3px 2px; }} "
+        f"QHeaderView::section {{ background: {T['BG_PANEL']}; "
+        f"color: {_dashboard_text('muted')}; border: 0; border-bottom: 1px solid {T['BORDER']}; "
+        f"padding: 6px 5px; font-size: 10px; font-weight: 700; }}"
+      )
+
+
   def _apply_styles(self):
       self.ctrl_bar.setStyleSheet(f"QWidget#dash_ctrl {{ background: {T['BG_DARK']}; }}")
       self.page_title_lbl.setStyleSheet(
@@ -666,6 +693,20 @@ class DashboardUIMixin:
           f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
         )
       self.disk_tree.setStyleSheet(f"QTreeWidget {{ font-size: 12px; }}")
+      # Card headers and a few static labels bake their colors into inline
+      # QSS at build time, so they must be re-applied on every theme change.
+      for card in getattr(self, "_dash_cards", []):
+        card["title_lbl"].setStyleSheet(
+          f"color: {_dashboard_text('primary')}; font-size: 13px; font-weight: 700;")
+      for lbl in (self.updated_lbl, self.disconnected_lbl, self.history_status):
+        base = "padding: 40px; font-size: 13px;" if lbl is self.disconnected_lbl else "font-size: 12px;"
+        lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; {base}")
+      self._style_process_card()
+      for tile in self.findChildren(QFrame, "ftp_metric_tile"):
+        tile.setStyleSheet(
+          f"QFrame#ftp_metric_tile {{ background: {T['BG_PANEL']}; "
+          f"border: 1px solid {T['BORDER']}; border-radius: 10px; }}")
+      refresh_theme_icons(self)
       self._update_live_label()
   
   
@@ -707,4 +748,3 @@ class DashboardUIMixin:
       self.k8s_card["frame"].show()
       self.ftp_card["frame"].hide()
       self._update_live_label()
-

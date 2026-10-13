@@ -658,14 +658,14 @@ ICON=""
 case "$OS" in
 
   Darwin)
-    if [ -f VM_Visualizer.icns ]; then
-      ICON="VM_Visualizer.icns"
+    if [ -f KubeDock.icns ]; then
+      ICON="KubeDock.icns"
     fi
     ;;
 
   MINGW*|MSYS*|CYGWIN*)
-    if [ -f VM_Visualizer.ico ]; then
-      ICON="VM_Visualizer.ico"
+    if [ -f KubeDock.ico ]; then
+      ICON="KubeDock.ico"
     fi
     ;;
 

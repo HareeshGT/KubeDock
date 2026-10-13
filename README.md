@@ -1,7 +1,7 @@
 # KubeDock
 
 <p align="center">
-  <strong>A desktop control center for AWS EC2, Kubernetes, SSH, SFTP, FTP, remote files, and cloud operations.</strong>
+  <strong>A desktop control center for Virtual Machines, Kubernetes, SSH, SFTP, FTP, remote files, and cloud operations.</strong>
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
 
 It combines:
 
-- AWS EC2 access
+- Virtual Machines access
 - SSH and SFTP
 - Remote file management
 - FTP
@@ -49,7 +49,7 @@ The goal is to make remote infrastructure feel like a single, consistent workspa
 
 # ✨ Features
 
-## ☁️ AWS EC2 Management
+## ☁️ Virtual Machines Management
 
 Connect to and work with remote EC2 instances from the desktop application.
 
@@ -248,7 +248,7 @@ The Web App provides a mobile-friendly interface for monitoring and performing c
 - Deployment restart
 - Deployment scaling
 - Pod deletion
-- Basic authentication
+- TOTP-based login with expiring sessions
 - Health endpoint
 
 ### Existing SSH connection is reused
@@ -259,20 +259,11 @@ KubeDock passes its existing live SSH client to the Web App runtime, and Web App
 
 This keeps the desktop and Web App on the same connection path and avoids unnecessary duplicate SSH sessions.
 
-### Web App credentials
+### Web App OTP authentication
 
-Web App credentials are configured from:
+The Web App uses a six-digit RFC 6238 TOTP rotating every 30 seconds. Open Settings → Web App to view/copy the code. The seed is generated once and stored in the OS credential vault, never ordinary settings or a network API. The FastAPI backend independently validates codes, rate-limits failures, prevents time-step reuse, and issues an expiring HttpOnly session. Username/password Basic Authentication is no longer accepted.
 
-```text
-Settings → Web App
-```
-
-You can configure:
-
-- Web App username
-- Web App password
-
-The settings are loaded dynamically by the embedded server, so credential changes take effect without duplicating them in a separate Web App `.env` file.
+**Remote access requires HTTPS.** Configure both `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` before using a phone or any non-loopback client. Without TLS, remote page/API access is refused; loopback remains available for development. Never send OTPs over plain LAN HTTP.
 
 ### Web App logging
 
@@ -291,7 +282,7 @@ WEBAPP_HOST
 WEBAPP_PORT
 ```
 
-The server normally binds to an externally reachable host address while keeping the UI login protected by Basic Authentication.
+The server normally binds to an externally reachable host address. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
 
 ### Remote access
 
@@ -361,7 +352,7 @@ PBKDF2-SHA256 is used for PIN-related security.
 
 ## Web App Authentication
 
-The embedded Web App requires a username and password configured in KubeDock Settings.
+The embedded Web App requires a one-time TOTP login and an expiring session. Remote use must be protected by HTTPS.
 
 ## Credential Handling
 
@@ -604,7 +595,7 @@ Available areas include:
 - Kubernetes tab visibility
 - Protected Kubernetes namespaces
 - AI providers, models, and API keys
-- Web App username and password
+- Web App TOTP code and HTTPS listener settings
 - Theme and other application preferences
 
 ---
@@ -614,9 +605,9 @@ Available areas include:
 1. Start KubeDock.
 2. Connect to the VM as usual.
 3. Open **Settings → Web App**.
-4. Configure the Web App username and password.
-5. Make sure the Web App port is reachable from the client device.
-6. Open the Web App URL from your phone or tablet.
+4. Copy the current six-digit OTP shown in Settings → Web App.
+5. For remote devices, configure `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE`.
+6. Open the HTTPS Web App URL from your phone or tablet and enter the current OTP.
 
 For devices on different physical networks, use a private VPN or mesh VPN between the devices or their networks.
 
@@ -772,7 +763,7 @@ Check the log file:
 cat ~/.vm_visualizer/logs/webapp.log
 ```
 
-Make sure the listening port is reachable from the client device and that the configured Web App credentials are correct.
+Make sure the listening port is reachable, use HTTPS for remote devices, and enter the current six-digit OTP from Settings → Web App. Codes expire every 30 seconds.
 
 If using a VPN or mesh VPN, verify both devices are connected to the same private network and can reach one another.
 

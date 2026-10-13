@@ -1,6 +1,7 @@
 """themes.py — Theme definitions, QSS builder, and apply helpers."""
 
 import os
+import re
 
 # ─── Theme palette definitions ────────────────────────────────
 THEMES = {
@@ -67,12 +68,12 @@ THEMES = {
         "SUCCESS": "#2dd4a7", "DANGER": "#f2606a", "WARNING": "#f5a524", "INFO": "#5eb0f0",
     },
 
-    "Snow Light": {
-        "BG_DARK": "#f3f4f8", "BG_PANEL": "#ffffff", "BG_SIDEBAR": "#e9ebf1",
-        "BG_ITEM": "#eef0f6", "BG_ITEM_SEL": "#d6defb", "BG_HOVER": "#e5e8f0",
-        "ACCENT": "#4352d6", "ACCENT2": "#2f6fe0", "TEXT_PRIMARY": "#171a26",
-        "TEXT_DIM": "#434a5e", "TEXT_MUTED": "#5d657b", "BORDER": "#d9dce6",
-        "SUCCESS": "#16803f", "DANGER": "#c42a3a", "WARNING": "#9a5700", "INFO": "#0e7490",
+    "Lavender Light": {
+        "BG_DARK": "#f6f3fb", "BG_PANEL": "#ffffff", "BG_SIDEBAR": "#ece7f6",
+        "BG_ITEM": "#f0ebf9", "BG_ITEM_SEL": "#d6c9f5", "BG_HOVER": "#e6def4",
+        "ACCENT": "#6d3fd8", "ACCENT2": "#8b5cf6", "TEXT_PRIMARY": "#1c1630",
+        "TEXT_DIM": "#4a4264", "TEXT_MUTED": "#645c80", "BORDER": "#d8cfe9",
+        "SUCCESS": "#127638", "DANGER": "#c42a3a", "WARNING": "#9a5700", "INFO": "#0e7490",
     },
 }
 
@@ -132,6 +133,78 @@ def apply_theme_vars(theme_name: str):
 # Bootstrap from SQLite. db.py migrates settings.json at most once.
 _settings = load_settings()
 apply_theme_vars(_settings.get("theme", CURRENT_THEME))
+
+
+# ─── Inline-style re-theming ─────────────────────────────────
+# Many widgets bake palette colors into their own setStyleSheet() strings when
+# they are built, so a theme switch leaves them on the old theme (dark text on
+# a dark background, etc.). retheme_inline_styles() rewrites those strings by
+# swapping every color of the old palette for the matching key of the new one.
+_PALETTE_PRIORITY = (
+    "TEXT_PRIMARY", "TEXT_DIM", "TEXT_MUTED", "BG_DARK", "BG_PANEL",
+    "BG_SIDEBAR", "BG_ITEM", "BG_ITEM_SEL", "BG_HOVER", "BORDER",
+    "ACCENT", "ACCENT2", "SUCCESS", "DANGER", "WARNING", "INFO",
+)
+# Pure white/black are routinely hard-coded on purpose (text on an accent
+# fill), so they are never remapped even when a theme uses them.
+_REMAP_SKIP = {"#ffffff", "#000000"}
+_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}\b")
+_RGBA_RE = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)")
+
+
+def _hex_rgb(h):
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def snapshot_palette():
+    """Copy of the live palette, to hand to retheme_inline_styles() later."""
+    return dict(T)
+
+
+def retheme_inline_styles(root, old, new=None):
+    """Rewrite stale palette colors in ``root``'s descendants' stylesheets.
+
+    ``old`` is the palette the widgets were last styled with (a
+    snapshot_palette() copy); ``new`` defaults to the live palette T. Returns
+    the number of widgets whose stylesheet changed. Run this *before* any
+    explicit restyling so freshly baked new-theme colors are never remapped.
+    """
+    from PyQt5.QtWidgets import QWidget
+
+    new = T if new is None else new
+    hex_map, rgb_map = {}, {}
+    for key in _PALETTE_PRIORITY:
+        o = str(old.get(key) or "").lower()
+        n = str(new.get(key) or "")
+        if len(o) != 7 or not o.startswith("#") or len(n) != 7 or o in _REMAP_SKIP:
+            continue
+        hex_map.setdefault(o, n)
+        rgb_map.setdefault(_hex_rgb(o), _hex_rgb(n))
+
+    if not hex_map or all(o == n.lower() for o, n in hex_map.items()):
+        return 0
+
+    def _sub_hex(m):
+        return hex_map.get(m.group(0).lower(), m.group(0))
+
+    def _sub_rgba(m):
+        rgb = tuple(int(g) for g in m.groups())
+        new_rgb = rgb_map.get(rgb)
+        if new_rgb is None:
+            return m.group(0)
+        return m.group(0).split("(")[0] + "({}, {}, {}".format(*new_rgb)
+
+    changed = 0
+    for w in root.findChildren(QWidget):
+        qss = w.styleSheet()
+        if not qss:
+            continue
+        out = _RGBA_RE.sub(_sub_rgba, _HEX_RE.sub(_sub_hex, qss))
+        if out != qss:
+            w.setStyleSheet(out)
+            changed += 1
+    return changed
 
 
 # ─── Color helpers (derive tints/contrast from the active theme) ──
