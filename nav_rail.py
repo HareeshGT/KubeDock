@@ -16,9 +16,9 @@ RAIL_WIDTH = 190
 # key, label, icon asset
 NAV_ITEMS = [
   ("dashboard",  "Dashboard",  "dashboard"),
+  ("files",      "Files",      "folder"),
   ("kubernetes", "Kubernetes", "kubernetes"),
   ("ec2",        "EC2",        "server"),
-  ("files",      "Files",      "folder"),
   ("terminal",   "Terminal",   "terminal"),
   ("tunnels",    "Tunnels",    "tunnel"),
 ]
