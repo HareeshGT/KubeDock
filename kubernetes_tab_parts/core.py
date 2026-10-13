@@ -1,4 +1,8 @@
 from .common import *
+import logging
+from command_utils import command_operation_label
+
+_LOG = logging.getLogger(__name__)
 
 
 class KubernetesCoreMixin:
@@ -439,21 +443,45 @@ class KubernetesCoreMixin:
       return
     if apply_context:
       cmd = self._apply_context_to_command(cmd)
+    operation = command_operation_label(cmd)
+    started = time.monotonic()
+    self._active_command_count = getattr(self, "_active_command_count", 0) + 1
     self.progress.show()
     worker = CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
 
+    def release_progress():
+      self._active_command_count = max(0, getattr(self, "_active_command_count", 1) - 1)
+      if self._active_command_count == 0:
+        self.progress.hide()
+
     def on_done(out):
-      self.progress.hide()
-      callback(out)
+      callback_started = time.monotonic()
+      try:
+        callback(out)
+      finally:
+        callback_ms = (time.monotonic() - callback_started) * 1000.0
+        total_ms = (time.monotonic() - started) * 1000.0
+        release_progress()
+        _LOG.debug(
+          "kubernetes_request_complete operation=%s request_and_dispatch_ms=%.1f callback_ms=%.1f",
+          operation, total_ms, callback_ms,
+        )
 
     # Not named `on_error`: that would shadow the parameter of the same name,
     # so the caller's handler could never run and `if on_error:` below would
     # call this function again (infinite recursion on any worker error).
     def handle_error(e):
-      self.progress.hide()
-      self._log(f"[error] {e}")
-      if on_error:
-        on_error(e)
+      try:
+        self._log(f"[error] {e}")
+        if on_error:
+          on_error(e)
+      finally:
+        total_ms = (time.monotonic() - started) * 1000.0
+        release_progress()
+        _LOG.debug(
+          "kubernetes_request_failed operation=%s elapsed_ms=%.1f",
+          operation, total_ms,
+        )
 
     worker.done.connect(on_done)
     worker.error.connect(handle_error)
