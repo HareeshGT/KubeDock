@@ -1,5 +1,7 @@
 """main.py — Application entry point for KubeDock."""
 
+import logging
+import os
 import sys
 
 from PyQt5.QtWidgets import QApplication, QStyleFactory
@@ -38,6 +40,15 @@ def _build_palette() -> QPalette:
 
 
 def main() -> int:
+    # Keep routine launches quiet, but make the resource-loading timing
+    # diagnostics easy to enable without editing the source. DEBUG messages
+    # include operation labels and durations only, never command output.
+    log_level = getattr(logging, os.environ.get("KUBEDOCK_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
     if hasattr(Qt, "AA_EnableHighDpiScaling"):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, "AA_UseHighDpiPixmaps"):

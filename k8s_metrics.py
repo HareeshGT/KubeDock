@@ -1,20 +1,15 @@
 """k8s_metrics.py — CPU/memory usage helpers for the Kubernetes → Pods cards.
 
 Pure Python (no Qt, no SSH) so it can be unit-tested on its own. The Pods
-view sends ONE combined shell command per refresh (see build_pods_command)
-whose output has three sections:
+view loads the primary list with build_pod_list_command(), then loads its
+supporting metrics/capacity separately with build_pod_metrics_command(). The
+older build_pods_command() helper remains available for compatibility.
 
-    <kubectl get pods -o wide>
-    __KD_TOP__
-    <kubectl top pods --no-headers>
-    __KD_LIMITS__
-    <kubectl get pods -o jsonpath=…  — per-container limits>
-
-split_pod_sections() cuts that apart, parse_top_output() /
-parse_limits_output() turn the last two into dicts keyed by
-(namespace, pod name) — never by name alone, since identical pod names
-are legal in different namespaces — and build_pod_metrics() combines them
-into the PodMetrics a PodCardWidget renders.
+split_pod_sections() handles the metrics output markers, while
+parse_top_output() / parse_limits_output() turn responses into dicts keyed by
+(namespace, pod name) — never by name alone, since identical pod names are
+legal in different namespaces — and build_pod_metrics() combines them into
+the PodMetrics a PodCardWidget renders.
 
 Rules enforced here (see the feature spec):
   * Usage comes only from `kubectl top`; limits only from the container
@@ -43,9 +38,8 @@ HIGH_FROM = 80
 
 NA = "N/A"
 
-# Upper bound on how long the two extra kubectl calls may take. Without it a
-# hung metrics-server could stall the whole combined command until the
-# worker's own timeout and take the pod list down with it.
+# Per-request upper bound for supporting metrics calls. These run separately
+# from the primary pod list, so a hung metrics-server cannot hold up the list.
 _REQUEST_TIMEOUT = "15s"
 
 # One container per ";"-terminated segment: "<cpu limit>,<memory limit>".
@@ -62,6 +56,39 @@ _LIMITS_JSONPATH = (
 
 
 # ── command ──────────────────────────────────────────────────────────
+
+def build_pod_list_command(ns_flag: str, context_flag: str = "") -> str:
+  """Build the primary pod-list request independently of optional metrics.
+
+  The caller can render the pod cards as soon as this command completes,
+  instead of waiting for metrics-server and node inventory requests.
+  """
+  base = " ".join(p for p in ("kubectl", context_flag) if p)
+  return f"{base} get pods {ns_flag} -o wide 2>&1"
+
+
+def build_pod_metrics_command(ns_flag: str, context_flag: str = "") -> str:
+  """Build the supporting CPU/memory collection as a separate request.
+
+  This may take longer than the primary list (for example when
+  metrics-server is slow), so the UI runs it independently and updates card
+  indicators after the pod list has already been displayed.
+  """
+  base = " ".join(p for p in ("kubectl", context_flag) if p)
+  timeout = f"--request-timeout={_REQUEST_TIMEOUT}"
+  return "\n".join((
+    f"echo {TOP_MARKER}",
+    f"{base} top pods -A --no-headers {timeout} 2>&1",
+    f"echo {LIMITS_MARKER}",
+    f"{base} get pods {ns_flag} {timeout} -o jsonpath='{_LIMITS_JSONPATH}' 2>&1",
+    # Node usage was fetched by the previous implementation but never used
+    # in the pod percentage calculation. Keep an empty section marker for the
+    # shared parser, but avoid this redundant API request.
+    f"echo {TOP_NODES_MARKER}",
+    f"echo {NODES_JSON_MARKER}",
+    f"{base} get nodes {timeout} -o json 2>&1",
+  ))
+
 
 def build_pods_command(ns_flag: str, context_flag: str = "") -> str:
   """Build all pod-card data collection into one worker invocation per refresh.
