@@ -1,7 +1,7 @@
 # KubeDock
 
 <p align="center">
-  <strong>A desktop control center for AWS EC2, Kubernetes, SSH, SFTP, FTP, remote files, and cloud operations.</strong>
+  <strong>A desktop control center for Virtual Machines, Kubernetes, SSH, SFTP, FTP, remote files, and cloud operations.</strong>
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
 
 It combines:
 
-- AWS EC2 access
+- Virtual Machines access
 - SSH and SFTP
 - Remote file management
 - FTP
@@ -49,7 +49,7 @@ The goal is to make remote infrastructure feel like a single, consistent workspa
 
 # ✨ Features
 
-## ☁️ AWS EC2 Management
+## ☁️ Virtual Machines Management
 
 Connect to and work with remote EC2 instances from the desktop application.
 
