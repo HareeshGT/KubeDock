@@ -282,7 +282,7 @@ WEBAPP_HOST
 WEBAPP_PORT
 ```
 
-The server normally binds to an externally reachable host address while keeping the UI login protected by Basic Authentication.
+The server normally binds to an externally reachable host address. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
 
 ### Remote access
 
@@ -595,7 +595,7 @@ Available areas include:
 - Kubernetes tab visibility
 - Protected Kubernetes namespaces
 - AI providers, models, and API keys
-- Web App username and password
+- Web App TOTP code and HTTPS listener settings
 - Theme and other application preferences
 
 ---
@@ -605,9 +605,9 @@ Available areas include:
 1. Start KubeDock.
 2. Connect to the VM as usual.
 3. Open **Settings → Web App**.
-4. Configure the Web App username and password.
-5. Make sure the Web App port is reachable from the client device.
-6. Open the Web App URL from your phone or tablet.
+4. Copy the current six-digit OTP shown in Settings → Web App.
+5. For remote devices, configure `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE`.
+6. Open the HTTPS Web App URL from your phone or tablet and enter the current OTP.
 
 For devices on different physical networks, use a private VPN or mesh VPN between the devices or their networks.
 
@@ -763,7 +763,7 @@ Check the log file:
 cat ~/.vm_visualizer/logs/webapp.log
 ```
 
-Make sure the listening port is reachable from the client device and that the configured Web App credentials are correct.
+Make sure the listening port is reachable, use HTTPS for remote devices, and enter the current six-digit OTP from Settings → Web App. Codes expire every 30 seconds.
 
 If using a VPN or mesh VPN, verify both devices are connected to the same private network and can reach one another.
 
