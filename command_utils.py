@@ -25,7 +25,7 @@ def build_prepared_command(command: str, cwd: Optional[str] = None,
     )
     if sudo_user:
         safe_inner = inner.replace("'", "'\\''")
-        return "sudo -u {} sh -c '{}'".format(shlex.quote(sudo_user), safe_inner)
+        return "sudo -n -u {} sh -c '{}'".format(shlex.quote(sudo_user), safe_inner)
     return inner
 
 

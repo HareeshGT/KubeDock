@@ -30,7 +30,7 @@ def test_prepared_command_uses_shell_home_instead_of_probe_result():
 def test_sudo_path_setup_runs_inside_target_users_shell():
     command = build_prepared_command("kubectl get pods", sudo_user="build user")
 
-    assert command.startswith("sudo -u 'build user' sh -c '")
+    assert command.startswith("sudo -n -u 'build user' sh -c '")
     assert 'export PATH="$HOME:$HOME/bin:' in command
     assert command.endswith("kubectl get pods'")
 
