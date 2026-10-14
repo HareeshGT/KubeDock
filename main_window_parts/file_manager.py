@@ -572,7 +572,10 @@ class FileManagerMixin:
         return
       try:
         remote = self.current_path.rstrip("/") + "/" + name.strip()
-        self.sftp.open(remote, "w").close()
+        if hasattr(self.sftp, "write_bytes"):
+          self.sftp.write_bytes(remote, b"")
+        else:
+          self.sftp.open(remote, "w").close()
         self._refresh()
       except Exception as e:
         QMessageBox.critical(self, "Error", str(e))
