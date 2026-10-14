@@ -105,6 +105,23 @@ def test_inspect_commands():
 
 # ── output parsing ────────────────────────────────────────────
 
+def test_volume_and_network_details_are_batched():
+    volume = du.details_command("volumes")
+    network = du.details_command("networks")
+    assert "docker volume inspect --format" in volume
+    assert "docker volume ls -q" in volume
+    assert "docker network inspect --format" in network
+    assert "docker network ls -q" in network
+    with pytest.raises(ValueError):
+        du.details_command("containers")
+
+
+def test_stats_command_uses_single_json_lines_snapshot():
+    command = du.stats_command()
+    assert command.startswith("docker stats --no-stream --format ")
+    assert "{{json .}}" in command
+
+
 def test_parse_json_lines_skips_noise():
     text = (
         "WARNING: something from the CLI\n"

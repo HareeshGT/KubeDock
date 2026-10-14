@@ -137,6 +137,21 @@ def inspect_command(kind: str, ident: str) -> str:
     return "docker inspect {}".format(target)
 
 
+def stats_command() -> str:
+    """Return one batched, non-streaming snapshot of running container usage."""
+    return "docker stats --no-stream --format {}".format(shlex.quote("{{json .}}"))
+
+
+def details_command(kind: str) -> str:
+    """Inspect all volumes or networks in one Docker CLI invocation."""
+    fmt = shlex.quote("{{json .}}")
+    if kind == "volumes":
+        return 'ids=$(docker volume ls -q); if [ -n "$ids" ]; then docker volume inspect --format {} $ids; fi'.format(fmt)
+    if kind == "networks":
+        return 'ids=$(docker network ls -q); if [ -n "$ids" ]; then docker network inspect --format {} $ids; fi'.format(fmt)
+    raise ValueError("No batched detail command for Docker resource kind: {!r}".format(kind))
+
+
 def parse_json_lines(text: str) -> List[dict]:
     """Parse ``--format '{{json .}}'`` output.
 
