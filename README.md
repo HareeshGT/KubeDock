@@ -280,9 +280,11 @@ The Web App can use environment variables for its listener configuration:
 ```text
 WEBAPP_HOST
 WEBAPP_PORT
+WEBAPP_TLS_CERTFILE
+WEBAPP_TLS_KEYFILE
 ```
 
-The server normally binds to an externally reachable host address. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
+The server binds to loopback (`127.0.0.1`) by default. When both TLS variables are set it binds to all interfaces (`0.0.0.0`) so devices on your network can connect over HTTPS; `WEBAPP_HOST` overrides either default. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
 
 ### Remote access
 
