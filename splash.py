@@ -1,6 +1,6 @@
 """splash.py — Frameless opening-animation splash screen.
 
-Shown before EC2FileManager is constructed. Draws a ring (visually
+Shown before KubeDockWindow is constructed. Draws a ring (visually
 consistent with progress_ring.py's CircularProgress) that sweeps in,
 reveals a server glyph at its centre, then fades in the app name below
 it. Colours are read from themes.T at construction time, so the splash

@@ -62,7 +62,7 @@ from main_window_parts import (
     FileManagerMixin, TerminalMixin, UserSwitchMixin,
 )
 
-class EC2FileManager(
+class KubeDockWindow(
     LifecycleMixin,
     UIMixin,
     ThemeSecurityMixin,
@@ -74,7 +74,7 @@ class EC2FileManager(
 ):
     """Application main-window facade.
 
-    The public EC2FileManager API remains available on this class while
+    The public KubeDockWindow API remains available on this class while
     implementation details are organized in logical mixin modules.
     """
     SORT_KEY_FUNCS = {

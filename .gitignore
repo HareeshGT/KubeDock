@@ -5,3 +5,5 @@ EC2 Manager.spec
 .gitignore
 tunnel-restart.sh
 __pycache__
+# Built installers are published as GitHub Release assets, not committed
+*.pkg

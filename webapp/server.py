@@ -800,6 +800,7 @@ def index(request: Request):
 _server: Optional[uvicorn.Server] = None
 _server_thread: Optional[threading.Thread] = None
 _server_port: Optional[int] = None
+_server_host: Optional[str] = None
 _SERVER_LOCK = threading.RLock()
 
 
@@ -832,6 +833,34 @@ def _reserve_port(
     )
 
 
+def _tls_configured() -> bool:
+    """True when both TLS certificate and key paths are set in the environment."""
+    return bool(
+        os.environ.get("WEBAPP_TLS_CERTFILE", "").strip()
+        and os.environ.get("WEBAPP_TLS_KEYFILE", "").strip()
+    )
+
+
+def _default_bind_host() -> str:
+    """Safe default bind address.
+
+    The dashboard can delete pods and scale deployments, so it only listens on
+    all interfaces when TLS is configured. Without TLS it stays on loopback
+    (use an SSH tunnel for remote access). An explicit WEBAPP_HOST always wins.
+    """
+    return "0.0.0.0" if _tls_configured() else "127.0.0.1"
+
+
+def _is_loopback_host(host: Optional[str]) -> bool:
+    host = (host or "").strip().lower()
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _get_lan_host() -> str:
     """Return the local LAN address used to reach the embedded web server."""
     try:
@@ -853,13 +882,18 @@ def _get_lan_host() -> str:
 def get_server_url() -> str:
     with _SERVER_LOCK:
         port = _server_port
+        bound_host = _server_host
     if port is None:
         try:
             port = int(os.environ.get("WEBAPP_PORT", "8000"))
         except ValueError:
             port = 8000
-    scheme = "https" if os.environ.get("WEBAPP_TLS_CERTFILE") and os.environ.get("WEBAPP_TLS_KEYFILE") else "http"
-    return f"{scheme}://{_get_lan_host()}:{port}"
+    if bound_host is None:
+        bound_host = os.environ.get("WEBAPP_HOST", "").strip() or _default_bind_host()
+    scheme = "https" if _tls_configured() else "http"
+    # A loopback-only server is not reachable via the LAN address.
+    host = "127.0.0.1" if _is_loopback_host(bound_host) else _get_lan_host()
+    return f"{scheme}://{host}:{port}"
 
 
 def start_server(
@@ -867,10 +901,16 @@ def start_server(
     host: Optional[str] = None,
     port: Optional[int] = None,
 ) -> bool:
-    global _server, _server_thread, _server_port
-    # Listen on all local interfaces by default so devices on the same LAN
-    # can reach the web app. Set WEBAPP_HOST=127.0.0.1 to keep it local-only.
-    host = (host or os.environ.get("WEBAPP_HOST", "0.0.0.0")).strip() or "0.0.0.0"
+    global _server, _server_thread, _server_port, _server_host
+    # Bind to loopback unless TLS is configured (then all interfaces, so a
+    # phone on the LAN can reach it over HTTPS). Set WEBAPP_HOST to override.
+    host = (host or os.environ.get("WEBAPP_HOST", "")).strip() or _default_bind_host()
+    if not _tls_configured() and not _is_loopback_host(host):
+        logger.warning(
+            "Web app is listening on %s without TLS; remote requests will be "
+            "rejected. Configure WEBAPP_TLS_CERTFILE and WEBAPP_TLS_KEYFILE.",
+            host,
+        )
     try:
         preferred_port = int(port or os.environ.get("WEBAPP_PORT", "8000"))
     except ValueError:
@@ -902,6 +942,7 @@ def start_server(
         server = uvicorn.Server(config)
         _server = server
         _server_port = selected_port
+        _server_host = host
 
         def run() -> None:
             logger.info(
@@ -930,12 +971,13 @@ def start_server(
 
 
 def stop_server(timeout: float = 3.0) -> None:
-    global _server, _server_thread, _server_port
+    global _server, _server_thread, _server_port, _server_host
     with _SERVER_LOCK:
         server, thread = _server, _server_thread
         _server = None
         _server_thread = None
         _server_port = None
+        _server_host = None
 
     # A stop/restart must invalidate browser sessions, even when it occurs
     # inside the same desktop process rather than via a full app shutdown.

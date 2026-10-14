@@ -1,0 +1,14 @@
+# Optional: microphone input for Ops Mind voice commands.
+#
+# PyAudio needs the native PortAudio library:
+#   macOS:          brew install portaudio
+#   Debian/Ubuntu:  sudo apt install portaudio19-dev
+#   Fedora/RHEL:    sudo dnf install portaudio-devel
+#   Windows:        pip install --only-binary=:all: PyAudio
+#
+# Install on top of the core requirements:
+#   pip install -r requirements.txt -r requirements-voice.txt
+#
+# Without this file's packages KubeDock runs normally; the voice button just
+# shows an "unavailable" message.
+PyAudio>=0.2.13

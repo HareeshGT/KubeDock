@@ -280,9 +280,11 @@ The Web App can use environment variables for its listener configuration:
 ```text
 WEBAPP_HOST
 WEBAPP_PORT
+WEBAPP_TLS_CERTFILE
+WEBAPP_TLS_KEYFILE
 ```
 
-The server normally binds to an externally reachable host address. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
+The server binds to loopback (`127.0.0.1`) by default. When both TLS variables are set it binds to all interfaces (`0.0.0.0`) so devices on your network can connect over HTTPS; `WEBAPP_HOST` overrides either default. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
 
 ### Remote access
 
@@ -483,6 +485,13 @@ kubectl get nodes
 
 # 🚀 Installation
 
+## macOS installer
+
+Prebuilt macOS installers (`KubeDock-<version>.pkg`) are published on the
+[GitHub Releases page](https://github.com/HareeshGT/KubeDock/releases). To build
+one yourself on macOS, run `installer/build_pkg.sh`; the package is written to
+`dist/`.
+
 ## Clone the repository
 
 ```bash
@@ -508,6 +517,20 @@ On Windows:
 ```bash
 pip install -r requirements.txt
 ```
+
+### Optional: voice input
+
+Microphone input for Ops Mind voice commands needs PyAudio, which depends on a
+native PortAudio library and can fail to build on some systems. It is kept out
+of the core requirements so a normal install never breaks on it:
+
+```bash
+# macOS: brew install portaudio   |   Debian/Ubuntu: sudo apt install portaudio19-dev
+pip install -r requirements-voice.txt
+```
+
+Without it KubeDock runs normally and the voice button reports that voice input
+is unavailable.
 
 ---
 
@@ -629,7 +652,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install dependencies (see "Optional: voice input" above for microphone support):
 
 ```bash
 pip install -r requirements.txt

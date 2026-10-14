@@ -23,8 +23,10 @@ https://<KubeDock-machine-LAN-IP>:8000
 
 For remote access, configure both `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` in the KubeDock process environment. Without TLS, remote requests are rejected; plain HTTP is allowed only through loopback (for example, `http://127.0.0.1:8000`).
 
-The web app is bound to `0.0.0.0:8000` by default so a phone on the same
-network can reach it.
+By default the web app listens on `127.0.0.1:8000` (loopback only). When both
+`WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` are set it listens on
+`0.0.0.0:8000` instead, so a phone on the same network can reach it over HTTPS.
+Set `WEBAPP_HOST` to override either default.
 
 ## Configuration
 

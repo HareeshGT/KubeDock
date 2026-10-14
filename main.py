@@ -10,7 +10,7 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 
 from themes import T, build_qss, load_settings
 from file_stream_lifecycle import install as _install_file_stream_lifecycle
-from main_window import EC2FileManager
+from main_window import KubeDockWindow
 from splash import SplashScreen
 from webapp import app as webapp_app
 
@@ -60,7 +60,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("KubeDock")
-    app.setOrganizationName("EC2Manager")
+    app.setOrganizationName("KubeDock")
 
     if "Fusion" in QStyleFactory.keys():
         app.setStyle(QStyleFactory.create("Fusion"))
@@ -72,12 +72,12 @@ def main() -> int:
     window_ref = {}
 
     # The web server lives with the desktop process. It receives a callback
-    # to the current EC2FileManager.ssh object, so reconnecting in KubeDock
+    # to the current KubeDockWindow.ssh object, so reconnecting in KubeDock
     # automatically changes the SSH connection used by the web app too.
     app.aboutToQuit.connect(webapp_app.stop_server)
 
     def _begin_zoom():
-        window = EC2FileManager()
+        window = KubeDockWindow()
         window_ref["window"] = window
         if load_settings().get("webapp_enabled", False):
             webapp_app.start_server(lambda: getattr(window, "ssh", None))
