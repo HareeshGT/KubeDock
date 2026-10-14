@@ -270,7 +270,7 @@ The Web App uses a six-digit RFC 6238 TOTP rotating every 30 seconds. Open Setti
 The embedded server writes logs to:
 
 ```text
-~/.vm_visualizer/logs/webapp.log
+~/.kubedock/logs/webapp.log
 ```
 
 ### Web App configuration
@@ -760,7 +760,7 @@ Check that KubeDock is running and the embedded server has started.
 Check the log file:
 
 ```bash
-cat ~/.vm_visualizer/logs/webapp.log
+cat ~/.kubedock/logs/webapp.log
 ```
 
 Make sure the listening port is reachable, use HTTPS for remote devices, and enter the current six-digit OTP from Settings → Web App. Codes expire every 30 seconds.
@@ -972,7 +972,7 @@ Built for developers, DevOps engineers, SREs, and infrastructure teams.
 ## Local SQLite persistence
 
 KubeDock stores local recent-connection metadata, Dashboard history, and
-application settings in `~/.vm_visualizer/kubedock.db` using Python's built-in
+application settings in `~/.kubedock/kubedock.db` using Python's built-in
 `sqlite3` module. Existing `recent.csv`, dashboard history JSON, and legacy
 `settings.json` are migration sources only; after a successful migration, the
 app reads/writes these state categories through SQLite. The legacy files are

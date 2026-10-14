@@ -8,7 +8,7 @@ import shlex
 from PyQt5.QtGui import QTextCursor, QFont, QFontDatabase, QFontInfo, QTextCharFormat
 from workers import managed_exec_command
 # ─── Paths ───────────────────────────────────────────────────
-APP_DIR     = os.path.join(os.path.expanduser("~"), ".vm_visualizer")
+APP_DIR     = os.path.join(os.path.expanduser("~"), ".kubedock")
 RECENT_FILE = os.path.join(APP_DIR, "recent.csv")  # legacy migration source
 os.makedirs(APP_DIR, exist_ok=True)
 

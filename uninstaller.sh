@@ -123,7 +123,7 @@ echo "Removing KubeDock user data..."
 
 if [[ "$OS" == "Darwin" ]]; then
 
-    remove_path "$HOME/.vm_visualizer" \
+    remove_path "$HOME/.kubedock" \
         "KubeDock legacy user data"
     remove_path "$HOME/Library/Application Support/KubeDock" \
         "KubeDock Application Support"

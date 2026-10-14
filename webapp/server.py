@@ -38,7 +38,7 @@ except ImportError:  # pragma: no cover
     managed_exec_command = None
 
 APP_DIR = Path(__file__).resolve().parent
-STATE_DIR = Path(os.path.expanduser("~")) / ".vm_visualizer"
+STATE_DIR = Path(os.path.expanduser("~")) / ".kubedock"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = STATE_DIR / "logs/webapp.log"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)

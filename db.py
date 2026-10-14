@@ -1,6 +1,6 @@
 """SQLite persistence for KubeDock's local application data.
 
-The database is stored in ~/.vm_visualizer/kubedock.db.  SQLite is the active
+The database is stored in ~/.kubedock/kubedock.db.  SQLite is the active
 store for application settings, recent instances, and dashboard history.
 Legacy JSON/CSV files are read only once for migration and are never written by
 normal application operations.
@@ -13,7 +13,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-APP_DIR = Path.home() / ".vm_visualizer"
+APP_DIR = Path.home() / ".kubedock"
 DB_PATH = APP_DIR / "kubedock.db"
 LEGACY_SETTINGS_PATH = APP_DIR / "settings.json"
 SETTINGS_MIGRATION_MARKER = "migration.settings_json"
