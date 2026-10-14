@@ -94,6 +94,95 @@ def test_refresh_populates_all_tables(tab):
     assert not tab.banner.isVisible() or tab.banner.text() == ""
 
 
+def test_card_grids_render_each_resource_type(tab):
+    assert {kind: view.count() for kind, view in tab._views.items()} == {
+        "containers": 3, "images": 1, "volumes": 1, "networks": 1
+    }
+    container = tab._views["containers"].itemWidget(tab._views["containers"].item(0))
+    image = tab._views["images"].itemWidget(tab._views["images"].item(0))
+    volume = tab._views["volumes"].itemWidget(tab._views["volumes"].item(0))
+    network = tab._views["networks"].itemWidget(tab._views["networks"].item(0))
+    assert container.title_lbl.toolTip() == "web"
+    assert "nginx:1.27" in " ".join(label.text() for label in container.detail_labels)
+    assert image.title_lbl.toolTip() == "nginx:1.27"
+    assert volume.title_lbl.toolTip() == "pgdata"
+    assert network.title_lbl.toolTip() == "backend"
+
+
+def test_refresh_reuses_cards_when_resources_are_unchanged(tab):
+    view = tab._views["containers"]
+    original = view.itemWidget(view.item(0))
+    tab.refresh("containers")
+    assert view.itemWidget(view.item(0)) is original
+
+
+def test_card_click_selects_existing_resource_model(tab):
+    view = tab._views["containers"]
+    tab._select_card_item("containers", view.item(1))
+    assert tab._selected_ident("containers") == "db"
+    assert tab._buttons[("containers", "start")].isEnabled()
+    assert not tab._buttons[("containers", "stop")].isEnabled()
+
+
+def test_filter_hides_non_matching_cards(tab):
+    tab._filters["containers"].setText("postgres")
+    view = tab._views["containers"]
+    hidden = {
+        view.item(i).data(Qt.UserRole)["Names"]: view.item(i).isHidden()
+        for i in range(view.count())
+    }
+    assert hidden == {"web": True, "db": False, "cache": True}
+
+
+def test_empty_resource_results_clear_cards(tab):
+    FakeWorker.responses["docker images"] = ("", "", 0)
+    tab.refresh("images")
+    assert tab._tables["images"].rowCount() == 0
+    assert tab._views["images"].count() == 0
+
+
+def test_card_handles_missing_metadata_and_long_names(tab):
+    long_name = "service-" + ("very-long-name-" * 8)
+    tab._populate("volumes", [{"Name": long_name}])
+    card = tab._views["volumes"].itemWidget(tab._views["volumes"].item(0))
+    assert card.title_lbl.toolTip() == long_name
+    assert "Unavailable" in " ".join(label.text() for label in card.detail_labels)
+    assert card.action_buttons["inspect"].isEnabled()
+
+
+def test_container_stats_are_merged_in_one_batch(tab):
+    stats = "\n".join([
+        _row(ID="aaa111", Container="aaa111", Name="web",
+             CPUPerc="1.20%", MemUsage="20MiB / 1GiB", MemPerc="2.00%"),
+        _row(ID="ccc333", Container="ccc333", Name="cache",
+             CPUPerc="0.30%", MemUsage="5MiB / 1GiB", MemPerc="0.50%"),
+    ])
+    tab._on_container_stats(stats, "", 0)
+    cards = tab._views["containers"]
+    web = cards.itemWidget(cards.item(0))
+    cache = cards.itemWidget(cards.item(2))
+    assert "CPU 1.20%" in " ".join(label.text() for label in web.detail_labels)
+    assert "Memory 20MiB / 1GiB" in " ".join(label.text() for label in web.detail_labels)
+    assert "CPU 0.30%" in " ".join(label.text() for label in cache.detail_labels)
+
+
+def test_batched_network_inspect_shows_connected_container_count(tab):
+    detail = _row(Name="backend", Driver="bridge", Scope="local",
+                  Containers={"id1": {}, "id2": {}})
+    tab._on_resource_details("networks", detail, "", 0)
+    card = tab._views["networks"].itemWidget(tab._views["networks"].item(0))
+    assert "Connected containers  ·  2" in " ".join(label.text() for label in card.detail_labels)
+
+
+def test_batched_volume_inspect_shows_mountpoint(tab):
+    detail = _row(Name="pgdata", Driver="local", Scope="local",
+                  Mountpoint="/var/lib/docker/volumes/pgdata/_data")
+    tab._on_resource_details("volumes", detail, "", 0)
+    card = tab._views["volumes"].itemWidget(tab._views["volumes"].item(0))
+    assert "/var/lib/docker/volumes/pgdata/_data" in " ".join(
+        label.text() for label in card.detail_labels)
+
+
 def test_buttons_follow_container_state(tab):
     b = lambda key: tab._buttons[("containers", key)]  # noqa: E731
     assert not b("start").isEnabled()  # nothing selected yet
@@ -198,4 +287,4 @@ def test_sudo_user_is_passed_to_worker(tab):
         tab.refresh("volumes")
     finally:
         docker_tab.CommandWorker = orig
-    assert seen == ["ubuntu"]
+    assert seen and all(username == "ubuntu" for username in seen)
