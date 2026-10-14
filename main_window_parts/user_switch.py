@@ -90,11 +90,10 @@ class UserSwitchMixin:
 
     def _on_sudo_check(self, username, output, hard_error=False):
       output = (output or "").strip()
-      if hard_error or output:
-        # 'sudo -n -u <user> true' prints nothing and exits 0 on
-        # success. Any output at all here means sudo refused —
-        # password required, unknown user, or not permitted by
-        # sudoers — so abort instead of pretending it worked.
+      if hard_error:
+        # The exit status from 'sudo -n -u <user> true' is authoritative.
+        # Do not treat harmless stderr output as failure when sudo returned
+        # success; a non-zero result must never activate a fake user context.
         self.progress.hide()
         reason = output or "sudo declined the request (no further detail returned)."
         self.terminal.write_output(
