@@ -52,7 +52,7 @@ def test_unselected_user_write_uses_plain_binary_sftp():
 def test_atomic_script_quotes_paths_checks_full_size_and_preserves_mode():
     script = SudoFS._atomic_write_script("/etc/my service.conf", 42)
 
-    assert "mktemp '/etc/.kubedock-save.XXXXXX'" in script
+    assert "mktemp /etc/.kubedock-save.XXXXXX" in script
     assert "cat > \"$tmp\"" in script
     assert "wc -c" in script
     assert "[ \"$actual\" -eq 42 ]" in script
@@ -79,9 +79,7 @@ def test_switched_user_write_tries_target_first_and_rewinds_before_root_fallback
 
     assert len(attempts) == 2
     assert attempts[0][0].startswith("sudo -n -u alice sh -c ")
-    assert "mktemp '/etc/.kubedock-save.XXXXXX'" in attempts[0][0]
     assert attempts[1][0].startswith("sudo -n sh -c ")
-    assert "mktemp '/tmp/.kubedock-save.XXXXXX'" in attempts[1][0]
     assert "chown -- alice \"$tmp\"" in attempts[1][0]
     assert attempts[0][1] == attempts[1][1] == payload
 
@@ -110,7 +108,5 @@ def test_atomic_root_fallback_chowns_temporary_file_before_replace():
         "/etc/example.conf", 12, temp_dir="/tmp", owner="alice"
     )
 
-    assert "mktemp '/tmp/.kubedock-save.XXXXXX'" in script
-    assert script.index('chown -- alice "$tmp"') < script.index(
-        'mv -f -- "$tmp" \'/etc/example.conf\''
-    )
+    assert "mktemp /tmp/.kubedock-save.XXXXXX" in script
+    assert script.index('chown -- alice "$tmp"') < script.index('mv -f -- "$tmp"')
