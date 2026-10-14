@@ -76,7 +76,7 @@ class SudoFS:
         # type: (str) -> str
         if not self.sudo_user or path in ("", "~"):
             if self.sudo_user and path in ("", "~"):
-                code, out, _ = self._run("sudo -u {} sh -c 'echo $HOME'".format(self._sq(self.sudo_user)))
+                code, out, err = self._run("sudo -n -u {} sh -c 'printf \"%s\n\" \"$HOME\"'".format(shlex.quote(self.sudo_user)))
                 return out.strip() or "/home/{}".format(self.sudo_user)
             return self._sftp.normalize(path or ".")
         code, out, _ = self._run(
@@ -153,9 +153,14 @@ class SudoFS:
         # type: (str, str) -> object
         if not self.sudo_user:
             return self._sftp.open(path, mode)
-        import io
-        code, out, _ = self._run("{prefix}cat {p} 2>/dev/null".format(
+        if any(flag in mode for flag in ("w", "a", "+")):
+            raise NotImplementedError(
+                "Switched-user writes must use SudoFS.write_bytes() so bytes and permissions are preserved."
+            )
+        code, out, err = self._run("{prefix}cat {p}".format(
             prefix=self._sudo_prefix, p=self._sq(path)))
+        if code != 0:
+            raise PermissionError((err or out or "remote read failed").strip())
         return io.BytesIO(out.encode("utf-8", errors="replace"))
 
     @staticmethod
@@ -181,7 +186,8 @@ class SudoFS:
             'cat > "$tmp" || exit $?',
             'actual=$(wc -c < "$tmp") || exit $?',
             '[ "$actual" -eq {} ] || {{ echo "incomplete file write" >&2; exit 1; }}'.format(expected_size),
-            'chmod 0644 "$tmp" || exit $?'
+            'if [ -e {dest} ]; then mode=$(stat -c \'%a\' {dest} 2>/dev/null) || mode=$(stat -f \'%Lp\' {dest} 2>/dev/null) || exit 1; else mode=0644; fi'.format(dest=shlex.quote(remote_path)),
+            'chmod "$mode" "$tmp" || exit $?'
         ]
         if owner:
             script.append('chown -- {} "$tmp" || exit $?'.format(shlex.quote(owner)))
