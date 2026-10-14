@@ -184,7 +184,7 @@ class SudoFS:
             "tmp=$(mktemp {}) || exit $?".format(shlex.quote(template)),
             """trap 'rm -f "$tmp"' 0 HUP INT TERM""",
             'cat > "$tmp" || exit $?',
-            'actual=$(wc -c < "$tmp") || exit $?',
+            'actual=$(wc -c < "$tmp" | tr -d \'[:space:]\') || exit $?',
             '[ "$actual" -eq {} ] || {{ echo "incomplete file write" >&2; exit 1; }}'.format(expected_size),
             'if [ -e {dest} ]; then mode=$(stat -c \'%a\' {dest} 2>/dev/null) || mode=$(stat -f \'%Lp\' {dest} 2>/dev/null) || exit 1; else mode=0644; fi'.format(dest=shlex.quote(remote_path)),
             'chmod "$mode" "$tmp" || exit $?'
