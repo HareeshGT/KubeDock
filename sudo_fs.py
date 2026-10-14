@@ -30,7 +30,7 @@ def _perms_to_mode(perms: str) -> int:
 class SudoFS:
     """
     Thin wrapper around paramiko SFTP that can re-route every operation through
-    ``sudo -u <username>`` shell commands when a sudo user is active.
+    non-interactive ``sudo -n -u <username>`` commands when a target user is active.
     """
 
     def __init__(self, sftp, ssh):
