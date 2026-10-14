@@ -101,6 +101,7 @@ class ConnectionMixin:
       self._sudo_user = None
       self._set_connected(True)
       self.k8s_tab.set_ssh(None)
+      self.docker_tab.set_ssh(None)
       self.dashboard_tab.set_connection(protocol, fs=fs, host=host, port=port, user=user)
       self.k8s_tab.clear_connection_info()
       self.sidebar.populate_remote(self.sftp)
@@ -138,6 +139,8 @@ class ConnectionMixin:
       self._set_connected(True)
       self.k8s_tab.set_ssh(self.ssh)
       self.k8s_tab.set_sudo_user(None)
+      self.docker_tab.set_sudo_user(None)
+      self.docker_tab.set_ssh(self.ssh)
       self.dashboard_tab.set_connection("ssh", ssh=self.ssh, host=host, port=port, user=user)
       # Local (client-side) connection details for the port-tunnel
       # feature, which runs `ssh` on this machine rather than over
@@ -241,6 +244,7 @@ class ConnectionMixin:
       self._conn_protocol = "ssh"
       self._conn_port = 22
       self.k8s_tab.set_ssh(None)
+      self.docker_tab.set_ssh(None)
       self.k8s_tab.clear_connection_info()
       self.dashboard_tab.set_ssh(None)
       self.sidebar.clear_remote()

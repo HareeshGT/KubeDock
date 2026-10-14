@@ -18,6 +18,7 @@ NAV_ITEMS = [
   ("dashboard",  "Dashboard",  "dashboard"),
   ("files",      "Files",      "folder"),
   ("kubernetes", "Kubernetes", "kubernetes"),
+  ("docker",     "Docker",     "docker"),
   ("ec2",        "EC2",        "server"),
   ("terminal",   "Terminal",   "terminal"),
   ("tunnels",    "Tunnels",    "tunnel"),

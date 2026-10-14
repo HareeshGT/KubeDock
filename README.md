@@ -37,6 +37,7 @@ It combines:
 - FTP
 - Integrated terminal access
 - Kubernetes management
+- Docker management (containers, images, volumes, networks)
 - Pod logs and exec
 - Port forwarding and tunnels
 - AI-assisted operations
@@ -229,6 +230,36 @@ without directly exposing those services publicly.
 
 ---
 
+# 🐳 Docker Management
+
+The **Docker** tab manages the Docker engine on the VM you are connected to. It
+runs the `docker` CLI over the existing SSH connection, so there is nothing
+extra to install on your machine and no additional credentials.
+
+Views:
+
+- **Containers** — state-aware Start, Stop, Restart, Pause/Unpause, live Logs
+  (`docker logs -f`), Run command (one non-interactive `sh -c` command), Inspect, Remove
+- **Images** — Pull, Inspect, Remove
+- **Volumes** — Inspect, Remove
+- **Networks** — Inspect, Remove
+
+Each view has a filter box, and an optional auto-refresh runs only while the tab
+is visible. Destructive actions ask for confirmation; removing a running
+container offers a force-remove.
+
+Requirements and notes:
+
+- Docker must be installed on the VM, and the SSH user must be allowed to use it
+  (member of the `docker` group, or switch user inside KubeDock — the Docker tab
+  follows the Sudo user switch just like the Kubernetes tab).
+- Clear messages are shown when Docker is missing, the daemon is not running, or
+  access to the Docker socket is denied.
+- Container, volume, network and image names are validated and shell-quoted before
+  they are sent to the host.
+
+---
+
 # 🌐 Embedded Web App
 
 KubeDock now includes an **embedded Web App** that starts automatically with the desktop application.
@@ -385,6 +416,10 @@ KubeDock/
 ├── dashboard_tab.py
 ├── kubernetes_tab.py
 ├── k8s_cards.py
+│
+├── docker_tab.py
+├── docker_dialogs.py
+├── docker_utils.py
 │
 ├── terminal_widget.py
 ├── editor_widgets.py
