@@ -886,6 +886,15 @@ class FileEditorDialog(QDialog):
       QTimer.singleShot(2000, lambda: self._set_status("Ready"))
     self._do_highlight()
 
+  def _write_remote_bytes(self, data: bytes):
+    """Save bytes using the filesystem adapter's correct write path."""
+    if hasattr(self._sftp, "write_bytes"):
+      self._sftp.write_bytes(self._remote, data)
+    elif hasattr(self._sftp, "_ftp"):
+      self._sftp.putfo(io.BytesIO(data), self._remote)
+    else:
+      self._sftp._sftp.putfo(io.BytesIO(data), self._remote)
+
   # ── Save ──────────────────────────────────────────────────
   def _save(self) -> bool:
     if self._loading:
@@ -898,22 +907,7 @@ class FileEditorDialog(QDialog):
     content = self.editor.toPlainText()
     self._set_status("Saving…", T['WARNING'])
     try:
-      data = content.encode("utf-8")
-      buf = io.BytesIO(data)
-      if self._sudo_user:
-        tmp = f"/tmp/.ec2mgr_edit_{os.getpid()}"
-        self._sftp._sftp.putfo(io.BytesIO(data), tmp)
-        code, out, err = self._sftp._run(
-          f"sudo mv {self._sftp._sq(tmp)} {self._sftp._sq(self._remote)} "
-          f"&& sudo chown {self._sudo_user} {self._sftp._sq(self._remote)}"
-        )
-        if code != 0:
-          raise PermissionError((err or out or "sudo save failed").strip())
-      else:
-        if hasattr(self._sftp, "_ftp"):
-          self._sftp.putfo(buf, self._remote)
-        else:
-          self._sftp._sftp.putfo(buf, self._remote)
+      self._write_remote_bytes(content.encode("utf-8"))
       self._original = content
       self._modified_dot.hide()
       self._set_status("Saved ", T['SUCCESS'])
@@ -926,28 +920,15 @@ class FileEditorDialog(QDialog):
 
   def _save_large_content(self, content):
     try:
-      data = (content or "").encode("utf-8")
-      buf = io.BytesIO(data)
       self._set_status("Saving…", T["WARNING"])
-      if self._sudo_user:
-        tmp = f"/tmp/.ec2mgr_edit_{os.getpid()}"
-        self._sftp._sftp.putfo(buf, tmp)
-        code, out, err = self._sftp._run(
-          f"sudo mv {self._sftp._sq(tmp)} {self._sftp._sq(self._remote)} "
-          f"&& sudo chown {self._sudo_user} {self._sftp._sq(self._remote)}"
-        )
-        if code != 0:
-          raise PermissionError((err or out or "sudo save failed").strip())
-      elif hasattr(self._sftp, "_ftp"):
-        self._sftp.putfo(buf, self._remote)
-      else:
-        self._sftp._sftp.putfo(buf, self._remote)
+      self._write_remote_bytes((content or "").encode("utf-8"))
       self._modified_dot.hide()
       self._set_status("Saved", T["SUCCESS"])
       QTimer.singleShot(2000, lambda: self._set_status("Ready"))
     except Exception as e:
       self._set_status(f"Save failed: {e}", T["DANGER"])
       QMessageBox.critical(self, "Save Failed", str(e))
+
   def _save_and_close(self):
     if self._large_file:
       self._set_status("Preparing save…", T["WARNING"])
@@ -958,26 +939,13 @@ class FileEditorDialog(QDialog):
 
   def _save_large_content_and_close(self, content):
     try:
-      data = (content or "").encode("utf-8")
-      buf = io.BytesIO(data)
       self._set_status("Saving…", T["WARNING"])
-      if self._sudo_user:
-        tmp = f"/tmp/.ec2mgr_edit_{os.getpid()}"
-        self._sftp._sftp.putfo(buf, tmp)
-        code, out, err = self._sftp._run(
-          f"sudo mv {self._sftp._sq(tmp)} {self._sftp._sq(self._remote)} "
-          f"&& sudo chown {self._sudo_user} {self._sftp._sq(self._remote)}"
-        )
-        if code != 0:
-          raise PermissionError((err or out or "sudo save failed").strip())
-      elif hasattr(self._sftp, "_ftp"):
-        self._sftp.putfo(buf, self._remote)
-      else:
-        self._sftp._sftp.putfo(buf, self._remote)
+      self._write_remote_bytes((content or "").encode("utf-8"))
       self.accept()
     except Exception as e:
       self._set_status(f"Save failed: {e}", T["DANGER"])
       QMessageBox.critical(self, "Save Failed", str(e))
+
   def _cancel_live_load(self):
     """Safely stop the live-load worker during dialog teardown.
 
