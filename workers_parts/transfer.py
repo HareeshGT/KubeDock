@@ -518,10 +518,11 @@ class ScpTransferWorker(QThread):
         scp -i key.pem ~/Downloads/4K.mp4 ec2-user@44.224.86.255:/home/ec2-user/gt/
 
     This is only used for the plain (non-sudo) case — a sudo-target
-    upload/download still goes through SudoFS/_TransferWorker, since that
-    path already needs a second hop (upload to a tmp path, then ``sudo mv``
-    over the existing ssh session) that a single scp invocation can't
-    express. Both key- and password-authenticated connections use scp:
+    upload/download still goes through SudoFS/_TransferWorker so it can
+    apply the selected-user filesystem context and, only when required,
+    perform a narrowly scoped privileged fallback over the existing SSH
+    session. A single scp invocation cannot express that policy safely.
+    Both key- and password-authenticated connections use scp:
     for a password, this worker answers scp's own "password:" prompt
     itself over the pty below, the same way a person typing it by hand
     would — no external helper (sshpass, etc.) needed.
