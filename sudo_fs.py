@@ -1,6 +1,9 @@
 """sudo_fs.py — SudoFS SFTP wrapper that can transparently sudo all operations."""
 
+import io
 import os
+import posixpath
+import shlex
 import stat as _stat
 from typing import Optional, Tuple
 
@@ -40,7 +43,7 @@ class SudoFS:
     def set_sudo_user(self, username):
         # type: (Optional[str]) -> None
         self.sudo_user    = username
-        self._sudo_prefix = "sudo -u {} ".format(self._sq(username)) if username else ""
+        self._sudo_prefix = "sudo -n -u {} ".format(shlex.quote(username)) if username else ""
 
     # ── Internal helpers ──────────────────────────────────────
     def _run(self, cmd, timeout=60):
@@ -73,7 +76,7 @@ class SudoFS:
         # type: (str) -> str
         if not self.sudo_user or path in ("", "~"):
             if self.sudo_user and path in ("", "~"):
-                code, out, _ = self._run("sudo -u {} sh -c 'echo $HOME'".format(self._sq(self.sudo_user)))
+                code, out, _ = self._run("sudo -n -u {} sh -c 'echo $HOME'".format(shlex.quote(self.sudo_user)))
                 return out.strip() or "/home/{}".format(self.sudo_user)
             return self._sftp.normalize(path or ".")
         code, out, _ = self._run(
@@ -150,10 +153,109 @@ class SudoFS:
         # type: (str, str) -> object
         if not self.sudo_user:
             return self._sftp.open(path, mode)
-        import io
-        code, out, _ = self._run("{prefix}cat {p} 2>/dev/null".format(
+        if any(flag in mode for flag in ("w", "a", "+")):
+            raise NotImplementedError(
+                "Switched-user writes must use SudoFS.write_bytes() so bytes and permissions are preserved."
+            )
+        code, out, err = self._run("{prefix}cat {p}".format(
             prefix=self._sudo_prefix, p=self._sq(path)))
+        if code != 0:
+            raise PermissionError((err or out or "remote read failed").strip())
         return io.BytesIO(out.encode("utf-8", errors="replace"))
+
+    @staticmethod
+    def _atomic_write_script(remote_path, expected_size, temp_dir=None, owner=None):
+        """Build a shell script that validates bytes and atomically replaces a file."""
+        expected_size = int(expected_size)
+        parent = posixpath.dirname(remote_path) or "."
+        template = posixpath.join(temp_dir or parent, ".kubedock-save.XXXXXX")
+        dest = shlex.quote(remote_path)
+        script = [
+            "save_umask=$(umask)",
+            "umask 077",
+            "tmp=$(mktemp {}) || exit $?".format(shlex.quote(template)),
+            """trap 'rm -f "$tmp"' 0 HUP INT TERM""",
+            'cat > "$tmp" || exit $?',
+            'actual=$(wc -c < "$tmp" | tr -d \'[:space:]\') || exit $?',
+            '[ "$actual" -eq {} ] || {{ echo "incomplete file write" >&2; exit 1; }}'.format(expected_size),
+            'if [ -e {dest} ]; then mode=$(stat -c \'%a\' {dest} 2>/dev/null) || mode=$(stat -f \'%Lp\' {dest} 2>/dev/null) || exit 1; else mask=$save_umask; case "$mask" in 0*) ;; *) mask=0$mask ;; esac; mode=$(printf \'%o\' "$((0666 & ~mask))") || exit 1; fi'.format(dest=dest),
+            'chmod "$mode" "$tmp" || exit $?'
+        ]
+        if owner:
+            script.append('chown {} "$tmp" || exit $?'.format(shlex.quote(owner)))
+        script.append('mv -f "$tmp" {}'.format(dest))
+        return "; ".join(script)
+
+    @staticmethod
+    def _permission_failure(detail):
+        low = (detail or "").lower()
+        return any(marker in low for marker in (
+            "permission denied", "operation not permitted", "not permitted",
+            "access denied",
+        ))
+
+    def _execute_with_input(self, command, source):
+        """Stream binary bytes to a remote shell command's stdin."""
+        from workers import managed_exec_command
+        with managed_exec_command(self._ssh, command) as (stdin, stdout, stderr):
+            channel = stdout.channel
+            channel.settimeout(60)
+            write_error = None
+            try:
+                while True:
+                    chunk = source.read(64 * 1024)
+                    if not chunk:
+                        break
+                    stdin.write(chunk)
+                stdin.flush()
+            except Exception as exc:
+                write_error = exc
+            finally:
+                try:
+                    channel.shutdown_write()
+                except Exception:
+                    pass
+            out, err = stdout.read(), stderr.read()
+            code = channel.recv_exit_status()
+        if write_error is not None and code == 0:
+            raise IOError("Remote stream write failed: {}".format(write_error))
+        return code, out.decode(errors="replace"), err.decode(errors="replace")
+
+    def _write_stream(self, remote_path, source, expected_size):
+        if not self.sudo_user:
+            with self._sftp.open(remote_path, "wb") as remote:
+                while True:
+                    chunk = source.read(64 * 1024)
+                    if not chunk:
+                        break
+                    remote.write(chunk)
+            return
+
+        target_script = self._atomic_write_script(remote_path, expected_size)
+        target_cmd = "sudo -n -u {} sh -c {}".format(
+            shlex.quote(self.sudo_user), shlex.quote(target_script)
+        )
+        code, out, err = self._execute_with_input(target_cmd, source)
+        if code == 0:
+            return
+        detail = (err or out or "exit status {}".format(code)).strip()
+        if not self._permission_failure(detail):
+            raise PermissionError("Could not save '{}' as '{}': {}".format(remote_path, self.sudo_user, detail))
+
+        # Preserve privileged access only for paths the target user cannot write.
+        source.seek(0)
+        root_script = self._atomic_write_script(
+            remote_path, expected_size, temp_dir="/tmp", owner=self.sudo_user
+        )
+        root_cmd = "sudo -n sh -c {}".format(shlex.quote(root_script))
+        code, out, err = self._execute_with_input(root_cmd, source)
+        if code != 0:
+            fallback = (err or out or "exit status {}".format(code)).strip()
+            raise PermissionError("Target-user save failed: {}. Privileged fallback failed: {}".format(detail, fallback))
+
+    def write_bytes(self, remote_path, data):
+        payload = bytes(data)
+        self._write_stream(remote_path, io.BytesIO(payload), len(payload))
 
     # ── Download / upload ─────────────────────────────────────
     def get(self, remote_path, local_path):
@@ -171,12 +273,9 @@ class SudoFS:
         # type: (str, str) -> None
         if not self.sudo_user:
             return self._sftp.put(local_path, remote_path)
-        tmp = "/tmp/.ec2mgr_upload_{}".format(os.getpid())
-        self._sftp.put(local_path, tmp)
-        self._run_or_raise(
-            "sudo mv {tmp} {dst} && sudo chown {user} {dst}".format(
-                tmp=self._sq(tmp), dst=self._sq(remote_path), user=self._sq(self.sudo_user))
-        )
+        size = os.path.getsize(local_path)
+        with open(local_path, "rb") as source:
+            return self._write_stream(remote_path, source, size)
 
     # ── Directory operations ──────────────────────────────────
     def mkdir(self, path):
