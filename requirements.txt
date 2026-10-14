@@ -1,4 +1,4 @@
-# VM Visualizer / KubeDock — runtime dependencies
+# KubeDock — runtime dependencies
 #
 # PyQt5 (with QtMultimedia/QtMultimediaWidgets for direct playback) and
 # paramiko (SSH/SFTP — used throughout main_window.py, sudo_fs.py, workers.py)

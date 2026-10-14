@@ -1,4 +1,4 @@
-"""Logical mixins used by main_window.EC2FileManager."""
+"""Logical mixins used by main_window.KubeDockWindow."""
 
 from .lifecycle import LifecycleMixin
 from .ui import UIMixin
