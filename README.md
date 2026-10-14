@@ -485,6 +485,13 @@ kubectl get nodes
 
 # 🚀 Installation
 
+## macOS installer
+
+Prebuilt macOS installers (`KubeDock-<version>.pkg`) are published on the
+[GitHub Releases page](https://github.com/HareeshGT/KubeDock/releases). To build
+one yourself on macOS, run `installer/build_pkg.sh`; the package is written to
+`dist/`.
+
 ## Clone the repository
 
 ```bash
