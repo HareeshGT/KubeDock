@@ -190,8 +190,8 @@ class SudoFS:
             'chmod "$mode" "$tmp" || exit $?'
         ]
         if owner:
-            script.append('chown -- {} "$tmp" || exit $?'.format(shlex.quote(owner)))
-        script.append('mv -f -- "$tmp" {}'.format(shlex.quote(remote_path)))
+            script.append('chown {} "$tmp" || exit $?'.format(shlex.quote(owner)))
+        script.append('mv -f "$tmp" {}'.format(shlex.quote(remote_path)))
         return "; ".join(script)
 
     @staticmethod
