@@ -59,7 +59,7 @@ def test_atomic_script_quotes_paths_checks_full_size_and_preserves_mode():
     assert "stat -c '%a' '/etc/my service.conf'" in script
     assert "stat -f '%Lp' '/etc/my service.conf'" in script
     assert 'chmod "$mode" "$tmp"' in script
-    assert script.index('chmod "$mode" "$tmp"') < script.index("mv -f -- \"$tmp\"")
+    assert script.index('chmod "$mode" "$tmp"') < script.index("mv -f \"$tmp\"")
 
 
 def test_switched_user_write_tries_target_first_and_rewinds_before_root_fallback():
@@ -80,7 +80,7 @@ def test_switched_user_write_tries_target_first_and_rewinds_before_root_fallback
     assert len(attempts) == 2
     assert attempts[0][0].startswith("sudo -n -u alice sh -c ")
     assert attempts[1][0].startswith("sudo -n sh -c ")
-    assert "chown -- alice \"$tmp\"" in attempts[1][0]
+    assert "chown alice \"$tmp\"" in attempts[1][0]
     assert attempts[0][1] == attempts[1][1] == payload
 
 
@@ -109,4 +109,4 @@ def test_atomic_root_fallback_chowns_temporary_file_before_replace():
     )
 
     assert "mktemp /tmp/.kubedock-save.XXXXXX" in script
-    assert script.index('chown -- alice "$tmp"') < script.index('mv -f -- "$tmp"')
+    assert script.index('chown alice "$tmp"') < script.index('mv -f "$tmp"')
