@@ -76,7 +76,7 @@ class SudoFS:
         # type: (str) -> str
         if not self.sudo_user or path in ("", "~"):
             if self.sudo_user and path in ("", "~"):
-                code, out, err = self._run("sudo -n -u {} sh -c 'printf \"%s\n\" \"$HOME\"'".format(shlex.quote(self.sudo_user)))
+                code, out, err = self._run("sudo -n -u {} sh -c 'echo $HOME'".format(shlex.quote(self.sudo_user)))
                 return out.strip() or "/home/{}".format(self.sudo_user)
             return self._sftp.normalize(path or ".")
         code, out, _ = self._run(
