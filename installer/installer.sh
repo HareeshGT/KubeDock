@@ -511,6 +511,20 @@ if [ -f requirements.txt ]; then
 
   fi
 
+  # Optional voice input (PyAudio). Failure must not abort the install; the
+  # app runs without it and just disables microphone input.
+  if [ -f requirements-voice.txt ]; then
+    echo
+    echo "Installing optional voice-input requirements..."
+    if [[ "$OS" == "Darwin" ]]; then
+      "$PYTHON" -m pip install --break-system-packages -r requirements-voice.txt \
+        || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
+    else
+      "$PYTHON" -m pip install -r requirements-voice.txt \
+        || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
+    fi
+  fi
+
 else
 
   echo

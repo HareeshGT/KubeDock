@@ -518,6 +518,20 @@ On Windows:
 pip install -r requirements.txt
 ```
 
+### Optional: voice input
+
+Microphone input for Ops Mind voice commands needs PyAudio, which depends on a
+native PortAudio library and can fail to build on some systems. It is kept out
+of the core requirements so a normal install never breaks on it:
+
+```bash
+# macOS: brew install portaudio   |   Debian/Ubuntu: sudo apt install portaudio19-dev
+pip install -r requirements-voice.txt
+```
+
+Without it KubeDock runs normally and the voice button reports that voice input
+is unavailable.
+
 ---
 
 # ▶️ Running KubeDock
@@ -638,7 +652,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install dependencies (see "Optional: voice input" above for microphone support):
 
 ```bash
 pip install -r requirements.txt
