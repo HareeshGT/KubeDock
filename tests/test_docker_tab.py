@@ -76,6 +76,15 @@ def tab(qapp, monkeypatch):
     return t
 
 
+def _resource_item(view, name):
+    for index in range(view.count()):
+        item = view.item(index)
+        row = item.data(Qt.UserRole) or {}
+        if item.data(Qt.UserRole + 3) == "resource" and row.get("Names") == name:
+            return item
+    raise AssertionError("resource card not found: " + name)
+
+
 def _select(tab, kind, name):
     table = tab._tables[kind]
     for r in range(table.rowCount()):
@@ -95,10 +104,13 @@ def test_refresh_populates_all_tables(tab):
 
 
 def test_card_grids_render_each_resource_type(tab):
-    assert {kind: view.count() for kind, view in tab._views.items()} == {
+    assert {kind: sum(
+        1 for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "resource"
+    ) for kind, view in tab._views.items()} == {
         "containers": 3, "images": 1, "volumes": 1, "networks": 1
     }
-    container = tab._views["containers"].itemWidget(tab._views["containers"].item(0))
+    container = tab._views["containers"].itemWidget(_resource_item(tab._views["containers"], "web"))
     image = tab._views["images"].itemWidget(tab._views["images"].item(0))
     volume = tab._views["volumes"].itemWidget(tab._views["volumes"].item(0))
     network = tab._views["networks"].itemWidget(tab._views["networks"].item(0))
@@ -111,14 +123,14 @@ def test_card_grids_render_each_resource_type(tab):
 
 def test_refresh_reuses_cards_when_resources_are_unchanged(tab):
     view = tab._views["containers"]
-    original = view.itemWidget(view.item(0))
+    original = view.itemWidget(_resource_item(view, "web"))
     tab.refresh("containers")
-    assert view.itemWidget(view.item(0)) is original
+    assert view.itemWidget(_resource_item(view, "web")) is original
 
 
 def test_card_click_selects_existing_resource_model(tab):
     view = tab._views["containers"]
-    tab._select_card_item("containers", view.item(1))
+    tab._select_card_item("containers", _resource_item(view, "db"))
     assert tab._selected_ident("containers") == "db"
     assert tab._buttons[("containers", "start")].isEnabled()
     assert not tab._buttons[("containers", "stop")].isEnabled()
@@ -128,8 +140,9 @@ def test_filter_hides_non_matching_cards(tab):
     tab._filters["containers"].setText("postgres")
     view = tab._views["containers"]
     hidden = {
-        view.item(i).data(Qt.UserRole)["Names"]: view.item(i).isHidden()
+        (view.item(i).data(Qt.UserRole) or {})["Names"]: view.item(i).isHidden()
         for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "resource"
     }
     assert hidden == {"web": True, "db": False, "cache": True}
 
@@ -159,8 +172,8 @@ def test_container_stats_are_merged_in_one_batch(tab):
     ])
     tab._on_container_stats(stats, "", 0)
     cards = tab._views["containers"]
-    web = cards.itemWidget(cards.item(0))
-    cache = cards.itemWidget(cards.item(2))
+    web = cards.itemWidget(_resource_item(cards, "web"))
+    cache = cards.itemWidget(_resource_item(cards, "cache"))
     assert "CPU 1.20%" in " ".join(label.text() for label in web.detail_labels)
     assert "Memory 20MiB / 1GiB" in " ".join(label.text() for label in web.detail_labels)
     assert "CPU 0.30%" in " ".join(label.text() for label in cache.detail_labels)
@@ -217,7 +230,7 @@ def test_container_action_runs_command_and_refreshes(tab):
     _select(tab, "containers", "db")
     FakeWorker.commands.clear()
     tab._container_action("start")
-    assert FakeWorker.commands[0] == "docker start db"
+    assert FakeWorker.commands[0] == "docker start bbb222"
     assert any(c.startswith("docker ps") for c in FakeWorker.commands[1:])
 
 
@@ -226,7 +239,7 @@ def test_remove_running_container_forces_after_confirm(tab, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     FakeWorker.commands.clear()
     tab._remove("containers")
-    assert FakeWorker.commands[0] == "docker rm -f web"
+    assert FakeWorker.commands[0] == "docker rm -f aaa111"
 
 
 def test_remove_stopped_container_not_forced(tab, monkeypatch):
@@ -234,7 +247,7 @@ def test_remove_stopped_container_not_forced(tab, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     FakeWorker.commands.clear()
     tab._remove("containers")
-    assert FakeWorker.commands[0] == "docker rm db"
+    assert FakeWorker.commands[0] == "docker rm bbb222"
 
 
 def test_remove_declined_runs_nothing(tab, monkeypatch):
@@ -288,3 +301,174 @@ def test_sudo_user_is_passed_to_worker(tab):
     finally:
         docker_tab.CommandWorker = orig
     assert seen and all(username == "ubuntu" for username in seen)
+
+
+def test_sort_controls_reorder_locally_and_keep_selection(tab):
+    _select(tab, "containers", "db")
+    combo, order = tab._sort_controls["containers"]
+    before = list(FakeWorker.commands)
+    combo.setCurrentIndex(combo.findData("name"))
+    names = [
+        tab._tables["containers"].item(i, 0).text()
+        for i in range(tab._tables["containers"].rowCount())
+    ]
+    assert names == ["cache", "db", "web"]
+    assert tab._selected_ident("containers") == "db"
+    order.setCurrentIndex(order.findData(True))
+    names_desc = [
+        tab._tables["containers"].item(i, 0).text()
+        for i in range(tab._tables["containers"].rowCount())
+    ]
+    assert names_desc == ["web", "db", "cache"]
+    assert tab._selected_ident("containers") == "db"
+    assert FakeWorker.commands == before
+
+
+def test_actions_still_target_selected_resource_after_sort(tab):
+    _select(tab, "containers", "db")
+    combo, _order = tab._sort_controls["containers"]
+    combo.setCurrentIndex(combo.findData("image"))
+    FakeWorker.commands.clear()
+    tab._container_action("start")
+    assert FakeWorker.commands[0] == "docker start bbb222"
+
+
+def test_compose_groups_render_expand_and_collapse_without_extra_ssh(tab):
+    rows = [
+        {"ID": "a1", "Names": "web", "Image": "nginx", "State": "running",
+         "Status": "Up", "Labels": "com.docker.compose.project=shop,com.docker.compose.service=web"},
+        {"ID": "a2", "Names": "db", "Image": "postgres", "State": "exited",
+         "Status": "Exited", "Labels": "com.docker.compose.project=shop,com.docker.compose.service=db"},
+        {"ID": "b1", "Names": "manual", "Image": "busybox", "State": "paused",
+         "Status": "Paused", "Labels": ""},
+    ]
+    before = list(FakeWorker.commands)
+    tab._populate("containers", rows)
+    view = tab._views["containers"]
+    group_items = [
+        view.item(i) for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "group"
+    ]
+    assert len(group_items) == 2
+    shop = next(item for item in group_items if item.data(Qt.UserRole)["name"] == "shop")
+    header = view.itemWidget(shop)
+    assert "2 containers" in header.text()
+    tab._toggle_compose_group("compose:shop")
+    assert all(
+        view.item(i).isHidden()
+        for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "resource"
+        and docker_tab.du.compose_metadata(view.item(i).data(Qt.UserRole))[0] == "shop"
+    )
+    tab._toggle_compose_group("compose:shop")
+    assert FakeWorker.commands == before
+
+
+def test_compose_filter_matches_project_and_service_labels(tab):
+    tab._populate("containers", [
+        {"ID": "x1", "Names": "api", "Image": "api:v1", "State": "running",
+         "Status": "Up", "Labels": "com.docker.compose.project=backend,com.docker.compose.service=rest"},
+        {"ID": "x2", "Names": "database", "Image": "postgres", "State": "running",
+         "Status": "Up", "Labels": "com.docker.compose.project=store,com.docker.compose.service=db"},
+    ])
+    tab._filters["containers"].setText("backend")
+    view = tab._views["containers"]
+    visible_names = [
+        (view.item(i).data(Qt.UserRole) or {}).get("Names")
+        for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "resource" and not view.item(i).isHidden()
+    ]
+    assert visible_names == ["api"]
+    tab._filters["containers"].setText("rest")
+    visible_names = [
+        (view.item(i).data(Qt.UserRole) or {}).get("Names")
+        for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "resource" and not view.item(i).isHidden()
+    ]
+    assert visible_names == ["api"]
+
+
+def test_cleanup_preview_does_not_prune_until_user_selects_and_confirms(tab, monkeypatch):
+    # A preview itself must only issue the read-only inspection command.
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+    FakeWorker.responses["printf"] = (
+        "__KD_STOPPED_CONTAINERS__\n\n"
+        "__KD_DANGLING_IMAGES__\n\n"
+        "__KD_ALL_IMAGES__\n\n"
+        "__KD_USED_IMAGE_IDS__\n\n"
+        "__KD_BUILDER_CACHE__\n", "", 0
+    )
+    before = len(FakeWorker.commands)
+    tab._cleanup_preview()
+    preview_commands = FakeWorker.commands[before:]
+    assert preview_commands
+    assert "docker buildx du" in preview_commands[0]
+    assert "docker rm " not in preview_commands[0]
+    assert "docker image rm " not in preview_commands[0]
+    assert "docker buildx prune" not in preview_commands[0]
+
+
+def test_cleanup_cancel_keeps_resources_untouched(tab, monkeypatch):
+    report = docker_tab.du.parse_cleanup_preview(
+        "__KD_STOPPED_CONTAINERS__\n" + '{"ID":"abc123","Names":"old"}' +
+        "\n__KD_DANGLING_IMAGES__\n__KD_ALL_IMAGES__\n__KD_USED_IMAGE_IDS__\n__KD_BUILDER_CACHE__"
+    )
+    tab._cleanup_report = report
+    monkeypatch.setattr(docker_tab.QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+    monkeypatch.setattr(docker_tab.QInputDialog, "getItem", lambda *a, **k: ("Stopped containers (1)", True))
+    monkeypatch.setattr(docker_tab.QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    FakeWorker.commands.clear()
+    tab._on_cleanup_preview(
+        "__KD_STOPPED_CONTAINERS__\n" + '{"ID":"abc123","Names":"old"}' +
+        "\n__KD_DANGLING_IMAGES__\n__KD_ALL_IMAGES__\n__KD_USED_IMAGE_IDS__\n__KD_BUILDER_CACHE__",
+        "", 0, tab._connection_generation)
+    assert not any(command.startswith(("docker rm ", "docker image rm ", "docker buildx prune"))
+                   for command in FakeWorker.commands)
+
+
+def test_selection_survives_sort_with_duplicate_container_display_names(tab):
+    tab._populate("containers", [
+        {"ID": "aaa111", "Names": "same-name", "Image": "nginx",
+         "State": "running", "Status": "Up"},
+        {"ID": "bbb222", "Names": "same-name", "Image": "redis",
+         "State": "exited", "Status": "Exited"},
+    ])
+    table = tab._tables["containers"]
+    table.selectRow(1)
+    assert tab._selected_identity("containers") == "bbb222"
+    combo, _order = tab._sort_controls["containers"]
+    combo.setCurrentIndex(combo.findData("state"))
+    assert tab._selected_identity("containers") == "bbb222"
+    FakeWorker.commands.clear()
+    tab._container_action("start")
+    assert FakeWorker.commands[0] == "docker start bbb222"
+
+
+def test_confirmed_cleanup_runs_only_selected_operation(tab, monkeypatch):
+    preview = (
+        '__KD_STOPPED_CONTAINERS__\n{"ID":"abc123","Names":"old-worker","Size":"4MB"}\n'
+        '__KD_DANGLING_IMAGES__\n__KD_ALL_IMAGES__\n'
+        '__KD_USED_IMAGE_IDS__\n__KD_BUILDER_CACHE__'
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+    monkeypatch.setattr(docker_tab.QInputDialog, "getItem",
+                        lambda *a, **k: ("Stopped containers (1)", True))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    FakeWorker.commands.clear()
+    tab._on_cleanup_preview(preview, "", 0, tab._connection_generation)
+    destructive = [command for command in FakeWorker.commands
+                   if command.startswith(("docker rm ", "docker image rm ", "docker buildx prune"))]
+    assert destructive == ["docker rm abc123"]
+
+
+def test_filter_still_applies_after_sorting(tab):
+    combo, _order = tab._sort_controls["containers"]
+    combo.setCurrentIndex(combo.findData("image"))
+    tab._filters["containers"].setText("postgres")
+    view = tab._views["containers"]
+    visible_names = [
+        (view.item(i).data(Qt.UserRole) or {}).get("Names")
+        for i in range(view.count())
+        if view.item(i).data(Qt.UserRole + 3) == "resource" and not view.item(i).isHidden()
+    ]
+    assert visible_names == ["db"]
