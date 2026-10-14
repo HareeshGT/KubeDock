@@ -80,7 +80,7 @@ class UserSwitchMixin:
       worker.result.connect(
         lambda out, err, code: self._on_sudo_check(
           username,
-          out + ("\\n[stderr]\\n{}".format(err) if err else ""),
+          out + ("\n[stderr]\n{}".format(err) if err else ""),
           hard_error=(code != 0),
         )
       )
