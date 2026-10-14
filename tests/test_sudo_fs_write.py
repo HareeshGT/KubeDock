@@ -58,6 +58,8 @@ def test_atomic_script_quotes_paths_checks_full_size_and_preserves_mode():
     assert "[ \"$actual\" -eq 42 ]" in script
     assert "stat -c '%a' '/etc/my service.conf'" in script
     assert "stat -f '%Lp' '/etc/my service.conf'" in script
+    assert "save_umask=$(umask)" in script
+    assert "mode=$(printf '%o' \"$((0666 & ~mask))\")" in script
     assert 'chmod "$mode" "$tmp"' in script
     assert script.index('chmod "$mode" "$tmp"') < script.index("mv -f \"$tmp\"")
 
