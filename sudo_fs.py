@@ -180,13 +180,14 @@ class SudoFS:
             template = posixpath.join(parent, ".kubedock-save.XXXXXX")
 
         script = [
+            "save_umask=$(umask)",
             "umask 077",
             "tmp=$(mktemp {}) || exit $?".format(shlex.quote(template)),
             """trap 'rm -f "$tmp"' 0 HUP INT TERM""",
             'cat > "$tmp" || exit $?',
             'actual=$(wc -c < "$tmp" | tr -d \'[:space:]\') || exit $?',
             '[ "$actual" -eq {} ] || {{ echo "incomplete file write" >&2; exit 1; }}'.format(expected_size),
-            'if [ -e {dest} ]; then mode=$(stat -c \'%a\' {dest} 2>/dev/null) || mode=$(stat -f \'%Lp\' {dest} 2>/dev/null) || exit 1; else mode=0644; fi'.format(dest=shlex.quote(remote_path)),
+            'if [ -e {dest} ]; then mode=$(stat -c \'%a\' {dest} 2>/dev/null) || mode=$(stat -f \'%Lp\' {dest} 2>/dev/null) || exit 1; else mask=$save_umask; case "$mask" in 0*) ;; *) mask=0$mask ;; esac; mode=$(printf \'%o\' "$((0666 & ~mask))") || exit 1; fi'.format(dest=shlex.quote(remote_path)),
             'chmod "$mode" "$tmp" || exit $?'
         ]
         if owner:
