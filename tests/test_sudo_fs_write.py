@@ -62,6 +62,24 @@ def test_atomic_script_quotes_paths_checks_full_size_and_preserves_mode():
     assert script.index('chmod "$mode" "$tmp"') < script.index("mv -f \"$tmp\"")
 
 
+def test_switched_user_write_stays_as_target_when_target_can_write():
+    fs = _fs()
+    fs.set_sudo_user("alice")
+    payload = b"target-owned bytes"
+    attempts = []
+
+    def fake_execute(command, source):
+        attempts.append((command, source.read()))
+        return 0, "", ""
+
+    fs._execute_with_input = fake_execute
+    fs.write_bytes("/home/alice/example.txt", payload)
+
+    assert len(attempts) == 1
+    assert attempts[0][0].startswith("sudo -n -u alice sh -c ")
+    assert attempts[0][1] == payload
+
+
 def test_switched_user_write_tries_target_first_and_rewinds_before_root_fallback():
     fs = _fs()
     fs.set_sudo_user("alice")
