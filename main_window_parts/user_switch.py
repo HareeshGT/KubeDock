@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 import os
 import re
+import shlex
 import stat
 import codecs
 
@@ -74,9 +75,15 @@ class UserSwitchMixin:
       # you're now 'adp', but every command underneath silently kept
       # running as the original login user because sudo had quietly
       # failed (no NOPASSWD rule, wrong username, etc).
-      check_cmd = "sudo -n -u {} true".format(username)
+      check_cmd = "sudo -n -u {} true".format(shlex.quote(username))
       worker = CommandWorker(self.ssh, check_cmd)
-      worker.done.connect(lambda out: self._on_sudo_check(username, out))
+      worker.result.connect(
+        lambda out, err, code: self._on_sudo_check(
+          username,
+          out + ("\\n[stderr]\\n{}".format(err) if err else ""),
+          hard_error=(code != 0),
+        )
+      )
       worker.error.connect(lambda err: self._on_sudo_check(username, err, hard_error=True))
       track_worker(self._workers, worker)
       worker.start()
@@ -111,7 +118,7 @@ class UserSwitchMixin:
       # made the terminal show the wrong cwd even when sudo did succeed.
       home_worker = CommandWorker(
         self.ssh,
-        "getent passwd {u} 2>/dev/null | cut -d: -f6".format(u=username)
+        "getent passwd {u} 2>/dev/null | cut -d: -f6".format(u=shlex.quote(username))
       )
       home_worker.done.connect(lambda out: self._apply_user_switch(username, out.strip()))
       home_worker.error.connect(lambda _: self._apply_user_switch(username, ""))
@@ -129,9 +136,10 @@ class UserSwitchMixin:
       self._update_sudo_badge()
       self.terminal.write_output(
         "[sudo mode] Acting as '{}'.\n"
-        "All file operations now run as: sudo -u {}\n"
+        "Filesystem and terminal commands prefer: sudo -n -u {}\n"
+        "Protected paths may use a scoped privileged fallback.\n"
         "Terminal working directory: {}\n"
-        "Type 'exit' or 'su <original_user>' to return to normal.".format(username, username, home)
+        "Type 'exit' to return to the SSH login user.".format(username, home)
       )
       self.status.showMessage("sudo → {} • {}".format(username, home))
       self.terminal.show_prompt(self._prompt_str())
@@ -211,7 +219,7 @@ class UserSwitchMixin:
       if self._sudo_user:
         menu.addAction(" Exit sudo mode ({})".format(self._sudo_user), self._exit_sudo_mode)
       else:
-        menu.addAction(" Switch user (sudo su)…", self._prompt_switch_user)
+        menu.addAction(" Switch user (sudo -u)…", self._prompt_switch_user)
       menu.exec_(self.file_list.viewport().mapToGlobal(pos))
 
     def _open_search(self):
