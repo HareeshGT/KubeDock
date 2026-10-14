@@ -10,7 +10,7 @@ import json
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
-  QAbstractItemView, QCheckBox, QHBoxLayout, QHeaderView, QInputDialog,
+  QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QInputDialog,
   QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
   QSizePolicy, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
@@ -122,7 +122,10 @@ class DockerResourceCard(ResourceCard):
   def _details(self, row):
     if self.kind == "containers":
       result = [
-        "Image  ·  {}".format(du.cell(row, "Image") or "Unavailable"),
+        "{}Image  ·  {}".format(
+          ("Service  ·  {}  ·  ".format(du.compose_metadata(row)[1])
+           if du.compose_metadata(row)[1] else ""),
+          du.cell(row, "Image") or "Unavailable"),
         "ID  ·  {}".format((du.cell(row, "ID") or "Unavailable")[:12]),
         "Ports  ·  {}".format(du.cell(row, "Ports") or "No published ports"),
         "Uptime  ·  {}".format(du.cell(row, "Status") or "Unavailable"),
@@ -261,10 +264,15 @@ class DockerTab(QWidget):
     self._inflight = set()
     self._stats_inflight = False
     self._details_inflight = set()
+    self._cleanup_inflight = False
+    self._cleanup_report = None
     self._dirty = False
     self._tables = {}       # existing selection/data model for Docker operations
     self._views = {}        # visible responsive card grids
     self._filters = {}
+    self._sort_keys = {kind: "" for kind in du.LIST_COMMANDS}
+    self._sort_descending = {kind: False for kind in du.LIST_COMMANDS}
+    self._sort_controls = {}
     self._empty_labels = {}
     self._buttons = {}      # (kind, key) -> QPushButton
     self._dialogs = []      # keep non-modal dialogs alive
@@ -279,12 +287,16 @@ class DockerTab(QWidget):
     self._connection_generation += 1
     self._stats_inflight = False
     self._details_inflight.clear()
+    self._cleanup_inflight = False
+    self._cleanup_report = None
     self._clear_tables()
     if ssh is None:
+      self.cleanup_btn.setEnabled(False)
       self._timer.stop()
       self._dirty = False
       self._set_banner("Connect to a VM to manage its Docker containers.", error=False)
       return
+    self.cleanup_btn.setEnabled(True)
     self._set_banner("", error=False)
     self._dirty = True
     if self.isVisible():
@@ -318,6 +330,12 @@ class DockerTab(QWidget):
     self.auto_chk = QCheckBox("Auto-refresh")
     self.auto_chk.toggled.connect(self._on_auto_toggled)
     top.addWidget(self.auto_chk)
+    self.cleanup_btn = QPushButton("Clean up…")
+    self.cleanup_btn.setToolTip(
+      "Inspect stopped containers, unused images and reclaimable cache before cleanup")
+    self.cleanup_btn.setEnabled(False)
+    self.cleanup_btn.clicked.connect(self._cleanup_preview)
+    top.addWidget(self.cleanup_btn)
     self.refresh_btn = QPushButton(" Refresh")
     self.refresh_btn.clicked.connect(self.refresh_all)
     top.addWidget(self.refresh_btn)
@@ -347,6 +365,28 @@ class DockerTab(QWidget):
     flt.textChanged.connect(lambda _t, k=kind: self._apply_filter(k))
     self._filters[kind] = flt
     bar.addWidget(flt)
+
+    sort_lbl = QLabel("Sort by")
+    sort_lbl.setObjectName("docker_sort_label")
+    bar.addWidget(sort_lbl)
+    sort_combo = QComboBox()
+    sort_combo.setObjectName("docker_sort_combo")
+    sort_combo.addItem("Default order", "")
+    for caption, sort_key in du.SORT_OPTIONS[kind]:
+      sort_combo.addItem(caption, sort_key)
+    sort_combo.currentIndexChanged.connect(
+      lambda _index, k=kind, c=sort_combo: self._on_sort_changed(k, c))
+    bar.addWidget(sort_combo)
+
+    order_combo = QComboBox()
+    order_combo.setObjectName("docker_order_combo")
+    order_combo.addItem("Ascending", False)
+    order_combo.addItem("Descending", True)
+    order_combo.setEnabled(False)
+    order_combo.currentIndexChanged.connect(
+      lambda _index, k=kind, c=order_combo: self._on_sort_order_changed(k, c))
+    bar.addWidget(order_combo)
+    self._sort_controls[kind] = (sort_combo, order_combo)
     bar.addStretch()
 
     def add_btn(key, label, handler, tip=""):
@@ -410,10 +450,11 @@ class DockerTab(QWidget):
     view.setMovement(QListView.Static)
     view.setSelectionMode(QAbstractItemView.SingleSelection)
     view.setSpacing(10)
-    view.setGridSize(QSize(370, 218))
+    # Different item sizes let section headings span the view while cards wrap.
+    view.setGridSize(QSize())
     view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-    view.setUniformItemSizes(True)
+    view.setUniformItemSizes(False)
     view.itemClicked.connect(lambda item, k=kind: self._select_card_item(k, item))
     view.currentItemChanged.connect(
       lambda current, previous, k=kind: self._sync_card_selection(k, current, previous))
@@ -433,7 +474,22 @@ class DockerTab(QWidget):
     self.title.setStyleSheet(
       "color: {}; font-size: 16px; font-weight: 700;".format(T["TEXT_PRIMARY"]))
     set_icon(self.refresh_btn, "refresh", T["TEXT_DIM"], 14)
+    self.cleanup_btn.setStyleSheet(
+      "QPushButton {{ color: {}; background: {}; border: 1px solid {}; "
+      "border-radius: 6px; padding: 5px 10px; font-weight: 600; }}"
+      "QPushButton:hover {{ background: {}; }}"
+      "QPushButton:disabled {{ color: {}; background: transparent; }}".format(
+        T["TEXT_PRIMARY"], T["BG_PANEL"], T["BORDER"], T["BG_HOVER"], T["TEXT_MUTED"]))
     self.auto_chk.setStyleSheet("color: {};".format(T["TEXT_DIM"]))
+    for sort_combo, order_combo in self._sort_controls.values():
+      for combo in (sort_combo, order_combo):
+        combo.setStyleSheet(
+          "QComboBox {{ color: {}; background: {}; border: 1px solid {}; "
+          "border-radius: 6px; padding: 3px 7px; min-width: 88px; }}"
+          "QComboBox QAbstractItemView {{ color: {}; background: {}; "
+          "selection-background-color: {}; }}".format(
+            T["TEXT_PRIMARY"], T["BG_PANEL"], T["BORDER"], T["TEXT_PRIMARY"],
+            T["BG_PANEL"], T["BG_ITEM_SEL"]))
     self._style_banner(self._banner_error)
     for view in self._views.values():
       view.setStyleSheet(
@@ -442,8 +498,10 @@ class DockerTab(QWidget):
         .format(T["BG_DARK"]))
       for index in range(view.count()):
         card = view.itemWidget(view.item(index))
-        if card is not None:
+        if isinstance(card, DockerResourceCard):
           card.refresh_theme()
+        elif isinstance(card, QPushButton):
+          self._style_group_header(card)
 
   _banner_error = False
 
@@ -458,6 +516,17 @@ class DockerTab(QWidget):
     self.banner.setVisible(bool(text))
 
   # ── visibility / auto refresh ──────────────────────────────
+  def resizeEvent(self, event):
+    super().resizeEvent(event)
+    # Keep group headings full-width as the responsive card grid changes size.
+    if hasattr(self, "_views"):
+      for view in self._views.values():
+        width = max(370, view.viewport().width() - 20)
+        for index in range(view.count()):
+          item = view.item(index)
+          if item.data(Qt.UserRole + 3) == "group":
+            item.setSizeHint(QSize(width, 46))
+
   def showEvent(self, event):
     super().showEvent(event)
     if self.ssh is not None and self._dirty:
@@ -626,10 +695,34 @@ class DockerTab(QWidget):
       self._update_buttons(kind)
       self._apply_filter(kind)
 
+  def _on_sort_changed(self, kind, combo):
+    self._sort_keys[kind] = combo.currentData() or ""
+    self._sort_controls[kind][1].setEnabled(bool(self._sort_keys[kind]))
+    self._resort_kind(kind)
+
+  def _on_sort_order_changed(self, kind, combo):
+    self._sort_descending[kind] = bool(combo.currentData())
+    self._resort_kind(kind)
+
+  def _resort_kind(self, kind):
+    # Reuse the hidden table's raw resource dictionaries; sorting is local.
+    table = self._tables[kind]
+    rows = []
+    for index in range(table.rowCount()):
+      item = table.item(index, 0)
+      if item is not None:
+        row = item.data(Qt.UserRole)
+        if isinstance(row, dict):
+          rows.append(dict(row))
+    self._populate(kind, rows)
+
   def _populate(self, kind, rows):
+    rows = du.sort_resources(
+      rows, kind, self._sort_keys.get(kind, ""),
+      self._sort_descending.get(kind, False))
     table = self._tables[kind]
     cols = du.COLUMNS[kind]
-    keep = self._selected_ident(kind)
+    keep = self._resource_identity(kind, self._selected_row(kind))
     was_empty = table.rowCount() == 0
     table.setUpdatesEnabled(False)
     table.setRowCount(len(rows))
@@ -643,7 +736,7 @@ class DockerTab(QWidget):
         if kind == "containers" and key == "State":
           item.setForeground(QColor(self._state_color(du.cell(row, "State"))))
         table.setItem(r, c, item)
-      if keep and du.cell(row, _IDENT_KEY[kind]) == keep:
+      if keep and self._resource_identity(kind, row) == keep:
         reselect = r
     if was_empty and rows:
       # Size columns once, on first data; later refreshes keep the user's widths.
@@ -663,38 +756,128 @@ class DockerTab(QWidget):
 
   @staticmethod
   def _card_key(kind, row):
+    if kind == "containers":
+      return du.cell(row, "ID") or du.cell(row, "Names")
     if kind == "images":
       return "|".join(du.cell(row, key) for key in ("ID", "Repository", "Tag"))
     return du.cell(row, _IDENT_KEY[kind]) or du.cell(row, "ID")
 
+  def _card_entries(self, kind, rows):
+    """Keep each visible resource tied to its hidden-table row after grouping."""
+    if kind != "containers":
+      return [
+        {"type": "resource", "key": self._card_key(kind, row),
+         "row": row, "row_index": index}
+        for index, row in enumerate(rows)
+      ]
+    row_indices = {id(row): index for index, row in enumerate(rows)}
+    entries = []
+    for group in du.compose_groups(rows):
+      entries.append({"type": "group", "key": group["key"], "group": group})
+      for row in group["containers"]:
+        entries.append({
+          "type": "resource", "key": self._card_key(kind, row),
+          "row": row, "row_index": row_indices[id(row)],
+        })
+    return entries
+
+  def _group_summary(self, group):
+    states = [du.state_kind(du.cell(row, "State")) for row in group["containers"]]
+    running = sum(state == "running" for state in states)
+    paused = sum(state == "paused" for state in states)
+    stopped = sum(state == "stopped" for state in states)
+    details = ["{} container{}".format(len(states), "" if len(states) == 1 else "s")]
+    if running:
+      details.append("{} running".format(running))
+    if paused:
+      details.append("{} paused".format(paused))
+    if stopped:
+      details.append("{} stopped".format(stopped))
+    return " · ".join(details)
+
+  def _style_group_header(self, button):
+    button.setStyleSheet(
+      "QPushButton {{ text-align: left; color: {}; background: {}; "
+      "border: 1px solid {}; border-radius: {}px; padding: 8px 10px; "
+      "font-size: 12px; font-weight: 700; }}"
+      "QPushButton:hover {{ border-color: {}; background: {}; }}".format(
+        T["TEXT_PRIMARY"], T["BG_PANEL"], T["BORDER"], RADIUS_CARD,
+        T["ACCENT"], T["BG_HOVER"]))
+
+  def _create_group_header(self, group):
+    collapsed = group["key"] in self._collapsed_compose_groups
+    caption = "Compose project · " if group["kind"] == "compose" else ""
+    button = QPushButton("{} {}{}   ({})".format(
+      "▸" if collapsed else "▾", caption, group["name"], self._group_summary(group)))
+    button.setCursor(Qt.PointingHandCursor)
+    button.setToolTip("Click to {} this container group".format(
+      "expand" if collapsed else "collapse"))
+    self._style_group_header(button)
+    button.clicked.connect(
+      lambda _checked=False, key=group["key"]: self._toggle_compose_group(key))
+    return button
+
+  def _toggle_compose_group(self, group_key):
+    if group_key in self._collapsed_compose_groups:
+      self._collapsed_compose_groups.remove(group_key)
+    else:
+      self._collapsed_compose_groups.add(group_key)
+    rows = []
+    table = self._tables["containers"]
+    for index in range(table.rowCount()):
+      item = table.item(index, 0)
+      row = item.data(Qt.UserRole) if item is not None else None
+      if isinstance(row, dict):
+        rows.append(dict(row))
+    self._populate_cards("containers", rows)
+
   def _populate_cards(self, kind, rows):
     view = self._views[kind]
-    keys = [self._card_key(kind, row) for row in rows]
+    entries = self._card_entries(kind, rows)
+    keys = [entry["type"] + ":" + entry["key"] for entry in entries]
     current_keys = [view.item(i).data(Qt.UserRole + 2) for i in range(view.count())]
     view.setUpdatesEnabled(False)
-    # Normal refreshes update existing cards in place instead of recreating them.
     if keys == current_keys:
-      for index, row in enumerate(rows):
+      for index, entry in enumerate(entries):
         item = view.item(index)
-        item.setData(Qt.UserRole, row)
-        item.setData(Qt.UserRole + 1, index)
-        card = view.itemWidget(item)
-        if card is not None and card.row != row:
-          card.update_row(row)
+        item.setData(Qt.UserRole, entry.get("row", entry.get("group")))
+        item.setData(Qt.UserRole + 1, entry.get("row_index"))
+        item.setData(Qt.UserRole + 3, entry["type"])
+        if entry["type"] == "group":
+          button = view.itemWidget(item)
+          if isinstance(button, QPushButton):
+            group = entry["group"]
+            collapsed = group["key"] in self._collapsed_compose_groups
+            button.setText("{} {}{}   ({})".format(
+              "▸" if collapsed else "▾",
+              "Compose project · " if group["kind"] == "compose" else "",
+              group["name"], self._group_summary(group)))
+            button.setToolTip("Click to {} this container group".format(
+              "expand" if collapsed else "collapse"))
+        else:
+          card = view.itemWidget(item)
+          if isinstance(card, DockerResourceCard) and card.row != entry["row"]:
+            card.update_row(entry["row"])
     else:
       view.clear()
-      for index, row in enumerate(rows):
+      for entry in entries:
         item = QListWidgetItem()
-        item.setData(Qt.UserRole, row)
-        item.setData(Qt.UserRole + 1, index)
-        item.setData(Qt.UserRole + 2, keys[index])
-        item.setSizeHint(QSize(356, 204))
-        view.addItem(item)
-        card = DockerResourceCard(kind, row, view)
-        card.clicked.connect(lambda k=kind, c=card: self._select_card_widget(k, c))
-        card.double_clicked.connect(lambda k=kind, c=card: self._card_action(k, c, "inspect"))
-        card.action_requested.connect(lambda action, k=kind, c=card: self._card_action(k, c, action))
-        view.setItemWidget(item, card)
+        item.setData(Qt.UserRole, entry.get("row", entry.get("group")))
+        item.setData(Qt.UserRole + 1, entry.get("row_index"))
+        item.setData(Qt.UserRole + 2, entry["type"] + ":" + entry["key"])
+        item.setData(Qt.UserRole + 3, entry["type"])
+        if entry["type"] == "group":
+          item.setSizeHint(QSize(700, 46))
+          view.addItem(item)
+          view.setItemWidget(item, self._create_group_header(entry["group"]))
+        else:
+          item.setSizeHint(QSize(356, 204))
+          view.addItem(item)
+          card = DockerResourceCard(kind, entry["row"], view)
+          card.clicked.connect(lambda k=kind, c=card: self._select_card_widget(k, c))
+          card.double_clicked.connect(lambda k=kind, c=card: self._card_action(k, c, "inspect"))
+          card.action_requested.connect(lambda action, k=kind, c=card: self._card_action(k, c, action))
+          view.setItemWidget(item, card)
     view.setUpdatesEnabled(True)
     self._apply_filter(kind)
 
@@ -718,17 +901,22 @@ class DockerTab(QWidget):
 
   def _set_card_current_row(self, kind, row_index):
     view = self._views[kind]
-    if 0 <= row_index < view.count():
-      view.setCurrentItem(view.item(row_index))
-    else:
-      view.setCurrentRow(-1)
+    for index in range(view.count()):
+      item = view.item(index)
+      if item.data(Qt.UserRole + 3) == "resource" and item.data(Qt.UserRole + 1) == row_index:
+        view.setCurrentItem(item)
+        return
+    view.setCurrentRow(-1)
 
   def _sync_card_selection(self, kind, current, previous):
+    if current is not None and current.data(Qt.UserRole + 3) == "group":
+      # A group heading is not a resource selection; preserve the prior card state.
+      return
     view = self._views[kind]
     for index in range(view.count()):
       item = view.item(index)
       card = view.itemWidget(item)
-      if card is not None:
+      if isinstance(card, DockerResourceCard):
         card.set_selected(item is current)
     if current is None:
       self._tables[kind].clearSelection()
@@ -763,25 +951,59 @@ class DockerTab(QWidget):
     needle = self._filters[kind].text().strip().lower()
     table = self._tables[kind]
     for r in range(table.rowCount()):
-      text = " ".join(
-        (table.item(r, c).text() if table.item(r, c) else "")
+      first = table.item(r, 0)
+      row = first.data(Qt.UserRole) if first is not None else {}
+      fields = list(row.values()) if isinstance(row, dict) else []
+      if kind == "containers" and isinstance(row, dict):
+        project, service = du.compose_metadata(row)
+        fields.extend((project, service))
+      fields.extend(
+        table.item(r, c).text() if table.item(r, c) else ""
         for c in range(table.columnCount())
-      ).lower()
-      table.setRowHidden(r, bool(needle) and needle not in text)
+      )
+      table.setRowHidden(r, bool(needle) and needle not in " ".join(
+        str(value) for value in fields).lower())
 
     view = self._views.get(kind)
     empty = self._empty_labels.get(kind)
     if view is None or empty is None:
       return
-    visible_count = 0
+
+    row_matches = {}
+    group_matched = {}
     for index in range(view.count()):
       item = view.item(index)
-      row = item.data(Qt.UserRole) or {}
-      searchable = " ".join(du.cell(row, key) for _header, key in du.COLUMNS[kind]).lower()
-      hidden = bool(needle) and needle not in searchable
-      item.setHidden(hidden)
-      if not hidden:
-        visible_count += 1
+      entry_type = item.data(Qt.UserRole + 3)
+      payload = item.data(Qt.UserRole) or {}
+      if entry_type == "group":
+        group_matched[payload.get("key", "")] = (
+          not needle or needle in payload.get("name", "").lower()
+        )
+        continue
+      fields = list(payload.values()) if isinstance(payload, dict) else []
+      project, service = du.compose_metadata(payload) if kind == "containers" else ("", "")
+      fields.extend((project, service))
+      matched = not needle or needle in " ".join(str(value) for value in fields).lower()
+      row_matches[index] = matched
+      if matched:
+        group_key = "compose:" + project if project else "standalone"
+        if group_key in group_matched:
+          group_matched[group_key] = True
+
+    matched_count = sum(row_matches.values())
+    for index in range(view.count()):
+      item = view.item(index)
+      entry_type = item.data(Qt.UserRole + 3)
+      payload = item.data(Qt.UserRole) or {}
+      if entry_type == "group":
+        item.setHidden(not group_matched.get(payload.get("key", ""), not needle))
+      else:
+        hidden = not row_matches.get(index, True)
+        if kind == "containers":
+          project, _service = du.compose_metadata(payload)
+          group_key = "compose:" + project if project else "standalone"
+          hidden = hidden or group_key in self._collapsed_compose_groups
+        item.setHidden(hidden)
 
     if self.ssh is None:
       empty.hide()
@@ -790,11 +1012,11 @@ class DockerTab(QWidget):
       empty.setText("Loading {}…".format(_KIND_TITLES[kind].lower()))
       empty.show()
       view.hide()
-    elif view.count() == 0:
+    elif matched_count == 0 and view.count() == 0:
       empty.setText("No {} available yet.".format(_KIND_TITLES[kind].lower()))
       empty.show()
       view.hide()
-    elif visible_count == 0:
+    elif matched_count == 0:
       empty.setText("No {} match your filter.".format(_KIND_TITLES[kind].lower()))
       empty.show()
       view.hide()
@@ -811,9 +1033,33 @@ class DockerTab(QWidget):
     item = table.item(sel[0].row(), 0)
     return item.data(Qt.UserRole) if item else None
 
+  @staticmethod
+  def _resource_identity(kind, row):
+    """Unique row key used only to restore selection after a reorder."""
+    if not row:
+      return ""
+    if kind == "containers":
+      return du.cell(row, "ID") or du.cell(row, "Names")
+    if kind == "images":
+      identity = "|".join(du.cell(row, key) for key in ("ID", "Repository", "Tag"))
+      return identity.strip("|") or du.cell(row, _IDENT_KEY[kind])
+    if kind == "networks":
+      return du.cell(row, "ID") or du.cell(row, "Name")
+    return du.cell(row, _IDENT_KEY[kind]) or du.cell(row, "ID")
+
   def _selected_ident(self, kind):
+    """Human-friendly display identifier retained for UI labels and prompts."""
     row = self._selected_row(kind)
     return du.cell(row, _IDENT_KEY[kind]) if row else ""
+
+  def _selected_identity(self, kind):
+    """Stable Docker target ID for operations, falling back when unavailable."""
+    row = self._selected_row(kind)
+    if not row:
+      return ""
+    if kind in ("containers", "images", "networks"):
+      return du.cell(row, "ID") or du.cell(row, _IDENT_KEY[kind])
+    return du.cell(row, _IDENT_KEY[kind]) or du.cell(row, "ID")
 
   def _update_buttons(self, kind):
     row = self._selected_row(kind)
@@ -835,6 +1081,91 @@ class DockerTab(QWidget):
   def _on_double_click(self, kind):
     if self._selected_row(kind) is not None:
       self._inspect(kind)
+
+
+
+  # ── safe cleanup workflow ──────────────────────────────────
+  def _cleanup_preview(self):
+    if self.ssh is None or self._cleanup_inflight:
+      return
+    self._cleanup_inflight = True
+    generation = self._connection_generation
+    self.status_msg.emit("Collecting Docker cleanup preview…")
+    worker = self._worker(du.cleanup_preview_command(), timeout=90)
+    worker.result.connect(
+      lambda out, err, code, g=generation: self._on_cleanup_preview(out, err, code, g))
+    worker.error.connect(
+      lambda message, g=generation: self._on_cleanup_preview_error(message, g))
+    worker.start()
+
+  def _on_cleanup_preview_error(self, message, generation=None):
+    if generation is not None and generation != self._connection_generation:
+      return
+    self._cleanup_inflight = False
+    self.status_msg.emit("Docker cleanup preview failed")
+    QMessageBox.warning(self.window(), "Docker Cleanup Preview", message or "Could not inspect Docker resources.")
+
+  def _on_cleanup_preview(self, out, err, code, generation=None):
+    if generation is not None and generation != self._connection_generation:
+      return
+    self._cleanup_inflight = False
+    raw_output = (out or "")
+    if err and err.strip():
+      raw_output += "\n" + err.strip()
+    report = du.parse_cleanup_preview(raw_output)
+    self._cleanup_report = report
+    report_text = du.format_cleanup_preview(report)
+    if code != 0 and not any(item["available"] for item in report.values()):
+      detail = du.classify_error(err or out, code) or (err or out or "").strip()
+      QMessageBox.warning(
+        self.window(), "Docker Cleanup Preview",
+        report_text + "\n\nDocker inspection failed: " + (detail or "unknown error"))
+      self.status_msg.emit("Docker cleanup preview failed")
+      return
+    QMessageBox.information(self.window(), "Docker Cleanup Preview", report_text)
+    options = [
+      (key, label) for key, label in du.CLEANUP_CATEGORIES.items()
+      if report.get(key, {}).get("available") and report[key].get("items")
+    ]
+    if not options:
+      self.status_msg.emit("Docker cleanup preview complete — no safe candidates")
+      return
+
+    labels = [label + " ({})".format(len(report[key]["items"])) for key, label in options]
+    selected_label, accepted = QInputDialog.getItem(
+      self.window(), "Choose Docker Cleanup", "Select one cleanup category:",
+      labels, 0, False)
+    if not accepted:
+      self.status_msg.emit("Docker cleanup cancelled")
+      return
+    selected_index = labels.index(selected_label)
+    category = options[selected_index][0]
+    scope = du.cleanup_scope_text(category, report)
+    answer = QMessageBox.question(
+      self.window(), "Confirm Docker Cleanup",
+      "The following exact scope will be submitted to Docker:\n\n{}\n\n"
+      "This operation removes resources and cannot be automatically undone. "
+      "Volumes are excluded.\n\nContinue?".format(scope),
+      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    if answer != QMessageBox.Yes:
+      self.status_msg.emit("Docker cleanup cancelled")
+      return
+    try:
+      command = du.cleanup_command(category, report)
+    except ValueError as exc:
+      QMessageBox.warning(self.window(), "Docker Cleanup", str(exc))
+      return
+
+    refresh_by_category = {
+      "stopped_containers": ["containers"],
+      "dangling_images": ["images"],
+      "unused_images": ["images"],
+      "build_cache": [],
+    }
+    label = "Clean up {}".format(du.CLEANUP_CATEGORIES[category].lower())
+    self._run_action(
+      label, command, refresh_by_category.get(category, []),
+      timeout=180, show_output=True)
 
   # ── actions ────────────────────────────────────────────────
   def _current_kind(self):
@@ -875,18 +1206,19 @@ class DockerTab(QWidget):
 
   def _container_action(self, action):
     name = self._selected_ident("containers")
-    if not name:
+    ident = self._selected_identity("containers")
+    if not ident:
       return
     try:
-      cmd = du.container_action_command(action, name)
+      cmd = du.container_action_command(action, ident)
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
-    self._run_action("{} {}".format(action.capitalize(), name), cmd,
+    self._run_action("{} {}".format(action.capitalize(), name or ident), cmd,
                      ["containers"], timeout=60)
 
   def _show_logs(self):
-    name = self._selected_ident("containers")
+    name = self._selected_identity("containers")
     if not name or self.ssh is None:
       return
     try:
@@ -901,22 +1233,24 @@ class DockerTab(QWidget):
 
   def _run_in_container(self):
     name = self._selected_ident("containers")
-    if not name:
+    ident = self._selected_identity("containers")
+    if not ident:
       return
     text, ok = QInputDialog.getText(
       self.window(), "Run command",
-      "Command to run inside '{}' (non-interactive, via sh -c):".format(name))
+      "Command to run inside '{}' (non-interactive, via sh -c):".format(name or ident))
     if not ok or not text.strip():
       return
     try:
-      cmd = du.exec_command(name, text)
+      cmd = du.exec_command(ident, text)
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
-    self._run_action("Run in {}".format(name), cmd, [], timeout=120, show_output=True)
+    self._run_action("Run in {}".format(name or ident), cmd, [], timeout=120, show_output=True)
 
   def _inspect(self, kind):
-    ident = self._selected_ident(kind)
+    ident = self._selected_identity(kind)
+    label = self._selected_ident(kind) or ident
     if not ident or self.ssh is None:
       return
     try:
@@ -934,7 +1268,7 @@ class DockerTab(QWidget):
         text = json.dumps(json.loads(out), indent=2)
       except ValueError:
         text = out
-      self._open_text("Inspect — {}".format(ident), text)
+      self._open_text("Inspect — {}".format(label), text)
 
     w.result.connect(finished)
     w.error.connect(lambda msg: QMessageBox.warning(self.window(), "Inspect", msg))
@@ -944,8 +1278,12 @@ class DockerTab(QWidget):
     row = self._selected_row(kind)
     if row is None:
       return
-    ident = du.cell(row, _IDENT_KEY[kind])
-    label = du.image_display_ref(row) if kind == "images" else ident
+    label = du.image_display_ref(row) if kind == "images" else du.cell(row, _IDENT_KEY[kind])
+    ident = (
+      du.cell(row, "ID") or label
+      if kind in ("containers", "images", "networks")
+      else label or du.cell(row, "ID")
+    )
     singular = _KIND_TITLES[kind][:-1].lower()
     force = False
     msg = "Remove {} '{}'? This cannot be undone.".format(singular, label)
