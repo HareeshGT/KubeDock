@@ -45,6 +45,7 @@ from file_widgets import FileRowWidget, FileGridWidget
 from terminal_widget import TerminalWidget
 from kubernetes_tab import KubernetesTab
 from dashboard_tab import DashboardTab
+from docker_tab import DockerTab
 from theme_picker import ThemePicker
 from settings_dialog import SettingsDialog
 from lock_screen import AppLockDialog
@@ -395,6 +396,11 @@ class UIMixin:
       self.k8s_tab.context_changed.connect(self.dashboard_tab.set_kube_context)
       add_icon_tab(self.main_tabs, self.dashboard_tab, " Dashboard")
 
+      # ── Docker tab ─────────────────────────────────────────
+      self.docker_tab = DockerTab()
+      self.docker_tab.status_msg.connect(lambda m: self.status.showMessage(m))
+      add_icon_tab(self.main_tabs, self.docker_tab, " Docker")
+
       # Land on the Dashboard tab by default rather than File Manager.
       self.main_tabs.setCurrentWidget(self.dashboard_tab)
       self.k8s_tab.sub_tabs.currentChanged.connect(lambda _i: self._sync_nav_rail())
@@ -491,6 +497,8 @@ class UIMixin:
         self.main_tabs.setCurrentWidget(self.dashboard_tab)
       elif key == "kubernetes":
         self.main_tabs.setCurrentWidget(self.k8s_tab)
+      elif key == "docker":
+        self.main_tabs.setCurrentWidget(self.docker_tab)
       elif key == "files":
         self.main_tabs.setCurrentIndex(0)
       elif key == "terminal":
@@ -516,6 +524,8 @@ class UIMixin:
       w = self.main_tabs.currentWidget()
       if w is self.dashboard_tab:
         key = "dashboard"
+      elif w is getattr(self, "docker_tab", None):
+        key = "docker"
       elif w is self.k8s_tab:
         subs = self.k8s_tab.sub_tabs
         key = "tunnels" if "Tunnels" in subs.tabText(subs.currentIndex()) else "kubernetes"

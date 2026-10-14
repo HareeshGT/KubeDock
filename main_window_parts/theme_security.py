@@ -133,6 +133,7 @@ class ThemeSecurityMixin:
       self.nav_rail.refresh_theme()
       self.preview.refresh_theme()
       self.k8s_tab.apply_theme()
+      self.docker_tab.apply_theme()
       self.dashboard_tab.apply_theme()
       self._rebuild_list_header()
       self.theme_picker.refresh_theme()
