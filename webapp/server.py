@@ -1920,7 +1920,7 @@ def remote_service_action(body: ServiceActionRequest, _: None = Depends(require_
         command = f"systemctl {action} {shlex.quote(name)}"
     elif family == "windows":
         verb = {"start": "Start-Service", "stop": "Stop-Service", "restart": "Restart-Service"}[action]
-        command = f'powershell -NoProfile -Command "{verb} -Name \\'{name}\\' -ErrorAction Stop"'
+        command = f"powershell -NoProfile -Command \"{verb} -Name '{name}' -ErrorAction Stop\""
     else:
         raise HTTPException(501, "Service start/stop/restart is supported only on Linux and Windows targets")
     started = perf_counter()
