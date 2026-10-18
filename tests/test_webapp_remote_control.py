@@ -71,7 +71,7 @@ def test_context_selection_is_session_scoped_and_validated(monkeypatch):
 def test_kubectl_uses_selected_context_without_mutating_kubeconfig(monkeypatch):
     calls = []
     monkeypatch.setattr(server, "_ssh", lambda: object())
-    monkeypatch.setattr(server, "_exec", lambda _ssh, command, _timeout: (calls.append(command) or 0, "ok", ""))
+    monkeypatch.setattr(server, "_exec", lambda _ssh, command, _timeout, **_kwargs: (calls.append(command) or 0, "ok", ""))
     context_token = server._KUBE_CONTEXT.set("prod-context")
     try:
         assert server._kubectl("get pods") == "ok"
