@@ -194,3 +194,52 @@ def test_remote_path_accepts_absolute_windows_drive_paths():
     assert server._safe_remote_path("C:\\") == "C:/"
     with pytest.raises(HTTPException):
         server._safe_remote_path(r"C:\Users\..\Windows")
+
+
+def test_shared_context_switch_requires_explicit_confirmation(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_run_remote", lambda command, timeout=20: (calls.append(command) or 0, "dev\nprod\n", ""))
+    with pytest.raises(HTTPException) as denied:
+        server.select_kube_context(
+            server.ContextSelection(context="prod", scope="shared", confirm_shared_change=False),
+            _request(token=""),
+        )
+    assert denied.value.status_code == 409
+    assert calls == ["kubectl config get-contexts -o name 2>&1"]
+
+
+def test_context_inspection_never_returns_credentials(monkeypatch):
+    config = {
+        "clusters": [{"name": "prod-cluster", "cluster": {"server": "https://k8s.example:6443"}}],
+        "users": [{"name": "prod-user", "user": {"token": "do-not-return-this"}}],
+        "contexts": [{"name": "prod", "context": {"cluster": "prod-cluster", "user": "prod-user", "namespace": "production"}}],
+    }
+    def run(command, timeout=20):
+        if "config view" in command:
+            import json
+            return 0, json.dumps(config), ""
+        return 0, "Kubernetes control plane is running\n", ""
+    monkeypatch.setattr(server, "_run_remote", run)
+    result = server.inspect_kube_context("prod")
+    assert result["endpoint"] == "https://k8s.example:6443"
+    assert result["auth_methods"] == ["token"]
+    assert "do-not-return-this" not in str(result)
+
+
+def test_context_registration_requires_shared_change_confirmation(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: pytest.fail("unconfirmed registration must not execute"))
+    with pytest.raises(HTTPException) as denied:
+        server.register_kube_context(
+            server.ContextRegisterRequest(context="prod-new", cluster="prod-cluster", user="prod-user")
+        )
+    assert denied.value.status_code == 409
+
+
+def test_context_delete_blocks_shared_current_context(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: (0, "prod\n", ""))
+    with pytest.raises(HTTPException) as denied:
+        server.delete_kube_context(
+            server.ContextDeleteRequest(context="prod", confirm_context="prod", confirm_shared_change=True),
+            _request(token=""),
+        )
+    assert denied.value.status_code == 409

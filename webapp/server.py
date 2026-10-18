@@ -1019,15 +1019,22 @@ def kube_contexts(request: Request, _: None = Depends(require_login)) -> dict:
 
 class ContextSelection(BaseModel):
     context: str
+    scope: str = "session"
+    confirm_shared_change: bool = False
 
 
 @app.post("/api/kube/contexts/select")
 def select_kube_context(body: ContextSelection, request: Request, _: None = Depends(require_login)) -> dict:
     context = str(body.context or "").strip()
+    scope = str(body.scope or "session").strip().lower()
+    if scope not in {"session", "shared"}:
+        raise HTTPException(400, "Context scope must be session or shared")
     if len(context) > 253 or any(ord(ch) < 32 for ch in context):
         raise HTTPException(400, "Invalid Kubernetes context")
     token = request.cookies.get(_SESSION_COOKIE, "")
     if not context:
+        if scope != "session":
+            raise HTTPException(400, "The shared context cannot be reset to an unnamed value")
         with _SESSION_LOCK:
             if token not in _WEB_SESSIONS:
                 raise HTTPException(401, "Authentication required")
@@ -1040,13 +1047,137 @@ def select_kube_context(body: ContextSelection, request: Request, _: None = Depe
         raise HTTPException(502, error.strip() or output.strip() or "Unable to validate Kubernetes context")
     if context not in {line.strip() for line in output.splitlines()}:
         raise HTTPException(404, "Kubernetes context was not found")
+    if scope == "shared":
+        if body.confirm_shared_change is not True:
+            raise HTTPException(409, "Explicit confirmation is required to change the shared kubeconfig context")
+        code, output, error = _run_remote("kubectl config use-context " + shlex.quote(context) + " 2>&1", timeout=15)
+        if code != 0:
+            raise HTTPException(502, (error or output).strip()[:1000] or "Unable to change the shared kubeconfig context")
     with _SESSION_LOCK:
         if token not in _WEB_SESSIONS:
             raise HTTPException(401, "Authentication required")
         _SESSION_CONTEXTS[token] = context
     _KUBE_CONTEXT.set(context)
-    _audit_remote("select-kubernetes-context", context, "succeeded", perf_counter())
-    return {"ok": True, "context": context, "scope": "web-session"}
+    _audit_remote("select-kubernetes-context-" + scope, context, "succeeded", perf_counter())
+    return {"ok": True, "context": context, "scope": "web-session" if scope == "session" else "shared-kubeconfig"}
+
+
+def _validate_config_entry_name(value: str, field: str) -> str:
+    value = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.:/@-]{1,253}", value):
+        raise HTTPException(400, f"Invalid {field}")
+    return value
+
+
+@app.get("/api/kube/config/entries")
+def kube_config_entries(_: None = Depends(require_login)) -> dict:
+    results = {}
+    for key, command in (
+        ("clusters", "kubectl config get-clusters 2>&1"),
+        ("users", "kubectl config get-users 2>&1"),
+    ):
+        code, output, error = _run_remote(command, timeout=10)
+        if code != 0:
+            raise HTTPException(502, (error or output).strip()[:1000] or f"Unable to list configured {key}")
+        results[key] = [line.strip() for line in output.splitlines() if line.strip() and line.strip().upper() != "NAME"]
+    return results
+
+
+class ContextRegisterRequest(BaseModel):
+    context: str
+    cluster: str
+    user: str
+    namespace: str = "default"
+    confirm_shared_change: bool = False
+
+
+@app.get("/api/kube/contexts/inspect")
+def inspect_kube_context(context: str, _: None = Depends(require_login)) -> dict:
+    context = _validate_config_entry_name(context, "context name")
+    command = "kubectl config view --minify --context " + shlex.quote(context) + " -o json 2>&1"
+    code, output, error = _run_remote(command, timeout=12)
+    if code != 0:
+        raise HTTPException(404, (error or output).strip()[:1000] or "Unable to inspect Kubernetes context")
+    try:
+        config = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(502, "Kubernetes returned an invalid context configuration") from exc
+    clusters = config.get("clusters") or []
+    users = config.get("users") or []
+    contexts = config.get("contexts") or []
+    cluster = (clusters[0].get("cluster") or {}) if clusters else {}
+    user = (users[0].get("user") or {}) if users else {}
+    context_info = (contexts[0].get("context") or {}) if contexts else {}
+    auth_methods = [key for key in ("token", "tokenFile", "client-certificate", "client-key", "client-certificate-data", "exec", "auth-provider", "username", "password") if key in user]
+    status_code, status_output, status_error = _run_remote("kubectl --context " + shlex.quote(context) + " cluster-info 2>&1", timeout=20)
+    return {
+        "context": context,
+        "cluster": clusters[0].get("name") if clusters else None,
+        "endpoint": cluster.get("server"),
+        "user": users[0].get("name") if users else None,
+        "namespace": context_info.get("namespace", "default"),
+        "auth_methods": auth_methods,
+        "connection_valid": status_code == 0,
+        "connection_status": (status_output or status_error).strip()[:2000],
+        "secrets_exposed": False,
+    }
+
+
+@app.post("/api/kube/contexts/register")
+def register_kube_context(body: ContextRegisterRequest, _: None = Depends(require_login)) -> dict:
+    context = _validate_config_entry_name(body.context, "context name")
+    cluster = _validate_config_entry_name(body.cluster, "cluster name")
+    user = _validate_config_entry_name(body.user, "user name")
+    namespace = _validate_k8s_name(body.namespace, "namespace")
+    if body.confirm_shared_change is not True:
+        raise HTTPException(409, "Explicit confirmation is required to write the shared kubeconfig")
+    clusters_code, clusters_output, clusters_error = _run_remote("kubectl config get-clusters 2>&1", timeout=10)
+    users_code, users_output, users_error = _run_remote("kubectl config get-users 2>&1", timeout=10)
+    if clusters_code != 0 or users_code != 0:
+        raise HTTPException(502, (clusters_error or users_error or "Unable to validate cluster/user entries").strip()[:1000])
+    configured_clusters = {line.strip() for line in clusters_output.splitlines() if line.strip() and line.strip().upper() != "NAME"}
+    configured_users = {line.strip() for line in users_output.splitlines() if line.strip() and line.strip().upper() != "NAME"}
+    if cluster not in configured_clusters:
+        raise HTTPException(404, "Cluster entry does not exist in the remote kubeconfig")
+    if user not in configured_users:
+        raise HTTPException(404, "User entry does not exist in the remote kubeconfig")
+    started = perf_counter()
+    command = "kubectl config set-context " + shlex.quote(context) + " --cluster=" + shlex.quote(cluster) + " --user=" + shlex.quote(user) + " --namespace=" + shlex.quote(namespace) + " 2>&1"
+    code, output, error = _run_remote(command, timeout=15)
+    if code != 0:
+        _audit_remote("register-kubernetes-context", context, "failed", started, 502)
+        raise HTTPException(502, (error or output).strip()[:1000] or "Unable to register Kubernetes context")
+    _audit_remote("register-kubernetes-context", context, "succeeded", started)
+    return {"ok": True, "context": context, "scope": "shared-kubeconfig", "output": output.strip()}
+
+
+class ContextDeleteRequest(BaseModel):
+    context: str
+    confirm_context: str
+    confirm_shared_change: bool = False
+
+
+@app.post("/api/kube/contexts/delete")
+def delete_kube_context(body: ContextDeleteRequest, request: Request, _: None = Depends(require_login)) -> dict:
+    context = _validate_config_entry_name(body.context, "context name")
+    if body.confirm_context != context or body.confirm_shared_change is not True:
+        raise HTTPException(409, "Confirm the exact context name and shared kubeconfig change")
+    code, current, error = _run_remote("kubectl config current-context 2>&1", timeout=10)
+    if code != 0:
+        raise HTTPException(502, (error or current).strip()[:1000] or "Unable to read current shared context")
+    if current.strip() == context:
+        raise HTTPException(409, "Switch the shared current context before removing it")
+    started = perf_counter()
+    code, output, error = _run_remote("kubectl config delete-context " + shlex.quote(context) + " 2>&1", timeout=15)
+    if code != 0:
+        _audit_remote("delete-kubernetes-context", context, "failed", started, 502)
+        raise HTTPException(502, (error or output).strip()[:1000] or "Unable to delete Kubernetes context")
+    with _SESSION_LOCK:
+        for session_token, selected in list(_SESSION_CONTEXTS.items()):
+            if selected == context:
+                _SESSION_CONTEXTS.pop(session_token, None)
+    _audit_remote("delete-kubernetes-context", context, "succeeded", started)
+    return {"ok": True, "context": context, "scope": "shared-kubeconfig", "output": output.strip()}
 
 
 @app.get("/api/remote/files")
