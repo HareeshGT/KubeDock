@@ -1163,6 +1163,27 @@ def remote_file_delete(body: dict, _: None = Depends(require_login)) -> dict:
         sftp.close()
 
 
+@app.post("/api/remote/docker/resources/remove")
+def remote_docker_resource_remove(body: dict, _: None = Depends(require_login)) -> dict:
+    kind = str(body.get("kind", "")).strip().lower()
+    identifier = str(body.get("identifier", "")).strip()
+    if kind not in {"images", "volumes", "networks"}:
+        raise HTTPException(400, "Only image, volume, and network removal is supported here")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,255}", identifier):
+        raise HTTPException(400, "Invalid Docker resource identifier")
+    target = f"{kind}/{identifier}"
+    if body.get("confirm_target") != target:
+        raise HTTPException(409, "Confirm the exact Docker resource identifier before removal")
+    command_prefix = {"images": "image rm", "volumes": "volume rm", "networks": "network rm"}[kind]
+    started = perf_counter()
+    code, output, error = _run_remote("docker " + command_prefix + " " + shlex.quote(identifier), timeout=45)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("docker-remove-" + kind, target, status, started, None if code == 0 else 502)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Docker resource removal failed")
+    return {"ok": True, "target": target, "output": output.strip()}
+
+
 @app.get("/api/remote/docker/{kind}")
 def remote_docker_list(kind: str, _: None = Depends(require_login)) -> dict:
     commands = {

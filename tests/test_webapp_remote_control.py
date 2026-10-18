@@ -140,3 +140,16 @@ def test_apply_yaml_uses_stdin_and_server_dry_run(monkeypatch):
     assert calls[0][1]["input_data"] == payload.encode("utf-8")
     assert calls[1][1]["input_data"] == payload.encode("utf-8")
     assert audits
+
+
+def test_docker_volume_removal_requires_exact_confirmation(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: pytest.fail("unconfirmed removal must not execute"))
+    with pytest.raises(HTTPException) as denied:
+        server.remote_docker_resource_remove({"kind": "volumes", "identifier": "db-data"})
+    assert denied.value.status_code == 409
+
+
+def test_docker_resource_removal_rejects_unsupported_kind():
+    with pytest.raises(HTTPException) as denied:
+        server.remote_docker_resource_remove({"kind": "compose", "identifier": "prod"})
+    assert denied.value.status_code == 400
