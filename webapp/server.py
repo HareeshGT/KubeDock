@@ -337,6 +337,9 @@ def _exec(
     def run_channel(stdout, stderr):
         channel = stdout.channel
         timed_out = threading.Event()
+        drain_errors = []
+        out_chunks = []
+        err_chunks = []
 
         def abort_channel():
             timed_out.set()
@@ -345,30 +348,41 @@ def _exec(
             except Exception:
                 pass
 
+        def drain(stream, chunks):
+            try:
+                chunks.append(stream.read())
+            except Exception as exc:
+                drain_errors.append(exc)
+
         timer = threading.Timer(max(0.1, float(timeout)), abort_channel)
         timer.daemon = True
         timer.start()
+        out_thread = threading.Thread(target=drain, args=(stdout, out_chunks), daemon=True)
+        err_thread = threading.Thread(target=drain, args=(stderr, err_chunks), daemon=True)
         try:
             try:
                 channel.settimeout(max(0.1, float(timeout)))
             except Exception:
                 pass
+            out_thread.start()
+            err_thread.start()
             code = channel.recv_exit_status()
-            out = stdout.read().decode("utf-8", errors="replace")
-            err = stderr.read().decode("utf-8", errors="replace")
+            out_thread.join(timeout=max(0.1, float(timeout)))
+            err_thread.join(timeout=max(0.1, float(timeout)))
+            if timed_out.is_set():
+                raise TimeoutError("Remote command timed out after {} seconds".format(timeout))
+            if out_thread.is_alive() or err_thread.is_alive():
+                raise TimeoutError("Remote command output did not close after {} seconds".format(timeout))
+            if drain_errors:
+                raise drain_errors[0]
+            out = b"".join(out_chunks).decode("utf-8", errors="replace")
+            err = b"".join(err_chunks).decode("utf-8", errors="replace")
         except Exception as exc:
             if timed_out.is_set():
-                raise TimeoutError(
-                    "kubectl command timed out after {} seconds".format(timeout)
-                ) from exc
+                raise TimeoutError("Remote command timed out after {} seconds".format(timeout)) from exc
             raise
         finally:
             timer.cancel()
-
-        if timed_out.is_set():
-            raise TimeoutError(
-                "kubectl command timed out after {} seconds".format(timeout)
-            )
         return code, out, err
 
     logged_command = "<redacted sensitive command>" if sensitive_output else command
