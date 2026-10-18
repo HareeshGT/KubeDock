@@ -358,6 +358,9 @@ def _exec(
     return code, out, err
 
 
+app = FastAPI(title="KubeDock Web")
+
+
 def _audited_kubectl(action: str, target: str, command: str, timeout: int = 30) -> str:
     """Run a mutation and persist metadata only (never command output or secrets)."""
     started = perf_counter()
@@ -462,9 +465,6 @@ def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
             out[:1000],
         )
         raise HTTPException(502, "kubectl returned non-JSON output")
-
-
-app = FastAPI(title="KubeDock Web")
 
 
 @app.post("/api/login")

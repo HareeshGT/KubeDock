@@ -517,7 +517,7 @@ class SettingsDialog(QDialog):
             from webapp import app as webapp_app
             main_window = self.parent()
             if checked:
-                webapp_app.start_server(lambda: getattr(main_window, "ssh", None))
+                webapp_app.start_server(lambda: getattr(main_window, "ssh", None), app_provider=lambda: main_window)
                 self.webapp_status_lbl.setText("Web App enabled and starting now.")
             else:
                 webapp_app.stop_server()
@@ -589,7 +589,7 @@ class SettingsDialog(QDialog):
             from webapp import app as webapp_app
             main_window = self.parent()
             if self._webapp_original_enabled:
-                webapp_app.start_server(lambda: getattr(main_window, "ssh", None))
+                webapp_app.start_server(lambda: getattr(main_window, "ssh", None), app_provider=lambda: main_window)
             else:
                 webapp_app.stop_server()
         except Exception:
