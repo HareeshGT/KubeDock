@@ -12,6 +12,9 @@ def test_remote_management_navigation_is_embedded():
         'remote-context-apply',
         'remote-upload',
         'remote-operations-refresh',
+        'data-system-kind="network"',
+        'data-system-kind="logs"',
+        'data-system-kind="packages"',
     ):
         assert marker in INDEX_HTML
 
@@ -44,8 +47,5 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/remote/system/service",
         "/api/remote/system/power",
         "/api/remote/system/identity",
-        "/api/remote/system/network",
-        "/api/remote/system/logs",
-        "/api/remote/system/packages",
     ):
         assert route in INDEX_HTML
