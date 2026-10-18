@@ -27,5 +27,7 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/app/status",
         "/api/app/settings",
         "/api/app/tunnels/start",
+        "/api/kube/resources/apply",
+        "/api/kube/resources/validate",
     ):
         assert route in INDEX_HTML

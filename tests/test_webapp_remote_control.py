@@ -104,3 +104,39 @@ def test_system_inspection_uses_detected_windows_command(monkeypatch):
     result = server.remote_system_inspection("processes")
     assert result["os"] == "windows"
     assert "Get-Process" in calls[0]
+
+
+def test_resource_kind_allowlist_rejects_command_injection():
+    with pytest.raises(HTTPException) as invalid:
+        server._resource_kind("pods; id")
+    assert invalid.value.status_code == 400
+
+
+def test_secret_yaml_is_not_exposed(monkeypatch):
+    monkeypatch.setattr(server, "_kubectl", lambda *_args, **_kwargs: pytest.fail("secret YAML must not be fetched"))
+    with pytest.raises(HTTPException) as denied:
+        server.get_kube_resource_yaml("secrets", "default", "app-secret")
+    assert denied.value.status_code == 403
+
+
+def test_apply_yaml_requires_explicit_confirmation(monkeypatch):
+    monkeypatch.setattr(server, "_kubectl", lambda *_args, **_kwargs: pytest.fail("unconfirmed YAML must not be applied"))
+    with pytest.raises(HTTPException) as denied:
+        server.apply_kube_resource(server.ResourceApplyRequest(yaml="apiVersion: v1\nkind: ConfigMap"))
+    assert denied.value.status_code == 409
+
+
+def test_apply_yaml_uses_stdin_and_server_dry_run(monkeypatch):
+    calls = []
+    audits = []
+    monkeypatch.setattr(server, "_kubectl", lambda args, **kwargs: (calls.append((args, kwargs)) or "applied"))
+    monkeypatch.setattr(server, "_audit_remote", lambda *args, **kwargs: audits.append((args, kwargs)))
+    payload = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: sample\n"
+    result = server.apply_kube_resource(server.ResourceApplyRequest(yaml=payload, confirm_apply=True))
+    assert result["ok"] is True
+    assert len(calls) == 2
+    assert calls[0][0].startswith("apply --dry-run=server")
+    assert calls[1][0] == "apply -f - 2>&1"
+    assert calls[0][1]["input_data"] == payload.encode("utf-8")
+    assert calls[1][1]["input_data"] == payload.encode("utf-8")
+    assert audits

@@ -326,6 +326,8 @@ def _exec(
     ssh: paramiko.SSHClient,
     command: str,
     timeout: int = 30,
+    input_data: Optional[bytes] = None,
+    sensitive_output: bool = False,
 ) -> tuple[int, str, str]:
     request_id = _REQUEST_ID.get()
     started = perf_counter()
@@ -375,6 +377,10 @@ def _exec(
         if managed_exec_command is None:
             stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
             try:
+                if input_data is not None:
+                    stdin.write(input_data)
+                    stdin.flush()
+                    stdin.channel.shutdown_write()
                 code, out, err = run_channel(stdout, stderr)
             finally:
                 for stream in (stdin, stdout, stderr):
@@ -386,6 +392,10 @@ def _exec(
             with managed_exec_command(
                 ssh, command, channel_timeout=timeout
             ) as (_stdin, stdout, stderr):
+                if input_data is not None:
+                    _stdin.write(input_data)
+                    _stdin.flush()
+                    _stdin.channel.shutdown_write()
                 code, out, err = run_channel(stdout, stderr)
     except Exception:
         logger.exception(
@@ -400,7 +410,7 @@ def _exec(
         "[req=%s] KUBECTL END user=%r: exit=%s duration=%.1f ms stdout=%d bytes stderr=%d bytes",
         request_id, _AUTH_USER.get(), code, duration_ms, len(out), len(err)
     )
-    if err.strip():
+    if err.strip() and not sensitive_output:
         logger.info(
             "[req=%s] KUBECTL STDERR user=%r: %s",
             request_id, _AUTH_USER.get(), err.strip()[:4000]
@@ -482,13 +492,13 @@ def _parse_json_output(output: str):
     raise json.JSONDecodeError("No JSON object or array found", text, 0)
 
 
-def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
+def _kubectl(args: str, timeout: int = 30, json_output: bool = False, input_data: Optional[bytes] = None):
     try:
         context = _KUBE_CONTEXT.get()
         # Context selection is per authenticated web session; it never mutates
         # the remote user's shared kubeconfig current-context.
         prefix = f"--context {shlex.quote(context)} " if context and not args.lstrip().startswith("config ") else ""
-        code, out, err = _exec(_ssh(), f"kubectl {prefix}{args}", timeout)
+        code, out, err = _exec(_ssh(), f"kubectl {prefix}{args}", timeout, input_data=input_data, sensitive_output=input_data is not None)
     except TimeoutError as exc:
         raise HTTPException(504, str(exc))
     if code != 0:
@@ -497,7 +507,7 @@ def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
             _REQUEST_ID.get(),
             _AUTH_USER.get(),
             code,
-            err.strip(),
+            "input-based operation failed; details suppressed from logs" if input_data is not None else err.strip(),
         )
         # Several mutating/log commands intentionally use 2>&1, so kubectl
         # diagnostics may be in stdout rather than stderr.
@@ -1628,6 +1638,130 @@ def desktop_disconnect(body: dict, _: None = Depends(require_login)) -> dict:
     result = _desktop_call(disconnect)
     _audit_remote("desktop-disconnect", current_target, "succeeded", started)
     return result
+
+
+
+_ALLOWED_RESOURCE_KINDS = {
+    "pods", "deployments", "statefulsets", "daemonsets", "replicasets",
+    "jobs", "cronjobs", "services", "configmaps", "secrets", "serviceaccounts",
+    "persistentvolumeclaims", "ingresses", "networkpolicies", "namespaces",
+    "nodes", "persistentvolumes", "storageclasses", "events",
+}
+_NAMESPACED_RESOURCE_KINDS = {
+    "pods", "deployments", "statefulsets", "daemonsets", "replicasets",
+    "jobs", "cronjobs", "services", "configmaps", "secrets", "serviceaccounts",
+    "persistentvolumeclaims", "ingresses", "networkpolicies", "events",
+}
+
+
+def _resource_kind(value: str) -> str:
+    kind = str(value or "").strip().lower()
+    if kind not in _ALLOWED_RESOURCE_KINDS:
+        raise HTTPException(400, "Unsupported Kubernetes resource kind")
+    return kind
+
+
+@app.get("/api/kube/resources/{kind}")
+def list_kube_resources(
+    kind: str,
+    namespace: Optional[str] = None,
+    _: None = Depends(require_login),
+) -> dict:
+    kind = _resource_kind(kind)
+    if kind in _NAMESPACED_RESOURCE_KINDS:
+        namespace_args = _ns(namespace)
+        data = _kubectl(f"get {kind} {namespace_args} -o json", json_output=True)
+    else:
+        data = _kubectl(f"get {kind} -o json", json_output=True)
+    items = data.get("items", [])
+    if kind == "secrets":
+        for item in items:
+            item.pop("data", None)
+            item.pop("stringData", None)
+    return {"kind": kind, "namespace": namespace or "all", "items": items}
+
+
+@app.get("/api/kube/resources/{kind}/{namespace}/{name}/yaml")
+def get_kube_resource_yaml(
+    kind: str,
+    namespace: str,
+    name: str,
+    _: None = Depends(require_login),
+) -> dict:
+    kind = _resource_kind(kind)
+    if kind == "secrets":
+        raise HTTPException(403, "Secret YAML is not exposed by the remote editor")
+    name = _validate_k8s_name(name, "resource name")
+    if kind in _NAMESPACED_RESOURCE_KINDS:
+        namespace = _validate_k8s_name(namespace, "namespace")
+        args = f"get {kind} {shlex.quote(name)} -n {shlex.quote(namespace)} -o yaml"
+    else:
+        if namespace != "cluster":
+            raise HTTPException(400, "Cluster-scoped resources use namespace=cluster")
+        args = f"get {kind} {shlex.quote(name)} -o yaml"
+    return {"kind": kind, "namespace": namespace, "name": name, "yaml": _kubectl(args, timeout=20)}
+
+
+class ResourceYamlRequest(BaseModel):
+    yaml: str
+
+
+class ResourceApplyRequest(BaseModel):
+    yaml: str
+    confirm_apply: bool = False
+
+
+@app.post("/api/kube/resources/validate")
+def validate_kube_resource(body: ResourceYamlRequest, _: None = Depends(require_login)) -> dict:
+    content = body.yaml.encode("utf-8") if isinstance(body.yaml, str) else b""
+    if not content or len(content) > 1_000_000:
+        raise HTTPException(400, "YAML must be non-empty and at most 1 MB")
+    output = _kubectl("apply --dry-run=server -f - 2>&1", timeout=45, input_data=content)
+    return {"ok": True, "output": output.strip(), "validation": "server-side dry run"}
+
+
+@app.post("/api/kube/resources/apply")
+def apply_kube_resource(body: ResourceApplyRequest, _: None = Depends(require_login)) -> dict:
+    if body.confirm_apply is not True:
+        raise HTTPException(409, "Confirm the target cluster before applying YAML")
+    content = body.yaml.encode("utf-8") if isinstance(body.yaml, str) else b""
+    if not content or len(content) > 1_000_000:
+        raise HTTPException(400, "YAML must be non-empty and at most 1 MB")
+    started = perf_counter()
+    target_context = _KUBE_CONTEXT.get() or "shared-current-context"
+    try:
+        _kubectl("apply --dry-run=server -f - 2>&1", timeout=45, input_data=content)
+        output = _kubectl("apply -f - 2>&1", timeout=60, input_data=content)
+        _audit_remote("kubernetes-apply-yaml", target_context, "succeeded", started)
+        return {"ok": True, "context": target_context, "output": output.strip()}
+    except HTTPException as exc:
+        _audit_remote("kubernetes-apply-yaml", target_context, "failed", started, exc.status_code)
+        raise
+
+
+@app.post("/api/kube/resources/{kind}/{namespace}/{name}/delete")
+def delete_kube_resource(
+    kind: str,
+    namespace: str,
+    name: str,
+    body: dict,
+    _: None = Depends(require_login),
+) -> dict:
+    kind = _resource_kind(kind)
+    name = _validate_k8s_name(name, "resource name")
+    target = f"{kind}/{namespace}/{name}"
+    if body.get("confirm_target") != target:
+        raise HTTPException(409, "Confirm the exact Kubernetes resource target before deletion")
+    if kind in _NAMESPACED_RESOURCE_KINDS:
+        namespace = _validate_k8s_name(namespace, "namespace")
+        args = f"delete {kind} {shlex.quote(name)} -n {shlex.quote(namespace)} 2>&1"
+    else:
+        if namespace != "cluster":
+            raise HTTPException(400, "Cluster-scoped resources use namespace=cluster")
+        args = f"delete {kind} {shlex.quote(name)} 2>&1"
+    output = _audited_kubectl("delete-resource", target, args, timeout=45)
+    return {"ok": True, "target": target, "output": output.strip()}
+
 
 
 def _static_response():
