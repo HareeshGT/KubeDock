@@ -15,7 +15,7 @@ Without TLS, the server should bind to loopback and rejects non-loopback request
 ## Target and scope
 
 - Kubernetes requests use the active SSH connection's remote kubectl installation and kubeconfig.
-- Selecting a Kubernetes context applies --context per authenticated web session. It does not change the shared kubeconfig current-context.
+- Selecting a Kubernetes context can be scoped to the authenticated web session or explicitly applied to the shared kubeconfig. Existing contexts can be inspected, registered from already configured cluster/user entries, and removed with exact confirmation. Shared changes affect the desktop app and other sessions.
 - Machine file, Docker, and system-inspection APIs target the active SSH connection owned by KubeDock. The browser cannot choose arbitrary hosts or submit SSH credentials.
 - Desktop status, refresh, disconnect, theme settings, tunnel settings, and local SSH port-forward lifecycle use a queued bridge back to the KubeDock UI thread.
 - SSH tunnels bind local ports on the KubeDock desktop machine, not on the browser device. Tunnel start requires the existing desktop SSH connection to use a private-key file.
@@ -24,9 +24,9 @@ Without TLS, the server should bind to loopback and rejects non-loopback request
 
 - Overview: inspect the active SSH target, host facts, and desktop connection status.
 - Kubernetes: inspect common resources, namespaces, pods, deployments, services, nodes, events, and pod logs; restart/scale deployments, delete pods or allowlisted resources, browse/edit resource YAML, validate it with a server-side dry run, and apply YAML after explicit confirmation; select a session-scoped Kubernetes context. Secret values are redacted from resource browsing and Secret YAML is not fetched.
-- Machines: interactive PTY terminal over authenticated WebSocket, SFTP directory browsing, text editing, upload/download (5 MB file-transfer cap), create directory, and delete files or empty directories.
-- Docker: list containers, images, volumes, networks, and Compose applications on the active SSH machine; view container logs; start, stop, restart, and remove containers; remove unused images, volumes, and networks with exact-target confirmation.
-- System: process, disk, listening-port, service, and basic metrics inspection where supported by Linux, macOS, or Windows PowerShell; terminate a specific process, start/stop/restart a named service on Linux/Windows, and schedule reboot/shutdown only after exact hostname and phrase confirmation.
+- Machines: interactive PTY terminal over authenticated WebSocket, SFTP directory browsing, text editing, new text files, rename/move, upload/download (5 MB file-transfer cap), create directory, and delete files or empty directories.
+- Docker: list containers, images, volumes, networks, and Compose applications on the active SSH machine; view container logs, inspect containers with secret-like environment values redacted, view live snapshots of container stats, create/start/stop/restart/remove containers, manage Compose projects (up/start/stop/restart/down when config paths are discoverable), and remove images/volumes/networks with exact-target confirmation.
+- System: process, disk, listening-port, service, network, package-list, log, and basic metrics inspection where supported by Linux, macOS, or Windows PowerShell; terminate a specific process, start/stop/restart a named service on Linux/Windows, and schedule reboot/shutdown only after exact hostname and phrase confirmation.
 - Desktop: inspect connection state, request a dashboard/tunnel refresh, disconnect the active machine with exact-target confirmation, update the desktop theme and tunnel CSV path, and start/stop configured SSH tunnels.
 - Operations: view metadata-only operation audit records. Command output and file contents are not stored in the audit database.
 
@@ -34,7 +34,7 @@ Without TLS, the server should bind to loopback and rejects non-loopback request
 
 - This is a single-active-SSH-target interface with a saved machine inventory. It can switch sequentially among saved key-based SSH profiles, but it does not hold multiple concurrent SSH sessions and cannot reconnect to password-only profiles from the web UI.
 - Full CRUD for every Kubernetes resource type, pod exec, and a full cluster registration/removal workflow are not exposed yet. YAML apply supports arbitrary manifests up to 1 MB, while the resource browser is limited to an allowlist.
-- Docker Compose application lifecycle controls are read-only. Image, volume, and network removal is available but Docker itself may reject removal while a resource is in use.
+- Compose controls depend on Docker reporting discoverable configuration paths; Compose down does not remove volumes. Image, volume, and network removal is available but Docker itself may reject removal while a resource is in use.
 - Package installation/removal, firewall changes, and arbitrary system commands are not exposed. Process termination, service actions, reboot, and shutdown require explicit confirmation and remain subject to remote account privileges.
 - File editing is UTF-8 text only and capped at 1 MB. Binary transfer is capped at 5 MB. Recursive directory deletion is intentionally not available.
 - System operations depend on the connected account's OS permissions. The web app does not elevate privileges or bypass remote authorization.

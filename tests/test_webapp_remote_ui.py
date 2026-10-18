@@ -22,7 +22,12 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/kube/contexts",
         "/api/remote/terminal",
         "/api/remote/files",
+        "/api/remote/files/create",
+        "/api/remote/files/move",
         "/api/remote/docker/",
+        "/api/remote/docker/containers/create",
+        "/api/remote/docker/stats",
+        "/api/remote/docker/compose/action",
         "/api/remote/docker/resources/remove",
         "/api/operations",
         "/api/app/status",
@@ -39,5 +44,8 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/remote/system/service",
         "/api/remote/system/power",
         "/api/remote/system/identity",
+        "/api/remote/system/network",
+        "/api/remote/system/logs",
+        "/api/remote/system/packages",
     ):
         assert route in INDEX_HTML
