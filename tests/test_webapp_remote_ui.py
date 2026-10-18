@@ -28,6 +28,8 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/app/status",
         "/api/app/settings",
         "/api/app/tunnels/start",
+        "/api/app/machines",
+        "/api/app/machines/connect",
         "/api/kube/resources/apply",
         "/api/kube/resources/validate",
         "/api/remote/system/process/terminate",

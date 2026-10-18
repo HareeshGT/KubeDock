@@ -37,6 +37,7 @@ from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from pydantic import BaseModel
 
 from themes import THEMES, apply_qss_to, apply_theme_vars, load_settings, save_settings
+from utils import load_recent_instances
 from webapp.otp_auth import OTPConfigurationError, check_totp, get_or_create_secret
 from webapp.operation_audit import list_operations, record_operation
 try:
@@ -1621,6 +1622,55 @@ def desktop_tunnel_stop(body: TunnelStopRequest, _: None = Depends(require_login
     return result
 
 
+class MachineConnectRequest(BaseModel):
+    profile_index: int
+    confirm_target: str
+
+
+@app.get("/api/app/machines")
+def desktop_machines(_: None = Depends(require_login)) -> dict:
+    def inspect(_window):
+        machines = []
+        for index, profile in enumerate(load_recent_instances()):
+            host = str(profile.get("host", "")).strip()
+            user = str(profile.get("user", "")).strip()
+            alias = str(profile.get("alias", "")).strip()
+            protocol = str(profile.get("protocol", "ssh")).lower()
+            target = alias or (f"{user}@{host}" if user and host else host)
+            pem = str(profile.get("pem", "")).strip()
+            key_available = bool(pem and os.path.isabs(pem) and os.path.isfile(pem) and os.access(pem, os.R_OK))
+            machines.append({
+                "profile_index": index,
+                "target": target,
+                "host": host,
+                "port": int(profile.get("port", 22)) if str(profile.get("port", "22")).isdigit() else 22,
+                "user": user,
+                "protocol": protocol,
+                "has_private_key": key_available,
+                "can_connect": protocol == "ssh" and key_available,
+            })
+        return {"machines": machines, "scope": "saved-local-profiles", "note": "Only saved key-based SSH profiles can be switched to remotely; passwords and key paths are never returned."}
+    return _desktop_call(inspect)
+
+
+@app.post("/api/app/machines/connect")
+def desktop_connect_machine(body: MachineConnectRequest, _: None = Depends(require_login)) -> dict:
+    if body.profile_index < 0 or body.profile_index > 1000:
+        raise HTTPException(400, "Invalid saved machine profile index")
+    started = perf_counter()
+    def connect(window):
+        method = getattr(window, "_connect_profile_from_web", None)
+        if not callable(method):
+            raise HTTPException(501, "This KubeDock version does not expose saved-profile switching")
+        try:
+            return method(body.profile_index, body.confirm_target)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    result = _desktop_call(connect, timeout=8.0)
+    _audit_remote("connect-saved-machine", body.confirm_target, "succeeded", started)
+    return result
+
+
 @app.get("/api/app/status")
 def desktop_status(_: None = Depends(require_login)) -> dict:
     def inspect(window):
@@ -1648,6 +1698,7 @@ def desktop_status(_: None = Depends(require_login)) -> dict:
             "port": getattr(window, "_conn_port", None),
             "protocol": getattr(window, "_conn_protocol", None),
             "tunnel_running": tunnel_running,
+            "last_connection_error": getattr(window, "_last_web_connect_error", None),
             "scope": "desktop-process",
         }
     return _desktop_call(inspect)

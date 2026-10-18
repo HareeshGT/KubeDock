@@ -32,7 +32,7 @@ Without TLS, the server should bind to loopback and rejects non-loopback request
 
 ## Safety constraints and current limitations
 
-- This is a single-active-SSH-target interface. It does not yet provide a saved machine inventory or switch among multiple concurrent SSH sessions.
+- This is a single-active-SSH-target interface with a saved machine inventory. It can switch sequentially among saved key-based SSH profiles, but it does not hold multiple concurrent SSH sessions and cannot reconnect to password-only profiles from the web UI.
 - Full CRUD for every Kubernetes resource type, pod exec, and a full cluster registration/removal workflow are not exposed yet. YAML apply supports arbitrary manifests up to 1 MB, while the resource browser is limited to an allowlist.
 - Docker Compose application lifecycle controls are read-only. Image, volume, and network removal is available but Docker itself may reject removal while a resource is in use.
 - Package installation/removal, firewall changes, and arbitrary system commands are not exposed. Process termination, service actions, reboot, and shutdown require explicit confirmation and remain subject to remote account privileges.
