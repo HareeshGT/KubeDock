@@ -60,6 +60,8 @@ _SSH_PROVIDER: Optional[Callable[[], Optional[paramiko.SSHClient]]] = None
 _RUNTIME_LOCK = threading.RLock()
 _REQUEST_ID: ContextVar[str] = ContextVar("kubedeck_web_request_id", default="-")
 _AUTH_USER: ContextVar[str] = ContextVar("kubedeck_web_auth_user", default="-")
+_KUBE_CONTEXT: ContextVar[str] = ContextVar("kubedock_web_kube_context", default="")
+_SESSION_CONTEXTS: dict[str, str] = {}
 _MAC_CACHE: dict[str, tuple[float, str]] = {}
 _MAC_CACHE_LOCK = threading.RLock()
 _MAC_CACHE_TTL = 300.0
