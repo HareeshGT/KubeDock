@@ -1230,24 +1230,58 @@ def remote_file_upload(body: dict, _: None = Depends(require_login)) -> dict:
         sftp.close()
 
 
+def _remote_os_family() -> str:
+    code, output, _ = _run_remote("uname -s", timeout=5)
+    if code == 0:
+        value = output.strip().lower()
+        if "linux" in value:
+            return "linux"
+        if "darwin" in value:
+            return "macos"
+    code, output, _ = _run_remote('powershell -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"', timeout=5)
+    if code == 0 and output.strip():
+        return "windows"
+    return "unknown"
+
+
 @app.get("/api/remote/system/{kind}")
 def remote_system_inspection(kind: str, _: None = Depends(require_login)) -> dict:
-    commands = {
-        "processes": "ps -eo pid,ppid,user,%cpu,%mem,stat,comm --sort=-%cpu 2>&1 | head -51",
-        "disk": "df -h 2>&1 | head -51",
-        "ports": "ss -lntup 2>&1 | head -101",
-        "services": "systemctl --no-pager --type=service --state=running 2>&1 | head -101",
-        "metrics": "printf 'HOST='; hostname; printf '\\nUPTIME='; uptime; printf '\\nMEMORY='; free -h 2>&1; printf '\\nDISK='; df -h / 2>&1",
+    family = _remote_os_family()
+    commands_by_os = {
+        "linux": {
+            "processes": "ps -eo pid,ppid,user,%cpu,%mem,stat,comm --sort=-%cpu 2>&1 | head -51",
+            "disk": "df -h 2>&1 | head -51",
+            "ports": "ss -lntup 2>&1 | head -101",
+            "services": "systemctl --no-pager --type=service --state=running 2>&1 | head -101",
+            "metrics": "printf 'HOST='; hostname; printf '\\nUPTIME='; uptime; printf '\\nMEMORY='; free -h 2>&1; printf '\\nDISK='; df -h / 2>&1",
+        },
+        "macos": {
+            "processes": "ps -Ao pid,ppid,user,%cpu,%mem,state,comm -r | head -51",
+            "disk": "df -h",
+            "ports": "lsof -nP -iTCP -sTCP:LISTEN 2>&1 | head -101",
+            "services": "launchctl list 2>&1 | head -101",
+            "metrics": "printf 'HOST='; hostname; printf '\\nUPTIME='; uptime; printf '\\nMEMORY='; vm_stat; printf '\\nDISK='; df -h /",
+        },
+        "windows": {
+            "processes": 'powershell -NoProfile -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 50 Id,ProcessName,CPU,WorkingSet64 | Format-Table -AutoSize"',
+            "disk": 'powershell -NoProfile -Command "Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,Size,SizeRemaining | Format-Table -AutoSize"',
+            "ports": 'powershell -NoProfile -Command "Get-NetTCPConnection -State Listen | Select-Object -First 100 LocalAddress,LocalPort,OwningProcess | Format-Table -AutoSize"',
+            "services": 'powershell -NoProfile -Command "Get-Service | Where-Object Status -eq Running | Select-Object -First 100 Name,DisplayName,Status | Format-Table -AutoSize"',
+            "metrics": 'powershell -NoProfile -Command "hostname; Get-CimInstance Win32_OperatingSystem | Select-Object Caption,LastBootUpTime,TotalVisibleMemorySize,FreePhysicalMemory; Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free"',
+        },
     }
+    commands = commands_by_os.get(family)
+    if commands is None:
+        raise HTTPException(501, "System inspection is unsupported for this remote shell/OS")
     if kind not in commands:
         raise HTTPException(404, "Unsupported system inspection")
     started = perf_counter()
     code, output, error = _run_remote(commands[kind], timeout=15)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("system-" + kind, "active SSH target", status, started, None if code == 0 else 502)
     if code != 0 and not output.strip():
-        _audit_remote("system-" + kind, "active SSH target", "failed", started, 502)
         raise HTTPException(502, (error or "System inspection failed").strip()[:1000])
-    _audit_remote("system-" + kind, "active SSH target", "succeeded", started)
-    return {"target": "active KubeDock SSH machine", "kind": kind, "output": output[:50000], "warning": error.strip()[:1000] if error.strip() else None}
+    return {"target": "active KubeDock SSH machine", "os": family, "kind": kind, "output": output[:50000], "warning": error.strip()[:1000] if error.strip() else None}
 
 @app.websocket("/api/remote/terminal")
 async def remote_terminal(websocket: WebSocket) -> None:

@@ -94,3 +94,13 @@ def test_docker_remove_requires_exact_confirmation(monkeypatch):
     with pytest.raises(HTTPException) as denied:
         server.remote_docker_action("container123", "remove", {})
     assert denied.value.status_code == 409
+
+
+def test_system_inspection_uses_detected_windows_command(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_remote_os_family", lambda: "windows")
+    monkeypatch.setattr(server, "_run_remote", lambda command, timeout=20: (calls.append(command) or 0, "PowerShell output", ""))
+    monkeypatch.setattr(server, "_audit_remote", lambda *_args, **_kwargs: None)
+    result = server.remote_system_inspection("processes")
+    assert result["os"] == "windows"
+    assert "Get-Process" in calls[0]
