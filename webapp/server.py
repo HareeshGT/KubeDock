@@ -67,6 +67,8 @@ _KUBE_CONTEXT: ContextVar[str] = ContextVar("kubedock_web_kube_context", default
 _SESSION_CONTEXTS: dict[str, str] = {}
 _APP_PROVIDER: Optional[Callable[[], object]] = None
 _DESKTOP_BRIDGE = None
+_ACTIVE_TERMINALS: dict[str, int] = {}
+_TERMINAL_LOCK = threading.RLock()
 _MAC_CACHE: dict[str, tuple[float, str]] = {}
 _MAC_CACHE_LOCK = threading.RLock()
 _MAC_CACHE_TTL = 300.0
@@ -639,6 +641,14 @@ async def trace_requests(request: Request, call_next):
     )
 
     try:
+        raw_length = request.headers.get("content-length")
+        if raw_length:
+            try:
+                body_length = int(raw_length)
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+            if body_length > 8_000_000:
+                return JSONResponse(status_code=413, content={"detail": "Request body exceeds the 8 MB limit"})
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             origin = request.headers.get("origin", "")
             if origin:
@@ -1777,8 +1787,33 @@ async def remote_terminal(websocket: WebSocket) -> None:
         logger.exception("Unable to open remote PTY")
         await websocket.close(code=1011, reason="Unable to open remote terminal")
         return
-    await websocket.accept()
-    _AUTH_USER.set(session[0])
+    with _TERMINAL_LOCK:
+        active_count = _ACTIVE_TERMINALS.get(token, 0)
+        if active_count < 3:
+            _ACTIVE_TERMINALS[token] = active_count + 1
+            terminal_allowed = True
+        else:
+            terminal_allowed = False
+    if not terminal_allowed:
+        try:
+            channel.close()
+        except Exception:
+            pass
+        await websocket.close(code=4429, reason="Maximum of three terminal sessions reached")
+        return
+    try:
+        await websocket.accept()
+    except Exception:
+        with _TERMINAL_LOCK:
+            _ACTIVE_TERMINALS[token] = max(0, _ACTIVE_TERMINALS.get(token, 1) - 1)
+            if _ACTIVE_TERMINALS.get(token) == 0:
+                _ACTIVE_TERMINALS.pop(token, None)
+        try:
+            channel.close()
+        except Exception:
+            pass
+        return
+    auth_token = _AUTH_USER.set(session[0])
     started = perf_counter()
     _audit_remote("terminal-connect", "active SSH target", "succeeded", started)
     async def pump_output():
@@ -1820,6 +1855,11 @@ async def remote_terminal(websocket: WebSocket) -> None:
         except Exception:
             pass
         _audit_remote("terminal-disconnect", "active SSH target", "succeeded", started)
+        _AUTH_USER.reset(auth_token)
+        with _TERMINAL_LOCK:
+            _ACTIVE_TERMINALS[token] = max(0, _ACTIVE_TERMINALS.get(token, 1) - 1)
+            if _ACTIVE_TERMINALS.get(token) == 0:
+                _ACTIVE_TERMINALS.pop(token, None)
 
 
 
@@ -2502,13 +2542,16 @@ def start_server(
 
 
 def stop_server(timeout: float = 3.0) -> None:
-    global _server, _server_thread, _server_port, _server_host
+    global _server, _server_thread, _server_port, _server_host, _APP_PROVIDER, _DESKTOP_BRIDGE
     with _SERVER_LOCK:
         server, thread = _server, _server_thread
         _server = None
         _server_thread = None
         _server_port = None
         _server_host = None
+    with _RUNTIME_LOCK:
+        _APP_PROVIDER = None
+        _DESKTOP_BRIDGE = None
 
     # A stop/restart must invalidate browser sessions, even when it occurs
     # inside the same desktop process rather than via a full app shutdown.
