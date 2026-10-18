@@ -279,3 +279,64 @@ def test_file_create_rejects_root_and_move_rejects_same_path(monkeypatch):
     with pytest.raises(HTTPException) as move:
         server.remote_file_move({"source": "/tmp/a", "destination": "/tmp/a", "confirm_source": "/tmp/a", "confirm_destination": "/tmp/a"})
     assert move.value.status_code == 400
+
+
+def test_exec_writes_input_to_stdin_without_logging_payload(monkeypatch):
+    class Channel:
+        def __init__(self):
+            self.write_closed = False
+        def settimeout(self, _timeout):
+            pass
+        def recv_exit_status(self):
+            return 0
+        def shutdown_write(self):
+            self.write_closed = True
+        def close(self):
+            pass
+
+    class Stream:
+        def __init__(self, channel, value=b""):
+            self.channel = channel
+            self.value = value
+        def read(self):
+            return self.value
+        def close(self):
+            pass
+
+    class Stdin(Stream):
+        def __init__(self, channel):
+            super().__init__(channel)
+            self.written = b""
+        def write(self, value):
+            self.written += value
+        def flush(self):
+            pass
+
+    class SSH:
+        def __init__(self):
+            self.channel = Channel()
+            self.stdin = Stdin(self.channel)
+        def exec_command(self, _command, timeout=None):
+            return self.stdin, Stream(self.channel, b"ok"), Stream(self.channel, b"")
+
+    monkeypatch.setattr(server, "managed_exec_command", None)
+    ssh = SSH()
+    code, output, error = server._exec(
+        ssh, "kubectl apply -f -", timeout=2, input_data=b"secret yaml", sensitive_output=True
+    )
+    assert (code, output, error) == (0, "ok", "")
+    assert ssh.stdin.written == b"secret yaml"
+    assert ssh.channel.write_closed is True
+
+
+def test_saved_machine_api_never_returns_private_key_path(monkeypatch, tmp_path):
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("placeholder")
+    monkeypatch.setattr(server, "load_recent_instances", lambda: [{
+        "host": "192.0.2.10", "port": "22", "user": "deploy", "alias": "prod",
+        "protocol": "ssh", "pem": str(key_path),
+    }])
+    monkeypatch.setattr(server, "_desktop_call", lambda callback: callback(object()))
+    result = server.desktop_machines()
+    assert result["machines"][0]["can_connect"] is True
+    assert str(key_path) not in str(result)
