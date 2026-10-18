@@ -943,10 +943,14 @@ def _run_remote(command: str, timeout: int = 20) -> tuple[int, str, str]:
 def _safe_remote_path(value: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 2048 or "\x00" in value:
         raise HTTPException(400, "Invalid remote path")
-    if not value.startswith("/"):
+    value = value.replace("\\", "/")
+    windows_drive = re.match(r"^[A-Za-z]:/", value)
+    if not value.startswith("/") and not windows_drive:
         raise HTTPException(400, "Remote paths must be absolute")
     if any(part == ".." for part in value.split("/")):
         raise HTTPException(400, "Path traversal is not allowed")
+    if windows_drive and re.fullmatch(r"[A-Za-z]:/", value):
+        return value[:2].upper() + "/"
     return posixpath.normpath(value)
 
 

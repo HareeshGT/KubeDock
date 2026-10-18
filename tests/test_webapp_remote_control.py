@@ -187,3 +187,10 @@ def test_service_action_runs_only_allowlisted_verb(monkeypatch):
     result = server.remote_service_action(server.ServiceActionRequest(name="nginx", action="restart", confirm_target="restart service/nginx"))
     assert result["ok"] is True
     assert calls == ["systemctl restart nginx"]
+
+
+def test_remote_path_accepts_absolute_windows_drive_paths():
+    assert server._safe_remote_path(r"C:\Users\Administrator") == "C:/Users/Administrator"
+    assert server._safe_remote_path("C:\\") == "C:/"
+    with pytest.raises(HTTPException):
+        server._safe_remote_path(r"C:\Users\..\Windows")
