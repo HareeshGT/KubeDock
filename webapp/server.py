@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from themes import load_settings, save_settings
 from webapp.otp_auth import OTPConfigurationError, check_totp, get_or_create_secret
+from webapp.operation_audit import list_operations, record_operation
 try:
     from workers import managed_exec_command
 except ImportError:  # pragma: no cover
@@ -349,6 +350,46 @@ def _exec(
             request_id, _AUTH_USER.get(), err.strip()[:4000]
         )
     return code, out, err
+
+
+def _audited_kubectl(action: str, target: str, command: str, timeout: int = 30) -> str:
+    """Run a mutation and persist metadata only (never command output or secrets)."""
+    started = perf_counter()
+    status = "failed"
+    error_code = None
+    try:
+        output = _kubectl(command, timeout=timeout)
+        status = "succeeded"
+        return output
+    except HTTPException as exc:
+        error_code = int(exc.status_code)
+        raise
+    except Exception:
+        error_code = 500
+        raise
+    finally:
+        try:
+            record_operation(
+                username=_AUTH_USER.get(),
+                category="kubernetes",
+                action=action,
+                target=target,
+                status=status,
+                duration_ms=round((perf_counter() - started) * 1000),
+                error_code=error_code,
+            )
+        except Exception:
+            # Do not mask the Kubernetes result if the audit store is unavailable.
+            logger.exception("Unable to persist operation audit record")
+
+
+@app.get("/api/operations")
+def operations(
+    limit: int = 50,
+    _: None = Depends(require_login),
+) -> list:
+    """Return recent action metadata without command output or secret values."""
+    return list_operations(limit=max(1, min(int(limit), 200)))
 
 
 def _parse_json_output(output: str):
@@ -739,9 +780,10 @@ def restart(
 ) -> dict:
     namespace = _validate_k8s_name(namespace, "namespace")
     name = _validate_k8s_name(name, "deployment")
-    out = _kubectl(
+    out = _audited_kubectl(
+        "restart", f"deployment/{namespace}/{name}",
         f"rollout restart deployment/{shlex.quote(name)} "
-        f"-n {shlex.quote(namespace)} 2>&1"
+        f"-n {shlex.quote(namespace)} 2>&1",
     )
     return {"ok": True, "output": out.strip()}
 
@@ -757,9 +799,10 @@ def scale(
     name = _validate_k8s_name(name, "deployment")
     if body.replicas < 0 or body.replicas > 100:
         raise HTTPException(400, "replicas must be between 0 and 100")
-    out = _kubectl(
+    out = _audited_kubectl(
+        "scale", f"deployment/{namespace}/{name}",
         f"scale deployment/{shlex.quote(name)} "
-        f"-n {shlex.quote(namespace)} --replicas={body.replicas} 2>&1"
+        f"-n {shlex.quote(namespace)} --replicas={body.replicas} 2>&1",
     )
     return {"ok": True, "output": out.strip()}
 
@@ -772,9 +815,10 @@ def delete(
 ) -> dict:
     namespace = _validate_k8s_name(namespace, "namespace")
     name = _validate_k8s_name(name, "pod")
-    out = _kubectl(
+    out = _audited_kubectl(
+        "delete", f"pod/{namespace}/{name}",
         f"delete pod {shlex.quote(name)} "
-        f"-n {shlex.quote(namespace)} 2>&1"
+        f"-n {shlex.quote(namespace)} 2>&1",
     )
     return {"ok": True, "output": out.strip()}
 
