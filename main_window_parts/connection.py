@@ -24,7 +24,7 @@ from PyQt5.QtGui import QFont, QColor, QPalette, QKeySequence
 import themes as _themes
 from ui_icons import set_icon, apply_text_icon, add_icon_tab, icon_button, icon_pixmap, split_icon_text
 from themes import T, THEMES, apply_theme_vars, build_qss, apply_qss_to, save_settings
-from utils import classify, icon_for, size_fmt, add_recent_instance, monospace_font
+from utils import classify, icon_for, size_fmt, add_recent_instance, load_recent_instances, monospace_font
 from sudo_fs import SudoFS
 from ftp_fs import FTPFS
 from workers import (
@@ -58,6 +58,60 @@ _MEDIA_KINDS = {"video", "audio"}
 
 
 class ConnectionMixin:
+    def _connect_profile_from_web(self, profile_index: int, confirm_target: str):
+      """Reconnect to a saved SSH profile without opening a modal ConnectDialog.
+
+      This is invoked only on the Qt UI thread by the authenticated WebApp
+      bridge. Only saved key-based SSH profiles are eligible; passwords and
+      private-key paths are never accepted from the browser.
+      """
+      profiles = load_recent_instances()
+      if not isinstance(profile_index, int) or profile_index < 0 or profile_index >= len(profiles):
+        raise ValueError("Saved machine profile no longer exists; refresh the machine list.")
+      profile = profiles[profile_index]
+      host = str(profile.get("host", "")).strip()
+      user = str(profile.get("user", "")).strip()
+      alias = str(profile.get("alias", "")).strip()
+      protocol = str(profile.get("protocol", "ssh")).lower()
+      target = alias or (f"{user}@{host}" if user and host else host)
+      if not host or not user or any(ord(ch) < 32 for ch in host + user):
+        raise ValueError("Saved machine profile is invalid.")
+      if confirm_target != target:
+        raise ValueError("Saved machine target changed; refresh and confirm it again.")
+      if protocol != "ssh":
+        raise ValueError("Only saved SSH profiles can be switched to remotely.")
+      pem = str(profile.get("pem", "")).strip()
+      if not pem or not os.path.isabs(pem) or not os.path.isfile(pem) or not os.access(pem, os.R_OK):
+        raise ValueError("This saved profile has no readable private-key file. Connect through the desktop UI.")
+      if getattr(self, "_connect_worker", None) is not None and self._connect_worker.isRunning():
+        raise ValueError("A connection attempt is already in progress.")
+      if getattr(self, "_conn_protocol", "") in {"ftp", "ftps"} and getattr(self, "sftp", None) is not None:
+        raise ValueError("Disconnect the active FTP session from the desktop UI before switching to SSH.")
+      try:
+        port = int(profile.get("port", 22))
+      except (TypeError, ValueError) as exc:
+        raise ValueError("Saved SSH port is invalid.") from exc
+      if not 1 <= port <= 65535:
+        raise ValueError("Saved SSH port is outside the valid range.")
+
+      self._pending_conn = {
+        "protocol": "ssh", "host": host, "port": port, "user": user,
+        "pem": pem, "password": "", "alias": alias,
+      }
+      self._last_web_connect_error = None
+      self.progress.show()
+      self.status.showMessage("Connecting to {}…".format(target))
+      self._connect_worker = ConnectWorker(host, port, user, pem, "")
+      self._connect_worker.connected.connect(self._on_connect_success)
+      self._connect_worker.error.connect(self._on_remote_profile_connect_error)
+      self._connect_worker.start()
+      return {"ok": True, "started": True, "target": target}
+
+    def _on_remote_profile_connect_error(self, message):
+      self._last_web_connect_error = str(message)[:1000]
+      self.status.showMessage("Remote connection failed")
+      self._finish_connect_ui()
+
     def _connect(self):
       dlg = ConnectDialog(self)
       if dlg.exec_() != QDialog.Accepted:

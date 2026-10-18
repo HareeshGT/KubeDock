@@ -204,16 +204,26 @@ class KubernetesTunnelsMixin:
 
 
   def _start_tunnel(self):
-    if self._tunnel_process is not None and self._tunnel_process.state() != QProcess.NotRunning:
-      QMessageBox.information(self, "Tunnel already running",
-                  "Stop the current tunnel before starting a new one.")
-      return
+    result = self._start_tunnel_services(self._selected_tunnel_services())
+    if not result.get("ok"):
+      if result.get("already_running"):
+        QMessageBox.information(self, "Tunnel already running", result.get("error", "Stop the current tunnel before starting a new one."))
+      else:
+        QMessageBox.warning(self, "Can't start tunnel", result.get("error", "Tunnel could not be started."))
 
-    services = self._selected_tunnel_services()
+
+  def _start_tunnel_services(self, services: list) -> dict:
+    """Start a tunnel for explicitly selected configured services.
+
+    This method is UI-thread-only and intentionally returns structured errors
+    so the authenticated WebApp can reuse it without opening modal dialogs.
+    """
+    if self._tunnel_process is not None and self._tunnel_process.state() != QProcess.NotRunning:
+      return {"ok": False, "already_running": True, "error": "Stop the current tunnel before starting a new one."}
+
     cmd, err = self._build_tunnel_cmd(services)
     if not cmd:
-      QMessageBox.warning(self, "Can't start tunnel", err)
-      return
+      return {"ok": False, "error": err or "Invalid tunnel configuration."}
 
     self.tunnel_log.clear()
     append_terminal_html(self.tunnel_log, f"<span style='color:{T['ACCENT2']}'>$ {self._esc(' '.join(cmd))}</span>")
@@ -224,6 +234,10 @@ class KubernetesTunnelsMixin:
     proc.errorOccurred.connect(self._on_tunnel_error)
     proc.finished.connect(self._on_tunnel_finished)
     proc.start(cmd[0], cmd[1:])
+    if not proc.waitForStarted(1000):
+      error = proc.errorString() or "Unable to start local SSH tunnel process."
+      proc.deleteLater()
+      return {"ok": False, "error": error}
     self._tunnel_process = proc
     self._tunnel_forwarded_ports = {svc["port"] for svc in services}
     self._sync_forwarded_badges()
@@ -232,6 +246,7 @@ class KubernetesTunnelsMixin:
     self.tunnel_stop_btn.setEnabled(True)
     self.tunnel_status_lbl.setText(f"● Tunnelling {len(services)} service(s)")
     self.tunnel_status_lbl.setStyleSheet(f"color: {T['SUCCESS']}; font-size: 12px;")
+    return {"ok": True, "services": [svc.get("name") for svc in services], "ports": sorted(self._tunnel_forwarded_ports), "state": "started"}
 
 
   def _stop_tunnel(self):
