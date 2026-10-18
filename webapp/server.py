@@ -7,17 +7,21 @@ own; commands use KubeDock's managed SSH session helper from workers.py.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
 import logging
 import os
+import posixpath
 import platform
 import re
 import secrets
 import shlex
 import socket
 import subprocess
+import stat
 import threading
 from contextvars import ContextVar
 from pathlib import Path
@@ -26,7 +30,7 @@ from typing import Callable, Optional
 
 import paramiko
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
@@ -148,10 +152,12 @@ def require_login(request: Request) -> None:
                 username = session[0]
             elif session:
                 _WEB_SESSIONS.pop(token, None)
+                _SESSION_CONTEXTS.pop(token, None)
     if not username:
         raise HTTPException(401, "Authentication required")
     request.state.auth_user = username
     _AUTH_USER.set(username)
+    _KUBE_CONTEXT.set(_SESSION_CONTEXTS.get(token, ""))
     _log_client_identity(request, username)
 
 
@@ -425,7 +431,11 @@ def _parse_json_output(output: str):
 
 def _kubectl(args: str, timeout: int = 30, json_output: bool = False):
     try:
-        code, out, err = _exec(_ssh(), f"kubectl {args}", timeout)
+        context = _KUBE_CONTEXT.get()
+        # Context selection is per authenticated web session; it never mutates
+        # the remote user's shared kubeconfig current-context.
+        prefix = f"--context {shlex.quote(context)} " if context and not args.lstrip().startswith("config ") else ""
+        code, out, err = _exec(_ssh(), f"kubectl {prefix}{args}", timeout)
     except TimeoutError as exc:
         raise HTTPException(504, str(exc))
     if code != 0:
@@ -512,7 +522,9 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict:
 @app.post("/api/logout")
 def logout(request: Request, response: Response) -> dict:
     with _SESSION_LOCK:
-        _WEB_SESSIONS.pop(request.cookies.get(_SESSION_COOKIE, ""), None)
+        token = request.cookies.get(_SESSION_COOKIE, "")
+        _WEB_SESSIONS.pop(token, None)
+        _SESSION_CONTEXTS.pop(token, None)
     response.delete_cookie(key=_SESSION_COOKIE, path="/", httponly=True,
                            secure=request.url.scheme == "https", samesite="strict")
     response.headers["Cache-Control"] = "no-store"
@@ -528,6 +540,8 @@ def session_info(request: Request, _: None = Depends(require_login)) -> dict:
 async def trace_requests(request: Request, call_next):
     request_id = secrets.token_hex(4)
     request_token = _REQUEST_ID.set(request_id)
+    cookie_token = request.cookies.get(_SESSION_COOKIE, "")
+    context_token = _KUBE_CONTEXT.set(_SESSION_CONTEXTS.get(cookie_token, ""))
     started = perf_counter()
     query = request.url.query
     target = request.url.path + (f"?{query}" if query else "")
@@ -570,6 +584,7 @@ async def trace_requests(request: Request, call_next):
         )
         raise
     finally:
+        _KUBE_CONTEXT.reset(context_token)
         _REQUEST_ID.reset(request_token)
 
 
@@ -821,6 +836,497 @@ def delete(
         f"-n {shlex.quote(namespace)} 2>&1",
     )
     return {"ok": True, "output": out.strip()}
+
+
+
+# ---------- Remote control APIs ----------
+# These APIs operate only on the SSH connection already owned by KubeDock.
+# They never create a second SSH connection or accept browser-supplied credentials.
+
+def _audit_remote(action: str, target: str, status: str, started: float, error_code: Optional[int] = None) -> None:
+    try:
+        record_operation(
+            username=_AUTH_USER.get(),
+            category="remote",
+            action=action,
+            target=target,
+            status=status,
+            duration_ms=round((perf_counter() - started) * 1000),
+            error_code=error_code,
+        )
+    except Exception:
+        logger.exception("Unable to persist remote operation audit record")
+
+
+def _run_remote(command: str, timeout: int = 20) -> tuple[int, str, str]:
+    try:
+        return _exec(_ssh(), command, timeout=timeout)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Remote command timed out") from exc
+
+
+def _safe_remote_path(value: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 2048 or "\x00" in value:
+        raise HTTPException(400, "Invalid remote path")
+    if not value.startswith("/"):
+        raise HTTPException(400, "Remote paths must be absolute")
+    if any(part == ".." for part in value.split("/")):
+        raise HTTPException(400, "Path traversal is not allowed")
+    return posixpath.normpath(value)
+
+
+def _sftp():
+    try:
+        return _ssh().open_sftp()
+    except Exception:
+        logger.exception("Unable to open SFTP channel")
+        raise HTTPException(502, "SFTP is unavailable for the connected machine")
+
+
+@app.get("/api/remote/target")
+def remote_target(_: None = Depends(require_login)) -> dict:
+    """Return facts about the currently connected KubeDock SSH target."""
+    ssh = _ssh()
+    transport = ssh.get_transport()
+    peer = None
+    try:
+        peer = transport.getpeername() if transport else None
+    except Exception:
+        peer = None
+    code, output, error = _run_remote(
+        "printf 'HOSTNAME='; hostname 2>/dev/null; "
+        "printf '\\nOS='; uname -srm 2>/dev/null || ver 2>&1; "
+        "printf '\\nUPTIME='; uptime 2>/dev/null; "
+        "printf '\\nCPU_COUNT='; getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null; "
+        "printf '\\nMEMORY='; free -b 2>/dev/null | head -2; "
+        "printf '\\nROOT_DISK='; df -Pk / 2>/dev/null | tail -1; "
+        "printf '\\nDOCKER='; command -v docker 2>/dev/null || where docker 2>NUL",
+        timeout=10,
+    )
+    if code != 0 and not output.strip():
+        raise HTTPException(502, "Unable to inspect the connected machine")
+    return {
+        "connected": bool(transport and transport.is_active()),
+        "target": str(peer[0]) if isinstance(peer, tuple) and peer else "KubeDock active SSH connection",
+        "port": peer[1] if isinstance(peer, tuple) and len(peer) > 1 else None,
+        "output": output.strip(),
+        "warning": error.strip()[:500] if error.strip() else None,
+    }
+
+
+@app.get("/api/kube/contexts")
+def kube_contexts(request: Request, _: None = Depends(require_login)) -> dict:
+    code, output, error = _run_remote("kubectl config get-contexts -o name 2>&1", timeout=10)
+    if code != 0:
+        raise HTTPException(502, error.strip() or output.strip() or "Unable to list Kubernetes contexts")
+    contexts = [line.strip() for line in output.splitlines() if line.strip()]
+    token = request.cookies.get(_SESSION_COOKIE, "")
+    with _SESSION_LOCK:
+        session = _WEB_SESSIONS.get(token)
+    if not session:
+        raise HTTPException(401, "Authentication required")
+    selected = _SESSION_CONTEXTS.get(token, "")
+    current_code, current_output, _ = _run_remote("kubectl config current-context 2>/dev/null", timeout=10)
+    actual = current_output.strip() if current_code == 0 else None
+    return {
+        "contexts": contexts,
+        "session_context": selected or actual,
+        "shared_kubeconfig_context": actual,
+        "scope": "web-session",
+        "note": "Selecting a context affects this web session only; it does not change the shared kubeconfig.",
+    }
+
+
+class ContextSelection(BaseModel):
+    context: str
+
+
+@app.post("/api/kube/contexts/select")
+def select_kube_context(body: ContextSelection, request: Request, _: None = Depends(require_login)) -> dict:
+    context = str(body.context or "").strip()
+    if len(context) > 253 or any(ord(ch) < 32 for ch in context):
+        raise HTTPException(400, "Invalid Kubernetes context")
+    token = request.cookies.get(_SESSION_COOKIE, "")
+    if not context:
+        with _SESSION_LOCK:
+            if token not in _WEB_SESSIONS:
+                raise HTTPException(401, "Authentication required")
+            _SESSION_CONTEXTS.pop(token, None)
+        _KUBE_CONTEXT.set("")
+        _audit_remote("reset-kubernetes-context", "shared kubeconfig default", "succeeded", perf_counter())
+        return {"ok": True, "context": None, "scope": "web-session", "note": "Using the shared kubeconfig default without changing it."}
+    code, output, error = _run_remote("kubectl config get-contexts -o name 2>&1", timeout=10)
+    if code != 0:
+        raise HTTPException(502, error.strip() or output.strip() or "Unable to validate Kubernetes context")
+    if context not in {line.strip() for line in output.splitlines()}:
+        raise HTTPException(404, "Kubernetes context was not found")
+    with _SESSION_LOCK:
+        if token not in _WEB_SESSIONS:
+            raise HTTPException(401, "Authentication required")
+        _SESSION_CONTEXTS[token] = context
+    _KUBE_CONTEXT.set(context)
+    _audit_remote("select-kubernetes-context", context, "succeeded", perf_counter())
+    return {"ok": True, "context": context, "scope": "web-session"}
+
+
+@app.get("/api/remote/files")
+def remote_files(path: str = "/", _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(path)
+    sftp = _sftp()
+    try:
+        attrs = sftp.lstat(path)
+        if stat.S_ISLNK(attrs.st_mode):
+            raise HTTPException(400, "Refusing to follow a symbolic link")
+        if not stat.S_ISDIR(attrs.st_mode):
+            raise HTTPException(400, "Path is not a directory")
+        entries = []
+        for item in sftp.listdir_attr(path):
+            is_link = stat.S_ISLNK(item.st_mode)
+            entries.append({
+                "name": item.filename,
+                "path": posixpath.join(path, item.filename),
+                "kind": "symlink" if is_link else ("directory" if stat.S_ISDIR(item.st_mode) else "file"),
+                "size": int(item.st_size or 0),
+                "modified": int(item.st_mtime or 0),
+                "permissions": oct(stat.S_IMODE(item.st_mode)),
+            })
+        entries.sort(key=lambda item: (item["kind"] != "directory", item["name"].lower()))
+        return {"path": path, "parent": posixpath.dirname(path) if path != "/" else None, "entries": entries}
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(403 if getattr(exc, "errno", None) == 13 else 404, "Unable to browse this remote path") from exc
+    finally:
+        sftp.close()
+
+
+@app.get("/api/remote/files/read")
+def remote_file_read(path: str, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(path)
+    sftp = _sftp()
+    try:
+        attrs = sftp.lstat(path)
+        if stat.S_ISLNK(attrs.st_mode) or not stat.S_ISREG(attrs.st_mode):
+            raise HTTPException(400, "Only regular, non-symlink files can be read")
+        if attrs.st_size > 1_000_000:
+            raise HTTPException(413, "File is larger than the 1 MB text editor limit")
+        with sftp.open(path, "rb") as handle:
+            data = handle.read(1_000_001)
+        if len(data) > 1_000_000:
+            raise HTTPException(413, "File is larger than the 1 MB text editor limit")
+        try:
+            content = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(415, "File is not UTF-8 text") from exc
+        return {"path": path, "content": content, "size": len(data)}
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(403 if getattr(exc, "errno", None) == 13 else 404, "Unable to read this remote file") from exc
+    finally:
+        sftp.close()
+
+
+@app.put("/api/remote/files/write")
+def remote_file_write(body: dict, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(body.get("path", ""))
+    content = body.get("content")
+    if not isinstance(content, str) or len(content.encode("utf-8")) > 1_000_000:
+        raise HTTPException(413, "Text content must be at most 1 MB")
+    started = perf_counter()
+    sftp = _sftp()
+    try:
+        try:
+            attrs = sftp.lstat(path)
+            if stat.S_ISLNK(attrs.st_mode) or not stat.S_ISREG(attrs.st_mode):
+                raise HTTPException(400, "Only regular, non-symlink files can be edited")
+            if body.get("confirm_overwrite") != path:
+                raise HTTPException(409, "Explicit overwrite confirmation is required")
+        except FileNotFoundError:
+            if body.get("create") is not True:
+                raise HTTPException(404, "File does not exist; set create=true to create it")
+        with sftp.open(path, "wb") as handle:
+            handle.write(content.encode("utf-8"))
+        _audit_remote("write-file", path, "succeeded", started)
+        return {"ok": True, "path": path, "bytes_written": len(content.encode("utf-8"))}
+    except HTTPException as exc:
+        _audit_remote("write-file", path, "failed", started, exc.status_code)
+        raise
+    except OSError as exc:
+        _audit_remote("write-file", path, "failed", started, 500)
+        raise HTTPException(403, "Unable to write this remote file") from exc
+    finally:
+        sftp.close()
+
+
+@app.post("/api/remote/files/mkdir")
+def remote_file_mkdir(body: dict, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(body.get("path", ""))
+    started = perf_counter()
+    sftp = _sftp()
+    try:
+        sftp.mkdir(path)
+        _audit_remote("create-directory", path, "succeeded", started)
+        return {"ok": True, "path": path}
+    except Exception as exc:
+        _audit_remote("create-directory", path, "failed", started, 500)
+        raise HTTPException(400, "Unable to create directory") from exc
+    finally:
+        sftp.close()
+
+
+@app.post("/api/remote/files/delete")
+def remote_file_delete(body: dict, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(body.get("path", ""))
+    if path == "/" or body.get("confirm_path") != path:
+        raise HTTPException(400, "Confirm the exact path before deleting")
+    started = perf_counter()
+    sftp = _sftp()
+    try:
+        attrs = sftp.lstat(path)
+        if stat.S_ISLNK(attrs.st_mode):
+            sftp.remove(path)
+        elif stat.S_ISDIR(attrs.st_mode):
+            # Only empty directories can be removed; recursive deletion is deliberately excluded.
+            sftp.rmdir(path)
+        else:
+            sftp.remove(path)
+        _audit_remote("delete-file", path, "succeeded", started)
+        return {"ok": True, "path": path}
+    except HTTPException as exc:
+        _audit_remote("delete-file", path, "failed", started, exc.status_code)
+        raise
+    except OSError as exc:
+        _audit_remote("delete-file", path, "failed", started, 500)
+        raise HTTPException(400, "Unable to delete path; directories must be empty") from exc
+    finally:
+        sftp.close()
+
+
+@app.get("/api/remote/docker/{kind}")
+def remote_docker_list(kind: str, _: None = Depends(require_login)) -> dict:
+    commands = {
+        "containers": ["ps", "-a", "--format", "{{json .}}"],
+        "images": ["images", "--format", "{{json .}}"],
+        "volumes": ["volume", "ls", "--format", "{{json .}}"],
+        "networks": ["network", "ls", "--format", "{{json .}}"],
+        "compose": ["compose", "ls", "--format", "json"],
+    }
+    if kind not in commands:
+        raise HTTPException(404, "Unsupported Docker resource type")
+    command = "docker " + " ".join(shlex.quote(arg) for arg in commands[kind])
+    code, output, error = _run_remote(command, timeout=25)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Docker command failed")
+    items = []
+    if kind == "compose":
+        try:
+            parsed = json.loads(output or "[]")
+            items = parsed if isinstance(parsed, list) else [parsed]
+        except json.JSONDecodeError:
+            items = [{"raw": line} for line in output.splitlines() if line.strip()]
+    else:
+        for line in output.splitlines():
+            try:
+                items.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return {"target": "active KubeDock SSH machine", "kind": kind, "items": items}
+
+
+@app.get("/api/remote/docker/containers/{identifier}/logs")
+def remote_docker_logs(identifier: str, tail: int = 200, _: None = Depends(require_login)) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", identifier):
+        raise HTTPException(400, "Invalid container identifier")
+    tail = max(1, min(int(tail), 2000))
+    code, output, error = _run_remote(
+        "docker logs --tail " + str(tail) + " " + shlex.quote(identifier) + " 2>&1",
+        timeout=20,
+    )
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Unable to read container logs")
+    return {"container": identifier, "logs": output}
+
+
+@app.post("/api/remote/docker/containers/{identifier}/{action}")
+def remote_docker_action(identifier: str, action: str, body: dict, _: None = Depends(require_login)) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", identifier):
+        raise HTTPException(400, "Invalid container identifier")
+    if action not in {"start", "stop", "restart", "remove"}:
+        raise HTTPException(400, "Unsupported container action")
+    if action == "remove" and body.get("confirm_target") != identifier:
+        raise HTTPException(409, "Confirm the exact container ID before removal")
+    verb = "rm -f" if action == "remove" else action
+    command = "docker " + verb + " " + shlex.quote(identifier)
+    started = perf_counter()
+    code, output, error = _run_remote(command, timeout=45)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("docker-" + action, identifier, status, started, None if code == 0 else 502)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Docker operation failed")
+    return {"ok": True, "action": action, "container": identifier, "output": output.strip()}
+
+
+
+
+@app.get("/api/remote/files/download")
+def remote_file_download(path: str, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(path)
+    sftp = _sftp()
+    try:
+        attrs = sftp.lstat(path)
+        if stat.S_ISLNK(attrs.st_mode) or not stat.S_ISREG(attrs.st_mode):
+            raise HTTPException(400, "Only regular, non-symlink files can be downloaded")
+        if attrs.st_size > 5_000_000:
+            raise HTTPException(413, "File is larger than the 5 MB download limit")
+        with sftp.open(path, "rb") as handle:
+            data = handle.read(5_000_001)
+        if len(data) > 5_000_000:
+            raise HTTPException(413, "File is larger than the 5 MB download limit")
+        return {"path": path, "content_base64": base64.b64encode(data).decode("ascii"), "size": len(data)}
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(403 if getattr(exc, "errno", None) == 13 else 404, "Unable to download this remote file") from exc
+    finally:
+        sftp.close()
+
+
+@app.put("/api/remote/files/upload")
+def remote_file_upload(body: dict, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(body.get("path", ""))
+    encoded = body.get("content_base64")
+    if not isinstance(encoded, str) or len(encoded) > 7_000_000:
+        raise HTTPException(413, "Upload must be at most 5 MB")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise HTTPException(400, "Invalid base64 file content") from exc
+    if len(data) > 5_000_000:
+        raise HTTPException(413, "Upload must be at most 5 MB")
+    started = perf_counter()
+    sftp = _sftp()
+    try:
+        try:
+            attrs = sftp.lstat(path)
+            if stat.S_ISLNK(attrs.st_mode) or not stat.S_ISREG(attrs.st_mode):
+                raise HTTPException(400, "Uploads may only replace regular, non-symlink files")
+            if body.get("confirm_overwrite") != path:
+                raise HTTPException(409, "Confirm the exact path to overwrite")
+        except FileNotFoundError:
+            if body.get("create") is not True:
+                raise HTTPException(404, "File does not exist; set create=true to create it")
+        with sftp.open(path, "wb") as handle:
+            handle.write(data)
+        _audit_remote("upload-file", path, "succeeded", started)
+        return {"ok": True, "path": path, "bytes_written": len(data)}
+    except HTTPException as exc:
+        _audit_remote("upload-file", path, "failed", started, exc.status_code)
+        raise
+    except OSError as exc:
+        _audit_remote("upload-file", path, "failed", started, 500)
+        raise HTTPException(403, "Unable to upload file to this path") from exc
+    finally:
+        sftp.close()
+
+
+@app.get("/api/remote/system/{kind}")
+def remote_system_inspection(kind: str, _: None = Depends(require_login)) -> dict:
+    commands = {
+        "processes": "ps -eo pid,ppid,user,%cpu,%mem,stat,comm --sort=-%cpu 2>&1 | head -51",
+        "disk": "df -h 2>&1 | head -51",
+        "ports": "ss -lntup 2>&1 | head -101",
+        "services": "systemctl --no-pager --type=service --state=running 2>&1 | head -101",
+        "metrics": "printf 'HOST='; hostname; printf '\\nUPTIME='; uptime; printf '\\nMEMORY='; free -h 2>&1; printf '\\nDISK='; df -h / 2>&1",
+    }
+    if kind not in commands:
+        raise HTTPException(404, "Unsupported system inspection")
+    started = perf_counter()
+    code, output, error = _run_remote(commands[kind], timeout=15)
+    if code != 0 and not output.strip():
+        _audit_remote("system-" + kind, "active SSH target", "failed", started, 502)
+        raise HTTPException(502, (error or "System inspection failed").strip()[:1000])
+    _audit_remote("system-" + kind, "active SSH target", "succeeded", started)
+    return {"target": "active KubeDock SSH machine", "kind": kind, "output": output[:50000], "warning": error.strip()[:1000] if error.strip() else None}
+
+@app.websocket("/api/remote/terminal")
+async def remote_terminal(websocket: WebSocket) -> None:
+    token = websocket.cookies.get(_SESSION_COOKIE, "")
+    now = perf_counter()
+    with _SESSION_LOCK:
+        session = _WEB_SESSIONS.get(token)
+        if session and session[1] <= now:
+            _WEB_SESSIONS.pop(token, None)
+            _SESSION_CONTEXTS.pop(token, None)
+            session = None
+    if not session:
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+    host = websocket.headers.get("host", "")
+    origin = websocket.headers.get("origin", "")
+    if origin:
+        from urllib.parse import urlsplit
+        parsed_origin = urlsplit(origin)
+        if parsed_origin.netloc.lower() != host.lower() or parsed_origin.scheme not in {"http", "https"}:
+            await websocket.close(code=4403, reason="Origin not allowed")
+            return
+    try:
+        client_ip = ipaddress.ip_address(websocket.client.host if websocket.client else "")
+    except ValueError:
+        client_ip = None
+    if websocket.url.scheme != "wss" and not (client_ip and client_ip.is_loopback):
+        await websocket.close(code=4403, reason="Secure WebSocket required")
+        return
+    try:
+        ssh = _ssh()
+        channel = ssh.invoke_shell(term="xterm-256color", width=120, height=32)
+    except Exception:
+        logger.exception("Unable to open remote PTY")
+        await websocket.close(code=1011, reason="Unable to open remote terminal")
+        return
+    await websocket.accept()
+    _AUTH_USER.set(session[0])
+    started = perf_counter()
+    _audit_remote("terminal-connect", "active SSH target", "succeeded", started)
+    async def pump_output():
+        try:
+            while not channel.closed:
+                data = await asyncio.to_thread(channel.recv, 4096)
+                if not data:
+                    break
+                await websocket.send_text(data.decode("utf-8", errors="replace"))
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            pass
+    pump = asyncio.create_task(pump_output())
+    try:
+        while True:
+            message = await websocket.receive_json()
+            kind = message.get("type")
+            if kind == "input":
+                value = message.get("data", "")
+                if isinstance(value, str) and len(value) <= 8192:
+                    channel.send(value)
+            elif kind == "resize":
+                cols = max(40, min(int(message.get("cols", 120)), 300))
+                rows = max(10, min(int(message.get("rows", 32)), 120))
+                channel.resize_pty(width=cols, height=rows)
+            elif kind == "close":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Remote terminal session failed")
+    finally:
+        pump.cancel()
+        try:
+            channel.close()
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        _audit_remote("terminal-disconnect", "active SSH target", "succeeded", started)
 
 
 def _static_response():
