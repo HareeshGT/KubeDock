@@ -153,3 +153,37 @@ def test_docker_resource_removal_rejects_unsupported_kind():
     with pytest.raises(HTTPException) as denied:
         server.remote_docker_resource_remove({"kind": "compose", "identifier": "prod"})
     assert denied.value.status_code == 400
+
+
+def test_process_termination_rejects_mismatched_pid_confirmation(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: pytest.fail("must not execute"))
+    with pytest.raises(HTTPException) as denied:
+        server.remote_terminate_process(server.ProcessTerminateRequest(pid=321, confirm_pid=123))
+    assert denied.value.status_code == 409
+
+
+def test_service_action_requires_exact_confirmation(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: pytest.fail("must not execute"))
+    with pytest.raises(HTTPException) as denied:
+        server.remote_service_action(server.ServiceActionRequest(name="nginx", action="restart", confirm_target="start service/nginx"))
+    assert denied.value.status_code == 409
+
+
+def test_power_action_requires_hostname_and_phrase(monkeypatch):
+    monkeypatch.setattr(server, "_remote_os_family", lambda: "linux")
+    calls = []
+    monkeypatch.setattr(server, "_run_remote", lambda command, timeout=20: (calls.append(command) or 0, "prod-node\n", ""))
+    with pytest.raises(HTTPException) as denied:
+        server.remote_power_action(server.PowerActionRequest(action="reboot", confirm_target="prod-node", confirm_phrase="REBOOT wrong-node"))
+    assert denied.value.status_code == 409
+    assert calls == ["hostname"]
+
+
+def test_service_action_runs_only_allowlisted_verb(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_remote_os_family", lambda: "linux")
+    monkeypatch.setattr(server, "_run_remote", lambda command, timeout=20: (calls.append(command) or 0, "ok", ""))
+    monkeypatch.setattr(server, "_audit_remote", lambda *_args, **_kwargs: None)
+    result = server.remote_service_action(server.ServiceActionRequest(name="nginx", action="restart", confirm_target="restart service/nginx"))
+    assert result["ok"] is True
+    assert calls == ["systemctl restart nginx"]

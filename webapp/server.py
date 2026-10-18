@@ -32,7 +32,7 @@ from typing import Callable, Optional
 import paramiko
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from pydantic import BaseModel
 
@@ -186,6 +186,7 @@ def _new_session(username: str) -> tuple[str, int]:
         for old_token, (_user, expiry) in list(_WEB_SESSIONS.items()):
             if expiry <= now:
                 _WEB_SESSIONS.pop(old_token, None)
+                _SESSION_CONTEXTS.pop(old_token, None)
         _WEB_SESSIONS[token] = (username, expires)
     return token, _SESSION_TTL_SECONDS
 
@@ -601,7 +602,12 @@ async def trace_requests(request: Request, call_next):
     request_id = secrets.token_hex(4)
     request_token = _REQUEST_ID.set(request_id)
     cookie_token = request.cookies.get(_SESSION_COOKIE, "")
-    context_token = _KUBE_CONTEXT.set(_SESSION_CONTEXTS.get(cookie_token, ""))
+    with _SESSION_LOCK:
+        session = _WEB_SESSIONS.get(cookie_token)
+        authenticated_user = session[0] if session and session[1] > perf_counter() else "-"
+        session_context = _SESSION_CONTEXTS.get(cookie_token, "")
+    auth_token = _AUTH_USER.set(authenticated_user)
+    context_token = _KUBE_CONTEXT.set(session_context)
     started = perf_counter()
     query = request.url.query
     target = request.url.path + (f"?{query}" if query else "")
@@ -617,6 +623,14 @@ async def trace_requests(request: Request, call_next):
     )
 
     try:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("origin", "")
+            if origin:
+                from urllib.parse import urlsplit
+                parsed_origin = urlsplit(origin)
+                host = request.headers.get("host", "")
+                if parsed_origin.netloc.lower() != host.lower() or parsed_origin.scheme != request.url.scheme:
+                    return JSONResponse(status_code=403, content={"detail": "Cross-origin state-changing requests are not allowed"})
         response = await call_next(request)
         duration_ms = (perf_counter() - started) * 1000
         username = getattr(request.state, "auth_user", "-")
@@ -645,6 +659,7 @@ async def trace_requests(request: Request, call_next):
         raise
     finally:
         _KUBE_CONTEXT.reset(context_token)
+        _AUTH_USER.reset(auth_token)
         _REQUEST_ID.reset(request_token)
 
 
@@ -1325,6 +1340,17 @@ def _remote_os_family() -> str:
     return "unknown"
 
 
+@app.get("/api/remote/system/identity")
+def remote_system_identity(_: None = Depends(require_login)) -> dict:
+    family = _remote_os_family()
+    command = 'powershell -NoProfile -Command "hostname"' if family == "windows" else "hostname"
+    code, output, error = _run_remote(command, timeout=8)
+    hostname = output.strip().splitlines()[0] if code == 0 and output.strip() else ""
+    if not hostname:
+        raise HTTPException(502, (error or "Unable to identify the remote machine").strip()[:500])
+    return {"hostname": hostname, "os": family, "target": "active KubeDock SSH machine"}
+
+
 @app.get("/api/remote/system/{kind}")
 def remote_system_inspection(kind: str, _: None = Depends(require_login)) -> dict:
     family = _remote_os_family()
@@ -1785,6 +1811,102 @@ def delete_kube_resource(
 
 
 
+
+class ProcessTerminateRequest(BaseModel):
+    pid: int
+    confirm_pid: int
+
+
+class ServiceActionRequest(BaseModel):
+    name: str
+    action: str
+    confirm_target: str
+
+
+class PowerActionRequest(BaseModel):
+    action: str
+    confirm_target: str
+    confirm_phrase: str
+
+
+@app.post("/api/remote/system/process/terminate")
+def remote_terminate_process(body: ProcessTerminateRequest, _: None = Depends(require_login)) -> dict:
+    if body.pid <= 1 or body.pid != body.confirm_pid:
+        raise HTTPException(409, "Confirm the exact process ID; PID 1 and system root processes are not allowed")
+    family = _remote_os_family()
+    if family in {"linux", "macos"}:
+        command = f"kill -TERM {body.pid}"
+    elif family == "windows":
+        command = f'powershell -NoProfile -Command "Stop-Process -Id {body.pid} -ErrorAction Stop"'
+    else:
+        raise HTTPException(501, "Process termination is unsupported for this remote OS")
+    started = perf_counter()
+    code, output, error = _run_remote(command, timeout=15)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("terminate-process", f"pid/{body.pid}", status, started, None if code == 0 else 502)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Process termination failed")
+    return {"ok": True, "pid": body.pid, "output": output.strip()}
+
+
+@app.post("/api/remote/system/service")
+def remote_service_action(body: ServiceActionRequest, _: None = Depends(require_login)) -> dict:
+    name = str(body.name or "").strip()
+    action = str(body.action or "").strip().lower()
+    if action not in {"start", "stop", "restart"}:
+        raise HTTPException(400, "Unsupported service action")
+    if not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", name):
+        raise HTTPException(400, "Invalid service name")
+    target = f"{action} service/{name}"
+    if body.confirm_target != target:
+        raise HTTPException(409, "Confirm the exact service action and name")
+    family = _remote_os_family()
+    if family == "linux":
+        command = f"systemctl {action} {shlex.quote(name)}"
+    elif family == "windows":
+        verb = {"start": "Start-Service", "stop": "Stop-Service", "restart": "Restart-Service"}[action]
+        command = f'powershell -NoProfile -Command "{verb} -Name \\'{name}\\' -ErrorAction Stop"'
+    else:
+        raise HTTPException(501, "Service start/stop/restart is supported only on Linux and Windows targets")
+    started = perf_counter()
+    code, output, error = _run_remote(command, timeout=30)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("service-" + action, name, status, started, None if code == 0 else 502)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Service action failed")
+    return {"ok": True, "action": action, "service": name, "output": output.strip()}
+
+
+@app.post("/api/remote/system/power")
+def remote_power_action(body: PowerActionRequest, _: None = Depends(require_login)) -> dict:
+    action = str(body.action or "").strip().lower()
+    if action not in {"reboot", "shutdown"}:
+        raise HTTPException(400, "Action must be reboot or shutdown")
+    family = _remote_os_family()
+    hostname_command = 'powershell -NoProfile -Command "hostname"' if family == "windows" else "hostname"
+    host_code, hostname_out, host_error = _run_remote(hostname_command, timeout=8)
+    hostname = hostname_out.strip().splitlines()[0] if host_code == 0 and hostname_out.strip() else ""
+    if not hostname:
+        raise HTTPException(502, (host_error or "Unable to identify the remote hostname").strip()[:500])
+    expected_phrase = f"{action.upper()} {hostname}"
+    if body.confirm_target != hostname or body.confirm_phrase != expected_phrase:
+        raise HTTPException(409, f"Confirm target hostname and type exactly: {expected_phrase}")
+    if family == "windows":
+        command = "shutdown /r /t 60 /c \"Requested through KubeDock Web\"" if action == "reboot" else "shutdown /s /t 60 /c \"Requested through KubeDock Web\""
+    elif family in {"linux", "macos"}:
+        command = "shutdown -r +1" if action == "reboot" else "shutdown -h +1"
+    else:
+        raise HTTPException(501, "Power management is unsupported for this remote OS")
+    started = perf_counter()
+    code, output, error = _run_remote(command, timeout=15)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("system-" + action, hostname, status, started, None if code == 0 else 502)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Power action failed; the SSH account may lack required privileges")
+    return {"ok": True, "action": action, "hostname": hostname, "output": output.strip(), "scheduled_delay_seconds": 60}
+
+
+
 def _static_response():
     static_file = APP_DIR / "static" / "index.html"
     if static_file.exists():
@@ -1990,6 +2112,7 @@ def stop_server(timeout: float = 3.0) -> None:
     # inside the same desktop process rather than via a full app shutdown.
     with _SESSION_LOCK:
         _WEB_SESSIONS.clear()
+        _SESSION_CONTEXTS.clear()
 
     if server is not None:
         logger.info("Stopping KubeDock Web server")
