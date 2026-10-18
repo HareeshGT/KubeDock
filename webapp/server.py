@@ -1841,7 +1841,7 @@ def remote_terminate_process(body: ProcessTerminateRequest, _: None = Depends(re
     if family in {"linux", "macos"}:
         command = f"kill -TERM {body.pid}"
     elif family == "windows":
-        command = f'powershell -NoProfile -Command "Stop-Process -Id {body.pid} -ErrorAction Stop"'
+        command = f"powershell -NoProfile -Command \"{verb} -Name '{name}' -ErrorAction Stop\""
     else:
         raise HTTPException(501, "Process termination is unsupported for this remote OS")
     started = perf_counter()
