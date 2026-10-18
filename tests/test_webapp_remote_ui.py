@@ -24,5 +24,8 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/remote/files",
         "/api/remote/docker/",
         "/api/operations",
+        "/api/app/status",
+        "/api/app/settings",
+        "/api/app/tunnels/start",
     ):
         assert route in INDEX_HTML

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 import hashlib
 import ipaddress
 import json
@@ -32,9 +33,10 @@ import paramiko
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
+from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from pydantic import BaseModel
 
-from themes import load_settings, save_settings
+from themes import THEMES, apply_qss_to, apply_theme_vars, load_settings, save_settings
 from webapp.otp_auth import OTPConfigurationError, check_totp, get_or_create_secret
 from webapp.operation_audit import list_operations, record_operation
 try:
@@ -62,6 +64,8 @@ _REQUEST_ID: ContextVar[str] = ContextVar("kubedeck_web_request_id", default="-"
 _AUTH_USER: ContextVar[str] = ContextVar("kubedeck_web_auth_user", default="-")
 _KUBE_CONTEXT: ContextVar[str] = ContextVar("kubedock_web_kube_context", default="")
 _SESSION_CONTEXTS: dict[str, str] = {}
+_APP_PROVIDER: Optional[Callable[[], object]] = None
+_DESKTOP_BRIDGE = None
 _MAC_CACHE: dict[str, tuple[float, str]] = {}
 _MAC_CACHE_LOCK = threading.RLock()
 _MAC_CACHE_TTL = 300.0
@@ -76,10 +80,54 @@ def _validate_k8s_name(value: str, field: str) -> str:
 
 
 
-def configure_runtime(ssh_provider: Callable[[], Optional[paramiko.SSHClient]]) -> None:
-    global _SSH_PROVIDER
+class _DesktopBridge(QObject):
+    requested = pyqtSignal(object, object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.requested.connect(self._dispatch, Qt.QueuedConnection)
+
+    @pyqtSlot(object, object)
+    def _dispatch(self, callback, future):
+        if future.cancelled():
+            return
+        try:
+            future.set_result(callback())
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    def invoke(self, callback, timeout: float = 5.0):
+        if QThread.currentThread() == self.thread():
+            return callback()
+        future = Future()
+        self.requested.emit(callback, future)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise HTTPException(504, "Desktop operation timed out") from exc
+
+
+def configure_runtime(
+    ssh_provider: Callable[[], Optional[paramiko.SSHClient]],
+    app_provider: Optional[Callable[[], object]] = None,
+) -> None:
+    global _SSH_PROVIDER, _APP_PROVIDER, _DESKTOP_BRIDGE
     with _RUNTIME_LOCK:
         _SSH_PROVIDER = ssh_provider
+        _APP_PROVIDER = app_provider
+        if app_provider is not None:
+            try:
+                window = app_provider()
+                if window is not None and (
+                    _DESKTOP_BRIDGE is None or _DESKTOP_BRIDGE.parent() is not window
+                ):
+                    _DESKTOP_BRIDGE = _DesktopBridge(parent=window)
+            except Exception:
+                logger.exception("Unable to attach desktop control bridge")
+                _DESKTOP_BRIDGE = None
+        else:
+            _DESKTOP_BRIDGE = None
     logger.info("Web runtime attached to KubeDock SSH provider")
 
 
@@ -1365,6 +1413,223 @@ async def remote_terminal(websocket: WebSocket) -> None:
         _audit_remote("terminal-disconnect", "active SSH target", "succeeded", started)
 
 
+
+def _desktop_call(callback, timeout: float = 5.0):
+    with _RUNTIME_LOCK:
+        provider = _APP_PROVIDER
+        bridge = _DESKTOP_BRIDGE
+    if provider is None or bridge is None:
+        raise HTTPException(503, "Desktop control bridge is not attached")
+    try:
+        window = provider()
+    except Exception as exc:
+        logger.exception("Desktop provider failed")
+        raise HTTPException(503, "KubeDock desktop process is unavailable") from exc
+    if window is None:
+        raise HTTPException(503, "KubeDock desktop process is unavailable")
+    return bridge.invoke(lambda: callback(window), timeout=timeout)
+
+
+class AppSettingsUpdate(BaseModel):
+    theme: Optional[str] = None
+    tunnel_csv_path: Optional[str] = None
+
+
+@app.get("/api/app/settings")
+def desktop_settings(_: None = Depends(require_login)) -> dict:
+    def inspect(_window):
+        settings = load_settings() or {}
+        return {
+            "theme": settings.get("theme", "App Default"),
+            "available_themes": sorted(THEMES.keys()),
+            "tunnel_csv_path": settings.get("tunnel_csv_path", ""),
+        }
+    return _desktop_call(inspect)
+
+
+@app.put("/api/app/settings")
+def update_desktop_settings(body: AppSettingsUpdate, _: None = Depends(require_login)) -> dict:
+    if body.theme is None and body.tunnel_csv_path is None:
+        raise HTTPException(400, "Provide at least one supported setting")
+    updates = {}
+    if body.theme is not None:
+        if body.theme not in THEMES:
+            raise HTTPException(400, "Unknown theme")
+        def apply_theme(window):
+            apply_theme_vars(body.theme)
+            apply_qss_to(window)
+            save_settings(theme=body.theme)
+            return body.theme
+        updates["theme"] = _desktop_call(apply_theme)
+    if body.tunnel_csv_path is not None:
+        path = _safe_remote_path(body.tunnel_csv_path)
+        def apply_tunnel_path(window):
+            save_settings(tunnel_csv_path=path)
+            tab = getattr(window, "k8s_tab", None)
+            if tab is not None:
+                tab._tunnel_csv_path = path
+                reload_services = getattr(tab, "_load_tunnel_csv", None)
+                if callable(reload_services) and getattr(window, "ssh", None):
+                    reload_services()
+            return path
+        updates["tunnel_csv_path"] = _desktop_call(apply_tunnel_path)
+    _audit_remote("update-desktop-settings", ",".join(sorted(updates)), "succeeded", perf_counter())
+    return {"ok": True, "updated": updates}
+
+
+class TunnelStartRequest(BaseModel):
+    service_names: list[str]
+
+
+class TunnelStopRequest(BaseModel):
+    confirm_stop: bool = False
+
+
+@app.get("/api/app/tunnels")
+def desktop_tunnels(_: None = Depends(require_login)) -> dict:
+    def inspect(window):
+        tab = getattr(window, "k8s_tab", None)
+        if tab is None:
+            raise HTTPException(503, "Kubernetes tab is unavailable")
+        services = getattr(tab, "_tunnel_services", []) or []
+        process = getattr(tab, "_tunnel_process", None)
+        running = False
+        if process is not None:
+            try:
+                running = int(process.state()) != 0
+            except Exception:
+                running = False
+        forwarded = set(getattr(tab, "_tunnel_forwarded_ports", set()) or set())
+        safe_services = []
+        for service in services:
+            safe_services.append({
+                "name": str(service.get("name", "")),
+                "namespace": str(service.get("namespace", "")),
+                "port": service.get("port"),
+                "forwarded": service.get("port") in forwarded,
+            })
+        return {"services": safe_services, "running": running, "target": str(getattr(window, "host_label", "") or "")}
+    return _desktop_call(inspect)
+
+
+@app.post("/api/app/tunnels/start")
+def desktop_tunnel_start(body: TunnelStartRequest, _: None = Depends(require_login)) -> dict:
+    names = [str(name).strip() for name in body.service_names]
+    if not names or len(names) > 20 or any(not name or len(name) > 253 for name in names):
+        raise HTTPException(400, "Select between 1 and 20 configured tunnel services")
+    if len(set(names)) != len(names):
+        raise HTTPException(400, "Duplicate tunnel service names are not allowed")
+    started = perf_counter()
+    def start(window):
+        tab = getattr(window, "k8s_tab", None)
+        if tab is None or getattr(window, "ssh", None) is None:
+            raise HTTPException(503, "Connect to an SSH machine in KubeDock first")
+        services = getattr(tab, "_tunnel_services", []) or []
+        by_name = {str(service.get("name", "")): service for service in services}
+        missing = [name for name in names if name not in by_name]
+        if missing:
+            raise HTTPException(404, "Unknown tunnel service(s): " + ", ".join(missing))
+        method = getattr(tab, "_start_tunnel_services", None)
+        if not callable(method):
+            raise HTTPException(501, "This KubeDock version does not expose reusable tunnel controls")
+        result = method([by_name[name] for name in names])
+        if not result.get("ok"):
+            raise HTTPException(409 if result.get("already_running") else 400, result.get("error", "Tunnel start failed"))
+        return result
+    result = _desktop_call(start, timeout=8.0)
+    _audit_remote("start-local-ssh-tunnel", ",".join(names), "succeeded", started)
+    return result
+
+
+@app.post("/api/app/tunnels/stop")
+def desktop_tunnel_stop(body: TunnelStopRequest, _: None = Depends(require_login)) -> dict:
+    if body.confirm_stop is not True:
+        raise HTTPException(409, "Explicit confirmation is required to stop the active tunnel")
+    started = perf_counter()
+    def stop(window):
+        tab = getattr(window, "k8s_tab", None)
+        if tab is None:
+            raise HTTPException(503, "Kubernetes tab is unavailable")
+        method = getattr(tab, "_stop_tunnel", None)
+        if not callable(method):
+            raise HTTPException(501, "This KubeDock version does not expose tunnel controls")
+        method()
+        return {"ok": True, "stopped": True}
+    result = _desktop_call(stop, timeout=8.0)
+    _audit_remote("stop-local-ssh-tunnel", "active tunnel", "succeeded", started)
+    return result
+
+
+@app.get("/api/app/status")
+def desktop_status(_: None = Depends(require_login)) -> dict:
+    def inspect(window):
+        ssh = getattr(window, "ssh", None)
+        connected = False
+        if ssh is not None:
+            try:
+                transport = ssh.get_transport()
+                connected = bool(transport and transport.is_active())
+            except Exception:
+                connected = False
+        tunnel_process = getattr(getattr(window, "k8s_tab", None), "_tunnel_process", None)
+        tunnel_running = False
+        if tunnel_process is not None:
+            try:
+                tunnel_running = int(tunnel_process.state()) != 0
+            except Exception:
+                tunnel_running = False
+        return {
+            "application": "KubeDock",
+            "desktop_process": "running",
+            "connected": connected,
+            "machine": str(getattr(window, "host_label", "") or "") or None,
+            "host": getattr(window, "_conn_host", None),
+            "port": getattr(window, "_conn_port", None),
+            "protocol": getattr(window, "_conn_protocol", None),
+            "tunnel_running": tunnel_running,
+            "scope": "desktop-process",
+        }
+    return _desktop_call(inspect)
+
+
+@app.post("/api/app/refresh")
+def desktop_refresh(_: None = Depends(require_login)) -> dict:
+    started = perf_counter()
+    def refresh(window):
+        dashboard = getattr(window, "dashboard_tab", None)
+        refresh_dashboard = getattr(dashboard, "_refresh", None)
+        if callable(refresh_dashboard):
+            refresh_dashboard(background=True)
+        k8s_tab = getattr(window, "k8s_tab", None)
+        reload_tunnels = getattr(k8s_tab, "_load_tunnel_csv", None)
+        if callable(reload_tunnels) and getattr(window, "ssh", None):
+            reload_tunnels()
+        refresh_tunnels = getattr(k8s_tab, "_refresh_tunnel_status", None)
+        if callable(refresh_tunnels) and getattr(window, "ssh", None):
+            refresh_tunnels()
+        return {"ok": True, "refreshed": ["dashboard", "tunnel-status"]}
+    result = _desktop_call(refresh)
+    _audit_remote("desktop-refresh", "KubeDock desktop process", "succeeded", started)
+    return result
+
+
+@app.post("/api/app/disconnect")
+def desktop_disconnect(body: dict, _: None = Depends(require_login)) -> dict:
+    current_target = _desktop_call(lambda window: str(getattr(window, "host_label", "") or ""))
+    if not current_target or body.get("confirm_target") != current_target:
+        raise HTTPException(409, "Confirm the exact active machine label before disconnecting")
+    started = perf_counter()
+    def disconnect(window):
+        method = getattr(window, "_disconnect", None)
+        if not callable(method):
+            raise HTTPException(501, "This desktop version does not expose a disconnect operation")
+        method("Disconnected remotely through KubeDock Web")
+        return {"ok": True, "disconnected": current_target}
+    result = _desktop_call(disconnect)
+    _audit_remote("desktop-disconnect", current_target, "succeeded", started)
+    return result
+
+
 def _static_response():
     static_file = APP_DIR / "static" / "index.html"
     if static_file.exists():
@@ -1486,6 +1751,7 @@ def start_server(
     ssh_provider: Callable[[], Optional[paramiko.SSHClient]],
     host: Optional[str] = None,
     port: Optional[int] = None,
+    app_provider: Optional[Callable[[], object]] = None,
 ) -> bool:
     global _server, _server_thread, _server_port, _server_host
     # Bind to loopback unless TLS is configured (then all interfaces, so a
@@ -1502,7 +1768,7 @@ def start_server(
     except ValueError:
         preferred_port = 8000
 
-    configure_runtime(ssh_provider)
+    configure_runtime(ssh_provider, app_provider=app_provider)
 
     with _SERVER_LOCK:
         if _server_thread is not None and _server_thread.is_alive():
