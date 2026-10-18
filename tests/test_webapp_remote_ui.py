@@ -38,5 +38,6 @@ def test_remote_ui_uses_authenticated_backend_routes():
         "/api/remote/system/process/terminate",
         "/api/remote/system/service",
         "/api/remote/system/power",
+        "/api/remote/system/identity",
     ):
         assert route in INDEX_HTML

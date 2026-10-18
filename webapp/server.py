@@ -371,9 +371,10 @@ def _exec(
             )
         return code, out, err
 
+    logged_command = "<redacted sensitive command>" if sensitive_output else command
     logger.info(
         "[req=%s] KUBECTL START user=%r: %s",
-        request_id, _AUTH_USER.get(), command
+        request_id, _AUTH_USER.get(), logged_command
     )
     try:
         if managed_exec_command is None:
@@ -402,7 +403,7 @@ def _exec(
     except Exception:
         logger.exception(
             "[req=%s] KUBECTL EXCEPTION user=%r: %s (%.1f ms)",
-            request_id, _AUTH_USER.get(), command,
+            request_id, _AUTH_USER.get(), logged_command,
             (perf_counter() - started) * 1000
         )
         raise
@@ -934,9 +935,9 @@ def _audit_remote(action: str, target: str, status: str, started: float, error_c
         logger.exception("Unable to persist remote operation audit record")
 
 
-def _run_remote(command: str, timeout: int = 20) -> tuple[int, str, str]:
+def _run_remote(command: str, timeout: int = 20, sensitive: bool = False) -> tuple[int, str, str]:
     try:
-        return _exec(_ssh(), command, timeout=timeout)
+        return _exec(_ssh(), command, timeout=timeout, sensitive_output=sensitive)
     except TimeoutError as exc:
         raise HTTPException(504, "Remote command timed out") from exc
 
@@ -1286,6 +1287,68 @@ def remote_file_mkdir(body: dict, _: None = Depends(require_login)) -> dict:
         sftp.close()
 
 
+@app.post("/api/remote/files/create")
+def remote_file_create(body: dict, _: None = Depends(require_login)) -> dict:
+    path = _safe_remote_path(body.get("path", ""))
+    content = body.get("content", "")
+    if path == "/" or not isinstance(content, str) or len(content.encode("utf-8")) > 1_000_000:
+        raise HTTPException(400, "Provide a non-root path and UTF-8 content up to 1 MB")
+    started = perf_counter()
+    sftp = _sftp()
+    try:
+        try:
+            sftp.lstat(path)
+            raise HTTPException(409, "Destination already exists; use the editor to overwrite it explicitly")
+        except FileNotFoundError:
+            pass
+        with sftp.open(path, "x") as handle:
+            handle.write(content.encode("utf-8"))
+        _audit_remote("create-file", path, "succeeded", started)
+        return {"ok": True, "path": path, "bytes_written": len(content.encode("utf-8"))}
+    except HTTPException as exc:
+        _audit_remote("create-file", path, "failed", started, exc.status_code)
+        raise
+    except OSError as exc:
+        _audit_remote("create-file", path, "failed", started, 500)
+        raise HTTPException(403, "Unable to create file at this path") from exc
+    finally:
+        sftp.close()
+
+
+@app.post("/api/remote/files/move")
+def remote_file_move(body: dict, _: None = Depends(require_login)) -> dict:
+    source = _safe_remote_path(body.get("source", ""))
+    destination = _safe_remote_path(body.get("destination", ""))
+    if source == "/" or destination == "/" or source == destination:
+        raise HTTPException(400, "Source and destination must be different non-root paths")
+    if body.get("confirm_source") != source or body.get("confirm_destination") != destination:
+        raise HTTPException(409, "Confirm the exact source and destination paths")
+    started = perf_counter()
+    sftp = _sftp()
+    try:
+        sftp.lstat(source)
+        parent = posixpath.dirname(destination)
+        parent_attrs = sftp.lstat(parent)
+        if stat.S_ISLNK(parent_attrs.st_mode) or not stat.S_ISDIR(parent_attrs.st_mode):
+            raise HTTPException(400, "Destination parent must be a real directory")
+        try:
+            sftp.lstat(destination)
+            raise HTTPException(409, "Destination already exists; refusing to overwrite it")
+        except FileNotFoundError:
+            pass
+        sftp.rename(source, destination)
+        _audit_remote("move-file", source + " -> " + destination, "succeeded", started)
+        return {"ok": True, "source": source, "destination": destination}
+    except HTTPException as exc:
+        _audit_remote("move-file", source + " -> " + destination, "failed", started, exc.status_code)
+        raise
+    except OSError as exc:
+        _audit_remote("move-file", source + " -> " + destination, "failed", started, 500)
+        raise HTTPException(400, "Unable to move path; check permissions and destination") from exc
+    finally:
+        sftp.close()
+
+
 @app.post("/api/remote/files/delete")
 def remote_file_delete(body: dict, _: None = Depends(require_login)) -> dict:
     path = _safe_remote_path(body.get("path", ""))
@@ -1333,6 +1396,136 @@ def remote_docker_resource_remove(body: dict, _: None = Depends(require_login)) 
     if code != 0:
         raise HTTPException(502, (error or output).strip()[:1000] or "Docker resource removal failed")
     return {"ok": True, "target": target, "output": output.strip()}
+
+
+class DockerCreateRequest(BaseModel):
+    image: str
+    name: Optional[str] = None
+    ports: Optional[list[str]] = None
+    environment: Optional[dict[str, str]] = None
+
+
+@app.post("/api/remote/docker/containers/create")
+def remote_docker_create(body: DockerCreateRequest, _: None = Depends(require_login)) -> dict:
+    image = str(body.image or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}", image):
+        raise HTTPException(400, "Invalid Docker image reference")
+    name = str(body.name or "").strip()
+    if name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+        raise HTTPException(400, "Invalid Docker container name")
+    ports = list(body.ports or [])
+    if len(ports) > 50:
+        raise HTTPException(400, "At most 50 port mappings are supported")
+    for mapping in ports:
+        match = re.fullmatch(r"([0-9]{1,5}):([0-9]{1,5})", str(mapping))
+        if not match or not all(1 <= int(part) <= 65535 for part in match.groups()):
+            raise HTTPException(400, "Port mappings must use local:container numeric ports")
+    environment = dict(body.environment or {})
+    if len(environment) > 100:
+        raise HTTPException(400, "At most 100 environment variables are supported")
+    for key, value in environment.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", str(key)):
+            raise HTTPException(400, "Invalid environment variable name")
+        if not isinstance(value, str) or len(value) > 4096 or "\x00" in value:
+            raise HTTPException(400, "Environment variable values must be strings up to 4096 characters")
+    args = ["docker", "create"]
+    if name:
+        args += ["--name", name]
+    for mapping in ports:
+        args += ["-p", mapping]
+    for key, value in environment.items():
+        args += ["-e", key + "=" + value]
+    args.append(image)
+    command = " ".join(shlex.quote(arg) for arg in args)
+    started = perf_counter()
+    code, output, error = _run_remote(command, timeout=45, sensitive=bool(environment))
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("docker-create-container", name or image, status, started, None if code == 0 else 502)
+    if code != 0:
+        detail = "Docker container creation failed; environment values were suppressed." if environment else (error or output).strip()[:1000]
+        raise HTTPException(502, detail or "Docker container creation failed")
+    return {"ok": True, "name": name or None, "image": image, "container_id": output.strip().splitlines()[0] if output.strip() else None}
+
+
+@app.get("/api/remote/docker/stats")
+def remote_docker_stats(_: None = Depends(require_login)) -> dict:
+    code, output, error = _run_remote("docker stats --no-stream --format '{{json .}}' 2>&1", timeout=25)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Unable to read Docker stats")
+    items = []
+    for line in output.splitlines():
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return {"target": "active KubeDock SSH machine", "items": items}
+
+
+@app.get("/api/remote/docker/containers/{identifier}/inspect")
+def remote_docker_inspect(identifier: str, _: None = Depends(require_login)) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", identifier):
+        raise HTTPException(400, "Invalid container identifier")
+    code, output, error = _run_remote("docker inspect " + shlex.quote(identifier) + " 2>&1", timeout=20)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Unable to inspect container")
+    try:
+        result = json.loads(output)
+        container = result[0] if isinstance(result, list) and result else result
+    except (json.JSONDecodeError, IndexError) as exc:
+        raise HTTPException(502, "Docker returned invalid inspect JSON") from exc
+    config = container.get("Config") or {}
+    env = config.get("Env") or []
+    safe_env = []
+    for entry in env:
+        key, sep, value = str(entry).partition("=")
+        if re.search(r"(?i)(pass(word)?|token|secret|credential|auth|private|api[_-]?key|access[_-]?key)", key):
+            value = "<redacted>"
+        safe_env.append(key + (sep + value if sep else ""))
+    if "Env" in config:
+        config["Env"] = safe_env
+    container["Config"] = config
+    return {"container": container, "secrets_redacted": True}
+
+
+@app.post("/api/remote/docker/compose/action")
+def remote_docker_compose_action(body: dict, _: None = Depends(require_login)) -> dict:
+    project = str(body.get("project", "")).strip()
+    action = str(body.get("action", "")).strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", project):
+        raise HTTPException(400, "Invalid Compose project name")
+    if action not in {"start", "stop", "restart", "up", "down"}:
+        raise HTTPException(400, "Unsupported Compose action")
+    if action == "down" and body.get("confirm_target") != project:
+        raise HTTPException(409, "Confirm the exact Compose project before bringing it down")
+    code, output, error = _run_remote("docker compose ls --format json 2>&1", timeout=20)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Unable to list Compose projects")
+    try:
+        projects = json.loads(output or "[]")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(502, "Docker Compose returned invalid JSON") from exc
+    match = next((item for item in projects if str(item.get("Name") or item.get("Project") or "") == project), None)
+    if not match:
+        raise HTTPException(404, "Compose project was not found")
+    config_files = match.get("ConfigFiles") or match.get("ConfigFile")
+    if isinstance(config_files, str):
+        config_files = [part.strip() for part in config_files.split(",") if part.strip()]
+    if not isinstance(config_files, list) or not config_files:
+        raise HTTPException(409, "Compose project has no discoverable configuration file; use the desktop app")
+    args = ["docker", "compose", "-p", project]
+    for path in config_files:
+        if not isinstance(path, str) or not path.startswith("/") or "\x00" in path:
+            raise HTTPException(400, "Compose configuration path is invalid")
+        args += ["-f", path]
+    args += ["up", "-d"] if action == "up" else ["down"] if action == "down" else [action]
+    command = " ".join(shlex.quote(arg) for arg in args)
+    started = perf_counter()
+    code, output, error = _run_remote(command, timeout=120)
+    status = "succeeded" if code == 0 else "failed"
+    _audit_remote("docker-compose-" + action, project, status, started, None if code == 0 else 502)
+    if code != 0:
+        raise HTTPException(502, (error or output).strip()[:1000] or "Compose operation failed")
+    return {"ok": True, "project": project, "action": action, "output": output.strip()}
 
 
 @app.get("/api/remote/docker/{kind}")
@@ -1497,6 +1690,9 @@ def remote_system_inspection(kind: str, _: None = Depends(require_login)) -> dic
             "ports": "ss -lntup 2>&1 | head -101",
             "services": "systemctl --no-pager --type=service --state=running 2>&1 | head -101",
             "metrics": "printf 'HOST='; hostname; printf '\\nUPTIME='; uptime; printf '\\nMEMORY='; free -h 2>&1; printf '\\nDISK='; df -h / 2>&1",
+            "network": "ip -brief address 2>&1; ip route 2>&1; ss -s 2>&1",
+            "logs": "journalctl -n 200 --no-pager 2>&1 | head -201",
+            "packages": "if command -v dpkg-query >/dev/null 2>&1; then dpkg-query -W 2>&1 | head -101; elif command -v rpm >/dev/null 2>&1; then rpm -qa 2>&1 | head -101; fi",
         },
         "macos": {
             "processes": "ps -Ao pid,ppid,user,%cpu,%mem,state,comm -r | head -51",
@@ -1504,6 +1700,9 @@ def remote_system_inspection(kind: str, _: None = Depends(require_login)) -> dic
             "ports": "lsof -nP -iTCP -sTCP:LISTEN 2>&1 | head -101",
             "services": "launchctl list 2>&1 | head -101",
             "metrics": "printf 'HOST='; hostname; printf '\\nUPTIME='; uptime; printf '\\nMEMORY='; vm_stat; printf '\\nDISK='; df -h /",
+            "network": "ifconfig 2>&1; netstat -rn 2>&1",
+            "logs": "log show --last 1h --style compact --info 2>&1 | head -201",
+            "packages": "brew list --versions 2>&1 | head -101",
         },
         "windows": {
             "processes": 'powershell -NoProfile -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 50 Id,ProcessName,CPU,WorkingSet64 | Format-Table -AutoSize"',
@@ -1511,6 +1710,9 @@ def remote_system_inspection(kind: str, _: None = Depends(require_login)) -> dic
             "ports": 'powershell -NoProfile -Command "Get-NetTCPConnection -State Listen | Select-Object -First 100 LocalAddress,LocalPort,OwningProcess | Format-Table -AutoSize"',
             "services": 'powershell -NoProfile -Command "Get-Service | Where-Object Status -eq Running | Select-Object -First 100 Name,DisplayName,Status | Format-Table -AutoSize"',
             "metrics": 'powershell -NoProfile -Command "hostname; Get-CimInstance Win32_OperatingSystem | Select-Object Caption,LastBootUpTime,TotalVisibleMemorySize,FreePhysicalMemory; Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free"',
+            "network": 'powershell -NoProfile -Command "Get-NetIPConfiguration; Get-NetRoute | Select-Object -First 50"',
+            "logs": 'powershell -NoProfile -Command "Get-WinEvent -LogName System -MaxEvents 100 | Select-Object TimeCreated,Id,LevelDisplayName,ProviderName,Message | Format-List"',
+            "packages": 'powershell -NoProfile -Command "Get-Package | Select-Object -First 100 Name,Version,ProviderName | Format-Table -AutoSize"',
         },
     }
     commands = commands_by_os.get(family)

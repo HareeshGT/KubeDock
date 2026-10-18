@@ -243,3 +243,39 @@ def test_context_delete_blocks_shared_current_context(monkeypatch):
             _request(token=""),
         )
     assert denied.value.status_code == 409
+
+
+def test_docker_create_rejects_invalid_image_before_execution(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: pytest.fail("invalid image must not execute"))
+    with pytest.raises(HTTPException) as denied:
+        server.remote_docker_create(server.DockerCreateRequest(image="nginx; rm -rf /"))
+    assert denied.value.status_code == 400
+
+
+def test_docker_inspect_redacts_secret_environment_values(monkeypatch):
+    import json
+    payload = [{"Id": "abc", "Config": {"Env": ["APP_MODE=prod", "DB_PASSWORD=do-not-return", "API_TOKEN=also-secret"]}}]
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: (0, json.dumps(payload), ""))
+    result = server.remote_docker_inspect("abc")
+    rendered = str(result)
+    assert "do-not-return" not in rendered
+    assert "also-secret" not in rendered
+    assert "APP_MODE=prod" in rendered
+    assert result["secrets_redacted"] is True
+
+
+def test_compose_down_requires_exact_project_confirmation(monkeypatch):
+    monkeypatch.setattr(server, "_run_remote", lambda *_args, **_kwargs: pytest.fail("unconfirmed compose down must not execute"))
+    with pytest.raises(HTTPException) as denied:
+        server.remote_docker_compose_action({"project": "prod", "action": "down"})
+    assert denied.value.status_code == 409
+
+
+def test_file_create_rejects_root_and_move_rejects_same_path(monkeypatch):
+    monkeypatch.setattr(server, "_sftp", lambda: pytest.fail("invalid paths must not open SFTP"))
+    with pytest.raises(HTTPException) as create:
+        server.remote_file_create({"path": "/", "content": "x"})
+    assert create.value.status_code == 400
+    with pytest.raises(HTTPException) as move:
+        server.remote_file_move({"source": "/tmp/a", "destination": "/tmp/a", "confirm_source": "/tmp/a", "confirm_destination": "/tmp/a"})
+    assert move.value.status_code == 400
