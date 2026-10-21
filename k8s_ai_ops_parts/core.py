@@ -1624,19 +1624,18 @@ def validate_action(data: dict):
       "replicas": replicas,
     }
 
+  logs_previous = False
+  logs_container = ""
   if action == "logs":
     if resource != "pod":
       raise ValueError("Container logs can only be read from a pod.")
     if not namespace:
       raise ValueError("A namespace is required to retrieve pod logs.")
     previous_raw = data.get("previous", False)
-    previous = previous_raw is True or str(previous_raw).strip().lower() in {"true", "yes", "1"}
-    result["previous"] = previous
-    container = str(data.get("container", "") or "").strip()
-    if container:
-      if not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", container, flags=re.IGNORECASE):
-        raise ValueError(f"Invalid container name returned by AI: {container}")
-      result["container"] = container
+    logs_previous = previous_raw is True or str(previous_raw).strip().lower() in {"true", "yes", "1"}
+    logs_container = str(data.get("container", "") or "").strip()
+    if logs_container and not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", logs_container, flags=re.IGNORECASE):
+      raise ValueError(f"Invalid container name returned by AI: {logs_container}")
 
   if action == "restart" and resource not in RESTART_RESOURCES:
     raise ValueError(f"Cannot restart Kubernetes resource type: {resource}")
@@ -1651,6 +1650,10 @@ def validate_action(data: dict):
     "name": name,
     "namespace": namespace,
   }
+  if action == "logs":
+    result["previous"] = logs_previous
+    if logs_container:
+      result["container"] = logs_container
 
   # "get" on a configmap/secret may target one data key
   # (e.g. "get the value of key DB_USER from the sample-env configmap")
