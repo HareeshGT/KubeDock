@@ -65,4 +65,4 @@ A quick review of the merged code found that resource evidence was tail-truncate
 
 ### Voice regression tests
 - Added tests/test_ops_mind_voice.py for voice-state transitions, VAD thresholds, duplicate transcript prevention, TTS sanitization, personality profiles/responses, bounded conversational context, and safe log command construction.
-- Latest CI results are pending for the final conversational-context/log-action updates. Record the exact focused/full-suite counts after that run completes.
+- GitHub Actions validation on Python 3.12: focused voice/security/ops tests **27 passed**; full suite **172 passed, 1 skipped**. Two pre-existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39654258687
