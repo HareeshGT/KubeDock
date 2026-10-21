@@ -427,12 +427,17 @@ class K8sAIOpsVoiceMixin:
         if self._voice_engine == "openai":
             self.voice_hint_lbl.setText(
                 f"{PERSONALITY_CONFIG[key]['label']} · neural OpenAI voice · "
-                "Voice input sends captured audio to Google Web Speech; KubeDock does not save raw recordings."
+                "OpenAI API usage may incur charges."
+            )
+        elif self._voice_engine == "qwen":
+            self.voice_hint_lbl.setText(
+                f"{PERSONALITY_CONFIG[key]['label']} · Qwen3-TTS local voice · "
+                "Speech is generated on this device after model download."
             )
         else:
             self.voice_hint_lbl.setText(
                 f"{PERSONALITY_CONFIG[key]['label']} · local system voice · "
-                "Voice input sends captured audio to Google Web Speech; KubeDock does not save raw recordings."
+                "Speech synthesis runs locally."
             )
 
     def _on_voice_combo_changed(self, index: int):
@@ -459,7 +464,7 @@ class K8sAIOpsVoiceMixin:
         if self._narrator is not None:
             self._narrator.stop()
             self._narrator = None
-        if self._voice_engine == "openai":
+        if self._voice_engine in {"openai", "qwen"}:
             self._stop_neural_voice(clear_queue=True)
 
     def _on_voice_volume_changed(self, volume: int):
@@ -500,10 +505,17 @@ class K8sAIOpsVoiceMixin:
         return int(base * factor)
 
     def _speak(self, text: str, force: bool = False):
-        """Speak concise text using the selected neural or offline engine."""
+        """Speak concise text using Qwen local, OpenAI neural, or offline system TTS."""
         if not self._voice_feedback_enabled and not force:
             return
         styled_text = text if force else personalize_spoken_phrase(text, self._personality)
+        if self._voice_engine == "qwen":
+            if not self._qwen_tts_failed:
+                self._neural_speech_queue.append(styled_text)
+                self._process_neural_speech_queue()
+            else:
+                self._speak_system(styled_text)
+            return
         if self._voice_engine == "openai" and not self._neural_tts_failed:
             if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
                 self._on_neural_tts_error("Neural voice dependencies are unavailable.")
@@ -545,6 +557,8 @@ class K8sAIOpsVoiceMixin:
         self._stop_neural_voice(clear_queue=True)
         if self._voice_engine == "openai":
             self._neural_tts_failed = False
+        elif self._voice_engine == "qwen":
+            self._qwen_tts_failed = False
         preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
         self._speak(preview, force=True)
     def _on_narration_phrase_finished(self):
