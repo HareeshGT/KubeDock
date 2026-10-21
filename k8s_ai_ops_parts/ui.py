@@ -83,6 +83,7 @@ class K8sAIOpsUIMixin:
         self._voice_conversation = []
         self._last_submitted_request = ""
         self._voice_error_occurred = False
+        self._voice_preview_pending = False
         self._continuous_restart_pending = False
         self._restart_voice_timer = QTimer(self)
         self._restart_voice_timer.setSingleShot(True)
