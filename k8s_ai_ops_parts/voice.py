@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QComboBox,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
 from .ui import _QT_MULTIMEDIA_AVAILABLE, QMediaContent
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QGraphicsBlurEffect
