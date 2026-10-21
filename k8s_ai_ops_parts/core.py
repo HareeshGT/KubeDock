@@ -1753,11 +1753,10 @@ class _Qwen3TTSWorker(QThread):
           self.audio_ready.emit(audio, job_id)
       except Exception as exc:
         if not self._shutdown.is_set():
-          safe = re.sub(r"\\s+", " ", str(exc)).strip()[:700]
+          safe = re.sub(r"\s+", " ", str(exc)).strip()[:700]
           self.error.emit(safe or "Qwen3-TTS local synthesis failed.", job_id)
-    self._model = None
-    self._model_id = ""
-    gc.collect()
+    self._release_loaded_model()
+
 
 class _OpenAINeuralTTSWorker(QThread):
   """Generate expressive speech using OpenAI's dedicated text-to-speech API.
