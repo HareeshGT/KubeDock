@@ -151,7 +151,7 @@ class K8sAIOpsOperationsMixin:
             self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
             if followup.get('clarify'):
                 self._write_info('\n' + followup['clarify'])
-                self._speak(action.get('reason') or 'I need more information to do that.')
+                self._speak(followup.get('clarify') or 'I need more information to do that.')
                 self.request_input.setFocus()
                 return
             self._write_info('\n' + followup['note'])
