@@ -1247,6 +1247,7 @@ class K8sGoogleSpeechWorker(QThread):
       self.error.emit("Voice input is unavailable because SpeechRecognition/PyAudio is not installed.")
       return
     recognizer = sr.Recognizer()
+    recognizer.operation_timeout = 15
     try:
       with sr.Microphone() as source:
         recognizer.adjust_for_ambient_noise(source, duration=VOICE_AMBIENT_CALIBRATION_SECONDS)
