@@ -78,6 +78,7 @@ class K8sAIOpsUIMixin:
         self._qwen_tts_failed = not _QWEN_TTS_AVAILABLE
         self._qwen_worker = None
         self._qwen_job_active = False
+        self._qwen_current_job_id = None
         self._neural_playback_active = False
         self._neural_audio_player = QMediaPlayer(self) if _QT_MULTIMEDIA_AVAILABLE else None
         self._neural_end_of_media_status = QMediaPlayer.EndOfMedia if _QT_MULTIMEDIA_AVAILABLE else None
