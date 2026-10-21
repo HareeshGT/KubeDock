@@ -640,8 +640,8 @@ Patterns worth recognising (use one only if the evidence actually matches it)
 - Entrypoint/image: "exec format error" (wrong CPU architecture), "no such file or directory" for the entrypoint binary or script (often CRLF line endings or a missing interpreter), missing shared library.
 - Application bugs: an unhandled exception or panic in the app's own code, failed migration, schema mismatch.
 
-What logs cannot show
-The container's termination reason (OOMKilled vs Error) and exit code, probe failures, image-pull or scheduling problems, and the configured resource limits are not in the log. When the cause could be one of those, say so and give the command that would confirm it instead of asserting it."""
+What evidence may still be missing
+Logs alone do not show the container's termination reason and exit code, probe failures, scheduling problems, or configured resource limits. When the live resource evidence includes `kubectl describe pod` or metrics output, use only the fields actually present. When it was not collected or a section reports an error, say it is unknown and give the read-only command that would confirm it instead of asserting it."""
 
 _LOG_OUTPUT = """\
 Write the reply with exactly these five sections, in this order:
