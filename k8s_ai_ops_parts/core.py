@@ -1,3 +1,6 @@
+import gc
+import importlib.util
+import io
 import json
 import queue
 import re
@@ -5,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import wave
 from datetime import datetime
 import os
 import sys
@@ -124,6 +128,13 @@ VOICE_PACE_SETTINGS_KEY = "k8s_ops_voice_pace"
 VOICE_VOLUME_SETTINGS_KEY = "k8s_ops_voice_volume"
 VOICE_ENGINE_SETTINGS_KEY = "k8s_ops_voice_engine"
 VOICE_ENGINE_EXPLICIT_SETTINGS_KEY = "k8s_ops_voice_engine_explicit"
+QWEN_TTS_MODEL_SETTINGS_KEY = "k8s_ops_qwen_tts_model"
+QWEN_VOICEDESIGN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+QWEN_CUSTOMVOICE_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+try:
+  _QWEN_TTS_AVAILABLE = importlib.util.find_spec("qwen_tts") is not None
+except (ImportError, ValueError):
+  _QWEN_TTS_AVAILABLE = False
 OPENAI_NEURAL_TTS_MODEL = "gpt-4o-mini-tts"
 NEURAL_TTS_SAMPLE_RATE = 24000
 NEURAL_TTS_MAX_AUDIO_BYTES = 12 * 1024 * 1024
@@ -236,25 +247,26 @@ def save_voice_volume(volume: int):
 
 
 def get_voice_engine() -> str:
-  """Return the selected engine; migrate old automatic fallback to neural once."""
+  """Return the selected speech engine without tying local engines to API keys."""
   try:
     settings = load_settings()
     selected = str(settings.get(VOICE_ENGINE_SETTINGS_KEY, "") or "").strip().lower()
     explicitly_selected = bool(settings.get(VOICE_ENGINE_EXPLICIT_SETTINGS_KEY, False))
   except Exception:
     selected, explicitly_selected = "", False
+  if selected == "qwen":
+    return "qwen"
+  if selected == "system" and explicitly_selected:
+    return "system"
   try:
     openai_key_available = bool(ai_assist.get_api_key("openai"))
   except Exception:
     openai_key_available = False
+  if selected == "openai" and openai_key_available:
+    return "openai"
   if not openai_key_available:
     return "system"
-  if selected == "openai":
-    return "openai"
-  if selected == "system" and explicitly_selected:
-    return "system"
-  # Older builds permanently saved "system" after a neural request failed.
-  # Treat that unmarked value as an automatic fallback, not a user preference.
+  # Older builds automatically saved "system" after neural TTS failed.
   if selected == "system" and not explicitly_selected:
     try:
       save_settings(**{
@@ -268,7 +280,7 @@ def get_voice_engine() -> str:
 
 def save_voice_engine(engine: str):
   value = str(engine or "system").strip().lower()
-  if value not in {"openai", "system"}:
+  if value not in {"openai", "system", "qwen"}:
     value = "system"
   try:
     save_settings(**{
@@ -278,6 +290,71 @@ def save_voice_engine(engine: str):
   except Exception:
     pass
 
+
+def get_qwen_tts_model() -> str:
+  """Return the saved Qwen model choice (full voice design or lower-memory preset voices)."""
+  try:
+    value = str(load_settings().get(QWEN_TTS_MODEL_SETTINGS_KEY, "voice_design") or "voice_design").strip().lower()
+    return value if value in {"voice_design", "custom_voice"} else "voice_design"
+  except Exception:
+    return "voice_design"
+
+
+def save_qwen_tts_model(model_key: str):
+  value = str(model_key or "voice_design").strip().lower()
+  if value not in {"voice_design", "custom_voice"}:
+    value = "voice_design"
+  try: save_settings(**{QWEN_TTS_MODEL_SETTINGS_KEY: value})
+  except Exception: pass
+
+
+def get_qwen_tts_model_config(model_key: str = None) -> dict:
+  """Resolve model ID and generation mode without importing the ML runtime."""
+  key = str(model_key or get_qwen_tts_model()).strip().lower()
+  if key == "custom_voice":
+    return {
+      "key": "custom_voice",
+      "model_id": QWEN_CUSTOMVOICE_MODEL_ID,
+      "label": "Lower memory · 0.6B",
+      "voice_design": False,
+    }
+  return {
+    "key": "voice_design",
+    "model_id": QWEN_VOICEDESIGN_MODEL_ID,
+    "label": "Voice Design · 1.7B",
+    "voice_design": True,
+  }
+
+
+def get_qwen_voice_profile(personality: str = None, pace: str = "natural") -> dict:
+  """Original persona directions for local Qwen voice design."""
+  key = str(personality or get_assistant_personality()).strip().lower()
+  if key not in {"jarvis", "friday", "edith"}:
+    key = "jarvis"
+  profiles = {
+    "jarvis": {
+      "speaker": "Ryan",
+      "description": "Adult masculine voice, lower-mid register, polished contemporary British-English accent, warm resonant timbre, crisp consonants, steady pitch movement, measured cadence and deliberate short pauses. Sound composed, intelligent, discreet, quietly authoritative and reassuring, with understated dry wit only when supported by the words. Cinematic futuristic assistant delivery, natural and human; not booming, theatrical or monotone. Clearly articulate technical terms. Original voice direction, not an imitation of a specific actor or fictional character.",
+    },
+    "friday": {
+      "speaker": "Vivian",
+      "description": "Warm feminine-presenting assistant voice, bright and confidently conversational, lively but controlled intonation, clear articulation, agile phrasing and subtle playful energy. Use a light, understated Irish-English lilt while staying natural and professional, never bubbly or cartoonish. Original voice direction, not an imitation of a specific actor or fictional character.",
+    },
+    "edith": {
+      "speaker": "Aiden",
+      "description": "Composed, precise digital-assistant delivery with cool clarity, controlled emotional variation, deliberate phrasing, clean consonants and quiet authority. Sound analytical, alert and subtly futuristic while still natural and human; avoid sounding cold, breathy, theatrical or monotone. Original voice direction, not an imitation of a specific actor or fictional character.",
+    },
+  }
+  profile = dict(profiles[key])
+  pace_key = str(pace or "natural").strip().lower()
+  pace_notes = {
+    "slow": "Use a deliberately unhurried pace and slightly longer pauses between clauses.",
+    "natural": "Keep the persona's default pace and use natural pauses with clear articulation.",
+    "brisk": "Use a brisk, energetic pace while keeping every word clearly intelligible.",
+  }
+  profile["instructions"] = profile["description"] + " " + pace_notes.get(pace_key, pace_notes["natural"])
+  profile["pace"] = pace_key if pace_key in pace_notes else "natural"
+  return profile
 
 def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> dict:
   """Return safe, deterministic TTS parameters for the selected persona."""
