@@ -1,8 +1,17 @@
+import base64
+import io
+import json
 import unittest
+import wave
 from unittest.mock import patch
 
 from k8s_ai_ops_parts.core import (
     PERSONALITY_CONFIG,
+    NEURAL_VOICE_PROFILES,
+    OPENAI_REALTIME_TTS_MODEL,
+    _OpenAINeuralTTSWorker,
+    get_neural_voice_profile,
+    get_voice_engine,
     VoiceConversationStateMachine,
     is_duplicate_voice_transcript,
     normalize_voice_transcript,
@@ -130,6 +139,68 @@ class VoiceConversationTests(unittest.TestCase):
     def test_logs_require_a_namespace(self):
         with self.assertRaises(ValueError):
             validate_action({"action": "logs", "resource": "pod", "name": "payments-1", "namespace": ""})
+
+    def test_neural_voice_profiles_have_distinct_voices_and_instructions(self):
+        self.assertEqual(set(NEURAL_VOICE_PROFILES), {"jarvis", "friday", "edith"})
+        self.assertEqual(len({p["voice"] for p in NEURAL_VOICE_PROFILES.values()}), 3)
+        self.assertEqual(len({p["instructions"] for p in NEURAL_VOICE_PROFILES.values()}), 3)
+        self.assertIn("British-English", get_neural_voice_profile("jarvis")["instructions"])
+        self.assertIn("Irish lilt", get_neural_voice_profile("friday")["instructions"])
+        self.assertIn("analytical", get_neural_voice_profile("edith")["instructions"])
+        self.assertLess(get_neural_voice_profile("jarvis", "slow")["speed"], get_neural_voice_profile("jarvis", "natural")["speed"])
+        self.assertGreater(get_neural_voice_profile("friday", "brisk")["speed"], get_neural_voice_profile("friday", "natural")["speed"])
+
+    def test_voice_engine_uses_openai_key_when_available_and_safe_fallback(self):
+        from k8s_ai_ops_parts import core
+        with patch.object(core, "load_settings", return_value={}), patch.object(core.ai_assist, "get_api_key", return_value="sk-test-key"):
+            self.assertEqual(get_voice_engine(), "openai")
+        with patch.object(core, "load_settings", return_value={}), patch.object(core.ai_assist, "get_api_key", return_value=""):
+            self.assertEqual(get_voice_engine(), "system")
+        with patch.object(core, "load_settings", return_value={core.VOICE_ENGINE_SETTINGS_KEY: "system"}), patch.object(core.ai_assist, "get_api_key", return_value="sk-test-key"):
+            self.assertEqual(get_voice_engine(), "system")
+
+    def test_realtime_worker_wraps_pcm_as_wav_without_network_or_audio_hardware(self):
+        from k8s_ai_ops_parts import core
+        pcm = (b"\\x00\\x00\\x10\\x00") * 600
+        events = [
+            {"type": "session.created"},
+            {"type": "session.updated"},
+            {"type": "response.output_audio.delta", "delta": base64.b64encode(pcm).decode("ascii")},
+            {"type": "response.done", "response": {"status": "completed"}},
+        ]
+        class FakeWebSocket:
+            def __init__(self):
+                self.sent = []
+                self.timeout = None
+            def settimeout(self, value):
+                self.timeout = value
+            def send(self, value):
+                self.sent.append(json.loads(value))
+            def recv(self):
+                if not events:
+                    raise AssertionError("Unexpected extra websocket read")
+                return json.dumps(events.pop(0))
+            def close(self):
+                pass
+        fake_ws = FakeWebSocket()
+        audio, errors = [], []
+        worker = _OpenAINeuralTTSWorker("sk-test-key-not-real", "Systems are ready.", "jarvis")
+        worker.audio_ready.connect(audio.append)
+        worker.error.connect(errors.append)
+        with patch.object(core.websocket, "create_connection", return_value=fake_ws) as connect:
+            worker.run()
+        connect.assert_called_once()
+        self.assertIn(OPENAI_REALTIME_TTS_MODEL, connect.call_args.args[0])
+        self.assertFalse(errors, errors)
+        self.assertEqual(len(audio), 1)
+        with wave.open(io.BytesIO(audio[0]), "rb") as wav_file:
+            self.assertEqual(wav_file.getframerate(), 24000)
+            self.assertEqual(wav_file.getnchannels(), 1)
+            self.assertEqual(wav_file.getsampwidth(), 2)
+            self.assertEqual(wav_file.readframes(600), pcm)
+        session = fake_ws.sent[0]["session"]
+        self.assertEqual(session["audio"]["output"]["voice"], "cedar")
+        self.assertEqual(session["output_modalities"], ["audio"])
 
     def test_personalities_have_distinct_style_and_voice_profiles(self):
         self.assertEqual(set(PERSONALITY_CONFIG), {"jarvis", "friday", "edith"})
