@@ -50,15 +50,18 @@ class K8sAIOpsVoiceMixin:
 
     def _on_voice_engine_changed(self, index: int):
         engine = str(self.voice_engine_combo.itemData(index) or "system").lower()
+        requested_engine = engine
+        missing_openai_key = False
         if engine == "openai":
             if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
                 QMessageBox.information(self, "Neural Voice Unavailable", "Qt Multimedia audio playback is unavailable in this KubeDock build. Use a build that includes PyQt5.QtMultimedia or select System · Offline.")
                 engine = "system"
             elif not ai_assist.get_api_key("openai"):
-                QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Neural voice generation uses OpenAI API usage and may incur charges.")
+                QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Your preference for Neural · OpenAI will be kept so the app can use it after the key is configured. Neural speech may incur API usage charges.")
                 engine = "system"
+                missing_openai_key = True
         self._voice_engine = engine
-        save_voice_engine(engine)
+        save_voice_engine("openai" if requested_engine == "openai" and missing_openai_key else engine)
         self.voice_engine_combo.blockSignals(True)
         self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData(engine)))
         self.voice_engine_combo.blockSignals(False)
@@ -78,7 +81,10 @@ class K8sAIOpsVoiceMixin:
         if engine == "openai":
             self._write_info("\nNeural voice enabled. OpenAI receives the text that Ops Mind speaks; audio is temporarily written to a WAV file for playback, then removed.")
         else:
-            self._write_info("\nOffline system voice enabled. Speech synthesis runs locally.")
+            if missing_openai_key:
+                self._write_info("\nOffline voice is active because an OpenAI API key is not configured. The Neural · OpenAI preference is saved; add an OpenAI key under Settings → AI, then restart KubeDock or select Neural again.")
+            else:
+                self._write_info("\nOffline system voice enabled. Speech synthesis runs locally.")
 
     def _stop_neural_voice(self, clear_queue: bool = True):
         if clear_queue:
