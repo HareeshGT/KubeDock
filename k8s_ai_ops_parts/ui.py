@@ -242,12 +242,13 @@ class K8sAIOpsUIMixin:
         self.qwen_model_combo = QComboBox()
         self.qwen_model_combo.setFixedWidth(190)
         self.qwen_model_combo.addItem("Voice Design · 1.7B", "voice_design")
-        self.qwen_model_combo.addItem("Lower memory · 0.6B", "custom_voice")
+        self.qwen_model_combo.addItem("Lower memory · 0.6B (preset)", "custom_voice")
         qwen_idx = self.qwen_model_combo.findData(self._qwen_tts_model)
         self.qwen_model_combo.setCurrentIndex(qwen_idx if qwen_idx >= 0 else 0)
         self.qwen_model_combo.setToolTip(
-            "1.7B provides custom voice design for each persona and uses more memory. "
-            "0.6B is lighter and uses preset speaker timbres. Model weights download on first use."
+            "1.7B supports natural-language voice design and more persona-specific delivery, but uses more memory. "
+            "0.6B uses lighter preset speaker voices and offers less control over accent/style. "
+            "Model weights download on first use."
         )
         self.qwen_model_combo.currentIndexChanged.connect(self._on_qwen_model_changed)
         self.qwen_model_combo.setVisible(self._voice_engine == "qwen")
