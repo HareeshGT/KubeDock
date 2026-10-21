@@ -385,6 +385,14 @@ class K8sAIOpsVoiceMixin:
             return
         self._start_voice_recording()
 
+    def _run_queued_voice_request(self):
+        request = getattr(self, "_queued_voice_request", None)
+        if not request or self._busy:
+            return
+        self._queued_voice_request = None
+        self.request_input.setText(request)
+        self._set_voice_state("THINKING")
+        self._submit()
     def _interrupt_and_listen(self):
         if not _VOICE_AVAILABLE:
             QMessageBox.information(self, "Voice Input Unavailable", "Install PyAudio and SpeechRecognition to use voice input.")
