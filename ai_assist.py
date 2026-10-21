@@ -591,7 +591,7 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict):
 
 _DIAGNOSIS_FORMAT = """\
 Formatting (the reply is rendered as Markdown in a small desktop dialog):
-- Use `###` headings for exactly the three section titles below, and no other headings.
+- Use `###` headings for exactly the section titles required by the task-specific response format, and no other headings.
 - Use `-` bullets for parallel points. No nested bullets, no tables, no HTML, no emoji.
 - Put every command, log line, file path, resource name and config key in a fenced code block or inline `code`. One fenced block per command, no prose inside it, no leading `$` so it can be copy-pasted as-is.
 - Short paragraphs (1-3 sentences). Lead with the answer. No greeting, no restating the question, no closing offer to help further.
@@ -644,18 +644,24 @@ What logs cannot show
 The container's termination reason (OOMKilled vs Error) and exit code, probe failures, image-pull or scheduling problems, and the configured resource limits are not in the log. When the cause could be one of those, say so and give the command that would confirm it instead of asserting it."""
 
 _LOG_OUTPUT = """\
-Write the reply with exactly these three sections, in this order:
+Write the reply with exactly these five sections, in this order:
 
-### Likely cause
-The single most probable root cause in one or two sentences, ending with your confidence in parentheses: (high confidence), (medium confidence) or (low confidence). If two causes are plausible, name the leading one and say what would tell them apart. If nothing in the output is wrong, write "No failure is visible in this output" and say what it does show.
+### Finding
+One sentence describing the observed state of the selected pod. Say when status/readiness/events/configuration evidence was not available.
 
 ### Evidence
-The 1-5 verbatim log lines that support the cause, together in one fenced code block (shorten very long lines with `…`, keep timestamps when they show ordering). Then one short sentence saying how those lines lead to the cause. Only quote lines that really appear in the log; never paraphrase inside the code block. If the evidence is inconclusive, say what is missing.
+Give up to five short, verbatim log or resource-evidence lines in one fenced code block. Preserve timestamps when they establish ordering. Only quote lines actually present in the supplied evidence.
 
-### Suggested fix
-A short bullet list, most likely to help first. Be specific about what to change and where (manifest field, env var, ConfigMap/Secret, image, code) rather than generic advice. Put each kubectl command in its own fenced block with the real pod and namespace filled in (add `-c` with the container name when one is given). Prefer read-only diagnostics before changes, and if a step changes cluster state (delete, restart, scale, edit, apply, rollout) say so in the bullet. When the cause needs confirming outside the logs, the first step should be the confirming command, for example `kubectl describe pod` for the last state and exit code, or `kubectl get events` for the pod.
+### Likely cause and uncertainty
+Name the leading cause and confidence (high, medium, or low). Explicitly separate direct observations from hypotheses and state what evidence is missing when multiple explanations remain plausible.
 
-Do not guess. If the log is inconclusive, say so plainly and use Suggested fix for the next best diagnostic steps."""
+### Recommended fix
+Give the smallest useful next step first. Prefer read-only diagnostics before changes. If a command changes cluster state (delete, restart, scale, edit, apply, rollout), say so before the command. Never recommend exposing Secret values.
+
+### Verification
+Give a concrete command or observable condition that confirms the fix and what result should be expected. Do not imply the command has already been run.
+
+Do not guess. If evidence is inconclusive, say so and recommend the next best diagnostic check."""
 
 _COMMAND_GUIDE = """\
 You are a senior Linux and Kubernetes engineer. An engineer just ran a shell command that failed or looks wrong, and wants to know why and what to run instead. Work only from the evidence given; be precise, skeptical and brief.
