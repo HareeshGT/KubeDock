@@ -169,8 +169,9 @@ class VoiceConversationTests(unittest.TestCase):
         with patch.object(core, "load_settings", return_value={}), patch.object(core.ai_assist, "get_api_key", return_value=""):
             self.assertEqual(get_voice_engine(), "system")
         # An unmarked "system" value can be an automatic fallback from an older build.
-        with patch.object(core, "load_settings", return_value={core.VOICE_ENGINE_SETTINGS_KEY: "system"}), patch.object(core.ai_assist, "get_api_key", return_value="sk-test-key"):
+        with patch.object(core, "load_settings", return_value={core.VOICE_ENGINE_SETTINGS_KEY: "system"}), patch.object(core, "save_settings") as save_settings, patch.object(core.ai_assist, "get_api_key", return_value="sk-test-key"):
             self.assertEqual(get_voice_engine(), "openai")
+            save_settings.assert_called_once()
         # A current, explicit offline choice must still be respected.
         with patch.object(core, "load_settings", return_value={
             core.VOICE_ENGINE_SETTINGS_KEY: "system",
