@@ -315,14 +315,16 @@ def get_qwen_tts_model_config(model_key: str = None) -> dict:
     return {
       "key": "custom_voice",
       "model_id": QWEN_CUSTOMVOICE_MODEL_ID,
-      "label": "Lower memory · 0.6B",
+      "label": "Lower memory · 0.6B preset voices",
       "voice_design": False,
+      "supports_voice_instructions": False,
     }
   return {
     "key": "voice_design",
     "model_id": QWEN_VOICEDESIGN_MODEL_ID,
     "label": "Voice Design · 1.7B",
     "voice_design": True,
+    "supports_voice_instructions": True,
   }
 
 
@@ -1725,9 +1727,12 @@ class _Qwen3TTSWorker(QThread):
         text=text, language="English", instruct=profile["instructions"], max_new_tokens=1024,
       )
     else:
+      # The 0.6B release uses fixed speaker presets and ignores style instructions
+      # in its current upstream implementation; keep the speaker distinct but
+      # do not imply pace/accent directions are controllable in this mode.
       wavs, sample_rate = model.generate_custom_voice(
         text=text, language="English", speaker=profile["speaker"],
-        instruct=profile["instructions"], max_new_tokens=1024,
+        max_new_tokens=1024,
       )
     if not wavs:
       raise RuntimeError("Qwen3-TTS returned no audio.")
