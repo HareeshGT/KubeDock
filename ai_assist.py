@@ -815,15 +815,22 @@ def _build_followup_prompt(source_context: str, conversation: list, question: st
     ) or "(no raw evidence supplied)"
 
     turns = []
-    for item in list(conversation or [])[-8:]:
+    recent = list(conversation or [])
+    # Preserve the original diagnosis plus the last few exchanges without
+    # repeatedly resending an unbounded transcript.
+    if len(recent) > 6:
+        recent = recent[:1] + recent[-5:]
+    for item in recent:
         who = "engineer" if item.get("role") == "user" else "you (earlier answer)"
         content = _redact_sensitive_text(str(item.get("content", "")).strip())
-        if len(content) > 2_000:
-            content = content[:2_000].rstrip() + " …(shortened)"
+        if len(content) > 1_200:
+            content = content[:1_200].rstrip() + " …(shortened)"
         if content:
             turns.append(f"[{who}]\n{content}")
     history = "\n\n".join(turns) or "(no earlier turns)"
     safe_question = _redact_sensitive_text((question or "").strip())
+    if len(safe_question) > 2_000:
+        safe_question = safe_question[:2_000].rstrip() + " …(shortened)"
 
     return (
         f"{_FOLLOWUP_GUIDE}\n\n"
