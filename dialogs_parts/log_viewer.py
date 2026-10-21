@@ -19,6 +19,8 @@ class LogViewerDialog(QDialog):
     self._workers    = []
     self._stream_worker = None  # the currently-running _ExecStreamWorker, if any
     self._ai_worker   = None  # the currently-running AIExplainWorker, if any
+    self._evidence_worker = None  # read-only live pod evidence collection
+    self._pending_ai_explain = None
     self._ai_dialog   = None
 
     self.setWindowTitle(f"Logs — {pod}")
@@ -154,8 +156,8 @@ class LogViewerDialog(QDialog):
 
   # ── AI diagnosis ──────────────────────────────────────────
   def _on_explain(self):
-    if self._ai_worker is not None:
-      return # already running — button is disabled while it is, but be defensive
+    if self._ai_worker is not None or self._evidence_worker is not None:
+      return
 
     log_text = self.log_view.toPlainText().strip()
     if not log_text or log_text == "Loading…":
@@ -172,20 +174,90 @@ class LogViewerDialog(QDialog):
       )
       return
 
+    self._pending_ai_explain = {
+      "provider": provider,
+      "api_key": api_key,
+      "model": ai_assist.get_model(provider),
+      "log_text": log_text,
+    }
     self._ai_dialog = AIExplainDialog(self, f"AI diagnosis — {self._pod}")
     self._ai_dialog.set_source_context(
-      f"Pod: {self._pod}\nNamespace: {self._ns}\n"
-      f"Container: {self._container or 'default'}\n\nLogs/evidence:\n{log_text}"
+      f"Pod: {self._pod}\nNamespace: {self._ns or '(unknown)'}\n"
+      f"Container: {self._container or 'default'}\n\nContainer logs:\n{log_text}"
     )
     self._ai_dialog.set_loading()
     self._ai_dialog.show()
 
     self.explain_btn.setEnabled(False)
-    self.explain_btn.setText(" Thinking…")
+    self.explain_btn.setText(" Collecting…")
+    self.status_lbl.setText("○ collecting live pod status, events and metrics…")
 
+    if not self._ns:
+      self._start_ai_explain(
+        "Live Kubernetes evidence was not collected because the pod namespace is unknown."
+      )
+      return
+
+    # One bounded, read-only SSH worker gathers describe output (conditions,
+    # image/config references, state and recent events) and metrics if
+    # metrics-server is available. It never retrieves Kubernetes Secret data.
+    inner = (
+      f"kubectl -n {shlex.quote(self._ns)} describe pod {shlex.quote(self._pod)} 2>&1; "
+      "printf '\\n--- kubectl top pod --containers ---\\n'; "
+      f"kubectl -n {shlex.quote(self._ns)} top pod {shlex.quote(self._pod)} --containers 2>&1"
+    )
+    worker = CommandWorker(self.ssh, f"bash -lc {shlex.quote(inner)}", timeout=25)
+    worker.result.connect(self._on_resource_evidence)
+    worker.error.connect(self._on_resource_evidence_error)
+    self._evidence_worker = worker
+    track_worker(self._workers, worker)
+    worker.start()
+
+  def _on_resource_evidence(self, output: str, err: str, exit_code: int):
+    self._evidence_worker = None
+    parts = [(output or "").strip(), (err or "").strip()]
+    evidence = "\n".join(part for part in parts if part)
+    if not evidence:
+      evidence = (
+        f"Live pod evidence collection returned no output (exit code {exit_code}). "
+        "Treat status, events and metrics as unknown."
+      )
+    elif exit_code != 0:
+      evidence += (
+        f"\n\nEvidence command exit code: {exit_code}. Some sections may be unavailable; "
+        "do not infer missing status or metrics."
+      )
+    self._start_ai_explain(evidence)
+
+  def _on_resource_evidence_error(self, error: str):
+    self._evidence_worker = None
+    safe_error = ai_assist._redact_sensitive_text(str(error or "unknown error"))
+    self._start_ai_explain(
+      "Live Kubernetes status/events/metrics collection failed: " + safe_error
+    )
+
+  def _start_ai_explain(self, resource_context: str):
+    pending = self._pending_ai_explain
+    if not pending:
+      self.explain_btn.setEnabled(True)
+      self.explain_btn.setText(" Analyze with AI")
+      return
+
+    log_text = pending["log_text"]
+    full_context = (
+      f"Pod: {self._pod}\nNamespace: {self._ns or '(unknown)'}\n"
+      f"Container: {self._container or 'default'}\n\n"
+      "Live Kubernetes resource evidence (describe/events/configuration/status and "
+      f"available metrics):\n{resource_context}\n\nContainer logs:\n{log_text}"
+    )
+    if self._ai_dialog is not None:
+      self._ai_dialog.set_source_context(full_context)
+
+    self.status_lbl.setText("● analyzing logs and live resource evidence…")
     worker = ai_assist.AIExplainWorker(
-      provider, api_key, ai_assist.get_model(provider),
-      self._pod, self._ns, self._container, log_text
+      pending["provider"], pending["api_key"], pending["model"],
+      self._pod, self._ns, self._container, log_text,
+      resource_context=resource_context,
     )
     worker.done.connect(self._on_explain_done)
     worker.error.connect(self._on_explain_error)
