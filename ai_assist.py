@@ -752,6 +752,31 @@ def _clip_evidence(text: str, limit: int = MAX_CONTEXT_CHARS) -> str:
     return _tail(text, limit)
 
 
+def _clip_resource_evidence(text: str, limit: int = 4_000) -> str:
+    """Keep initial pod status/configuration and trailing events/metrics.
+
+    A plain tail clip can discard Ready/State fields near the beginning of
+    describe output; a plain head clip can discard Events at the end.
+    Preserve both ends when evidence exceeds the prompt budget.
+    """
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    marker = "\n[…middle of resource evidence omitted…]\n"
+    budget = max(0, limit - len(marker))
+    head_size = (budget * 3) // 5
+    tail_size = budget - head_size
+    head = text[:head_size]
+    tail = text[-tail_size:] if tail_size else ""
+    head_newline = head.rfind("\n")
+    if head_newline > head_size // 2:
+        head = head[:head_newline]
+    tail_newline = tail.find("\n")
+    if 0 <= tail_newline < min(300, len(tail) // 3):
+        tail = tail[tail_newline + 1:]
+    return head.rstrip() + marker + tail.lstrip()
+
+
 def _build_prompt(
     pod: str, namespace: str, container: str, log_text: str,
     resource_context: str = "",
@@ -759,7 +784,7 @@ def _build_prompt(
     # Keep a useful amount of each evidence source without allowing either
     # stream to evict the other. _clip_evidence preserves a header and tail.
     log_text = _tail(_redact_sensitive_text(log_text), limit=8_000)
-    resource_context = _clip_evidence(
+    resource_context = _clip_resource_evidence(
         _redact_sensitive_text(resource_context), limit=4_000
     )
 
