@@ -1,3 +1,4 @@
+import shlex
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -21,6 +22,53 @@ from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
+
+
+def _mutation_verification_outcome(action: dict, output: str, error: str, exit_code: int):
+    """Return (verified, detail) from a deterministic read-after-write probe."""
+    operation = action.get("action")
+    combined = f"{output or ''}\n{error or ''}".strip()
+    lowered = combined.lower()
+
+    if operation == "scale":
+        expected = str(action.get("replicas"))
+        actual = (output or "").strip()
+        if exit_code == 0 and not (error or "").strip() and actual == expected:
+            return True, f"replica count is {actual}, matching the requested target"
+        return False, f"expected {expected} replicas, but the probe returned {actual or combined or 'no value'}"
+
+    if operation == "delete":
+        if exit_code != 0 and ("notfound" in lowered or "not found" in lowered):
+            return True, "the resource is absent from the selected namespace"
+        if exit_code == 0:
+            return False, "the resource still exists after the delete command"
+        return False, "the resource lookup failed without confirming NotFound"
+
+    if operation == "restart":
+        if exit_code == 0 and not (error or "").strip():
+            return True, "the workload rollout completed successfully"
+        return False, combined or f"rollout verification exited with code {exit_code}"
+
+    return False, "no verification rule exists for this mutation"
+
+
+def _build_mutation_verification_command(action: dict) -> str:
+    """Build a read-only verification probe from already validated action data."""
+    context = str(action.get("context") or "").strip()
+    context_flag = f"--context {shlex.quote(context)} " if context else ""
+    namespace = shlex.quote(str(action.get("namespace") or ""))
+    resource = str(action["resource"])
+    name = shlex.quote(str(action["name"]))
+    target = f"{resource}/{name}"
+    base = f"kubectl {context_flag}-n {namespace}"
+
+    if action.get("action") == "scale":
+        return f"{base} get {target} -o jsonpath={shlex.quote('{.spec.replicas}')}"
+    if action.get("action") == "restart":
+        return f"{base} rollout status {target} --timeout=30s"
+    if action.get("action") == "delete":
+        return f"{base} get {target} -o name"
+    raise ValueError("Verification requested for a non-mutating operation")
 
 
 def _kubectl_failure_hint(message: str) -> str:
@@ -398,10 +446,84 @@ class K8sAIOpsOperationsMixin:
             self._write_error(details)
             self._speak(_spoken_done_phrase(action, success=False))
             return
+        if action.get('action') in {'scale', 'restart', 'delete'}:
+            self._start_mutation_verification(action, command)
+            return
         self._remember_operation(action, command, 'success', output)
         self._write_success('\n Kubernetes operation completed successfully.')
         self._speak(_spoken_done_phrase(action, success=True))
         self.operation_finished.emit()
+
+    def _start_mutation_verification(self, action: dict, command: str):
+        """Verify a successful mutation with a targeted read-only probe."""
+        try:
+            probe = _build_mutation_verification_command(action)
+        except Exception as exc:
+            self._remember_operation(
+                action, command, 'unverified',
+                f"Mutation command returned success; verification command could not be built: {exc}",
+            )
+            self._write_error(
+                '\n The kubectl command returned success, but its result could not be verified. '
+                'Inspect the target resource before retrying.'
+            )
+            self._set_busy(False)
+            return
+
+        self.status_lbl.setText('Verifying Kubernetes change…')
+        worker = CommandWorker(self.ssh, probe + ' 2>&1', timeout=35)
+        self._verification_worker = worker
+        frozen_action = dict(action)
+        worker.result.connect(
+            lambda output, err, exit_code, a=frozen_action, c=command:
+                self._on_mutation_verification_result(a, c, output, err, exit_code)
+        )
+        worker.error.connect(
+            lambda error, a=frozen_action, c=command:
+                self._on_mutation_verification_error(a, c, error)
+        )
+        track_worker(self._workers, worker)
+        worker.start()
+
+    def _on_mutation_verification_result(self, action: dict, command: str,
+                                         output: str, err: str, exit_code: int):
+        self._verification_worker = None
+        verified, detail = _mutation_verification_outcome(
+            action, output, err, exit_code
+        )
+        if verified:
+            self._remember_operation(
+                action, command, 'success',
+                f"{(output or '').strip()}\nVerification: {detail}".strip(),
+            )
+            self._write_success(f'\n Kubernetes operation completed and verified: {detail}.')
+            self._speak(_spoken_done_phrase(action, success=True))
+            self.operation_finished.emit()
+        else:
+            self._remember_operation(
+                action, command, 'unverified',
+                f"Initial command returned success; verification did not confirm the target state: {detail}",
+            )
+            self._write_error(
+                '\n The initial kubectl command returned success, but the resulting state was '
+                f'not verified: {detail}. Check the target resource before retrying.'
+            )
+            self._speak(_spoken_done_phrase(action, success=False))
+        self._set_busy(False)
+
+    def _on_mutation_verification_error(self, action: dict, command: str, error: str):
+        self._verification_worker = None
+        safe_error = ai_assist._redact_sensitive_text(str(error or "unknown error"))
+        self._remember_operation(
+            action, command, 'unverified',
+            f"Initial command returned success; verification worker failed: {safe_error}",
+        )
+        self._write_error(
+            '\n The initial kubectl command returned success, but verification could not run: '
+            f'{safe_error}. Inspect the target resource before retrying.'
+        )
+        self._speak(_spoken_done_phrase(action, success=False))
+        self._set_busy(False)
 
     def _on_operation_error(self, error: str):
         self._write_error('\n Kubernetes operation failed:\n' + str(error))
@@ -416,7 +538,8 @@ class K8sAIOpsOperationsMixin:
 
     def _on_operation_finished(self):
         self._operation_worker = None
-        self._set_busy(False)
+        if getattr(self, '_verification_worker', None) is None:
+            self._set_busy(False)
 
     def _remember_operation(self, action: dict, command: str, status: str, output: str):
         row = {'timestamp': datetime.now().astimezone().isoformat(timespec='seconds'), 'status': status, 'action': action.get('action'), 'resource': action.get('resource'), 'name': action.get('name'), 'namespace': action.get('namespace', ''), 'context': action.get('context', ''), 'command': command}
