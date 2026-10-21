@@ -241,6 +241,35 @@ echo " $SELECTED_BRANCH"
 echo
 
 # --------------------------------------------------
+# Optional local Qwen3-TTS bundle
+# --------------------------------------------------
+
+# Keep the default build lightweight. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt
+# into the large local PyTorch/Qwen runtime; the voice model weights download
+# on first use and are intentionally not embedded into the app bundle.
+ENABLE_QWEN_TTS="${KUBEDOCK_ENABLE_QWEN_TTS:-}"
+case "${ENABLE_QWEN_TTS,,}" in
+  1|y|yes|true|on) ENABLE_QWEN_TTS=1 ;;
+  0|n|no|false|off) ENABLE_QWEN_TTS=0 ;;
+  *)
+    if [ -t 0 ]; then
+      printf "Include local Qwen3-TTS voice support? This adds several GB to the app build [y/N]: "
+      read -r QWEN_ANSWER
+      case "${QWEN_ANSWER,,}" in y|yes) ENABLE_QWEN_TTS=1 ;; *) ENABLE_QWEN_TTS=0 ;; esac
+    else
+      ENABLE_QWEN_TTS=0
+      echo "Non-interactive install: skipping optional Qwen3-TTS bundle. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to enable it."
+    fi
+    ;;
+esac
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  echo "Qwen3-TTS bundle: ENABLED (Python 3.12 required; model weights download on first launch)."
+else
+  echo "Qwen3-TTS bundle: disabled (small default build)."
+fi
+echo
+
+# --------------------------------------------------
 # Clone / Update Repository
 # --------------------------------------------------
 
@@ -308,27 +337,60 @@ if [[ "$OS" == "Darwin" ]]; then
 
   echo "Homebrew: $(brew --version | head -n 1)"
 
-  # Always use Homebrew Python 3.14.
-  if ! brew list --formula python@3.14 >/dev/null 2>&1; then
+  # Python 3.14 remains the default build runtime; the Qwen ML stack is
+  # built with Python 3.12, the upstream-recommended environment.
+  if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+    PYTHON_MINOR="3.12"
+  else
+    PYTHON_MINOR="3.14"
+  fi
+  PYTHON_FORMULA="python@$PYTHON_MINOR"
+
+  if ! brew list --formula "$PYTHON_FORMULA" >/dev/null 2>&1; then
     echo
-    echo "Installing Python 3.14..."
-    brew install python@3.14
+    echo "Installing Homebrew $PYTHON_FORMULA..."
+    brew install "$PYTHON_FORMULA"
   else
     echo
-    echo "Python 3.14 already installed."
+    echo "$PYTHON_FORMULA already installed."
   fi
 
-  PYTHON="$(brew --prefix python@3.14)/bin/python3"
+  PYTHON="$(brew --prefix "$PYTHON_FORMULA")/bin/python3"
 
   if [ ! -x "$PYTHON" ]; then
     echo
-    echo "ERROR: Homebrew Python 3.14 was not found:"
+    echo "ERROR: Homebrew $PYTHON_FORMULA was not found:"
     echo "$PYTHON"
     exit 1
   fi
 
   # Make Homebrew tools available to child processes as well.
-  export PATH="$(brew --prefix python@3.14)/bin:$(brew --prefix)/bin:$PATH"
+  export PATH="$(brew --prefix "$PYTHON_FORMULA")/bin:$(brew --prefix)/bin:$PATH"
+
+elif [[ "$ENABLE_QWEN_TTS" == "1" ]] && [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+
+  # On Windows/MSYS use the Python Launcher to select exactly Python 3.12.
+  if command -v py >/dev/null 2>&1; then
+    WINDOWS_PYTHON="$(py -3.12 -c "import sys; print(sys.executable)" 2>/dev/null || true)"
+    if [ -n "$WINDOWS_PYTHON" ]; then
+      if command -v cygpath >/dev/null 2>&1; then
+        PYTHON="$(cygpath -u "$WINDOWS_PYTHON")"
+      else
+        PYTHON="$WINDOWS_PYTHON"
+      fi
+    fi
+  fi
+  if [ -z "${PYTHON:-}" ] && command -v python3.12 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3.12)"
+  fi
+  if [ -z "${PYTHON:-}" ]; then
+    echo "ERROR: Qwen3-TTS packaging requires 64-bit Python 3.12. Install it and rerun."
+    exit 1
+  fi
+
+elif [[ "$ENABLE_QWEN_TTS" == "1" ]] && command -v python3.12 >/dev/null 2>&1; then
+
+  PYTHON="$(command -v python3.12)"
 
 elif command -v python3 >/dev/null 2>&1; then
 
@@ -350,6 +412,13 @@ echo
 echo "Using Python:"
 echo "$PYTHON"
 "$PYTHON" --version
+PYTHON_MINOR="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "$ENABLE_QWEN_TTS" == "1" && "$PYTHON_MINOR" != "3.12" ]]; then
+  echo
+  echo "ERROR: Qwen3-TTS packaging requires Python 3.12; selected $PYTHON_MINOR ($PYTHON)."
+  echo "Install Python 3.12 and rerun, or leave Qwen3-TTS disabled."
+  exit 1
+fi
 
 # --------------------------------------------------
 # Install Native Dependencies
