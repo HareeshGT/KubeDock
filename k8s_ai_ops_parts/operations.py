@@ -127,13 +127,16 @@ class K8sAIOpsOperationsMixin:
         request = self.request_input.text().strip()
         if not request:
             return
+        self._last_submitted_request = request
         if len(request) > MAX_PROMPT_CHARS:
             self._write_error(f'Request is too long. Maximum is {MAX_PROMPT_CHARS} characters.')
             return
         namespace = self._namespace()
         local_response = _general_question_response(request, namespace)
         if local_response is not None:
+            self._remember_conversation_turn('user', request)
             local_response = personalize_local_response(local_response, getattr(self, '_personality', 'jarvis'))
+            self._remember_conversation_turn('assistant', local_response)
             self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(local_response).replace(chr(10), '<br>')}</span>""")
             self._speak(local_response)
             self.status_lbl.setText('Ready')
@@ -174,7 +177,11 @@ class K8sAIOpsOperationsMixin:
         self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')}</span>""")
         self._set_busy(True)
         self._speak('Processing your request.')
-        worker = K8sAIInterpretWorker(provider, api_key, ai_assist.get_model(provider), request, namespace, context, history_for_context)
+        worker = K8sAIInterpretWorker(
+            provider, api_key, ai_assist.get_model(provider), request,
+            namespace, context, history_for_context,
+            conversation=getattr(self, '_voice_conversation', []),
+        )
         worker.done.connect(self._on_ai_done)
         worker.error.connect(self._on_ai_error)
         worker.finished.connect(self._on_ai_finished)
@@ -190,12 +197,25 @@ class K8sAIOpsOperationsMixin:
             self._write_error(f'AI interpretation failed: {exc}')
             self._speak("Sorry, I couldn't understand that request.")
             return
+        if action['kind'] == 'conversation':
+            user_request = getattr(self, '_last_submitted_request', '')
+            response = action['response']
+            self._remember_conversation_turn('user', user_request)
+            self._remember_conversation_turn('assistant', response)
+            self.output.append(f"""<br><span style=\"color:{T['ACCENT']}; font-weight:700;\">Assistant:</span><br><span style=\"color:{T['TEXT_PRIMARY']}\">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+            self._speak(response)
+            self.request_input.setFocus()
+            return
         if action['kind'] == 'clarification':
+            self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+            self._remember_conversation_turn('assistant', action['reason'])
             self._write_info('\nAI needs more information:\n' + action['reason'])
             self._speak('I need more information to do that.')
             self.request_input.setFocus()
             return
         if action['kind'] == 'unsupported':
+            self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+            self._remember_conversation_turn('assistant', action['reason'])
             self._write_error('\n' + action['reason'])
             self._speak(action.get('reason') or "That operation isn't supported.")
             return
@@ -220,6 +240,7 @@ class K8sAIOpsOperationsMixin:
             self._speak('I need the Kubernetes namespace to do that safely.')
             self.request_input.setFocus()
             return
+        self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
         self._execute_action(action)
 
     def _on_ai_error(self, message: str):
