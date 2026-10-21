@@ -220,6 +220,12 @@ def is_duplicate_voice_transcript(text: str, previous_text: str, now: float, pre
   previous = normalize_voice_transcript(previous_text)
   return bool(current and previous and current == previous and (now - previous_at) <= window)
 
+def should_stop_for_silence(first_voice_at, last_voice_at, now: float, silence_seconds: float) -> bool:
+  """Whether VAD observed speech followed by the configured silence interval."""
+  return first_voice_at is not None and last_voice_at is not None and (now - last_voice_at) >= max(0.4, float(silence_seconds))
+
+def should_timeout_without_speech(first_voice_at, started_at: float, now: float, timeout: float = VOICE_NO_SPEECH_TIMEOUT_SECONDS) -> bool:
+  return first_voice_at is None and (now - started_at) >= max(1.0, float(timeout))
 def speech_friendly_text(text: str, limit: int = 500) -> str:
   """Remove markup, code and stack traces before handing text to TTS."""
   value = str(text or "").strip()
@@ -1263,10 +1269,10 @@ class K8sGoogleSpeechWorker(QThread):
               first_voice_at = now
             last_voice_at = now
           if self._auto_stop_on_silence:
-            if first_voice_at is None and now - started >= VOICE_NO_SPEECH_TIMEOUT_SECONDS:
+            if should_timeout_without_speech(first_voice_at, started, now):
               self.error.emit("No speech detected. Check the microphone and speak a little closer to it.")
               return
-            if first_voice_at is not None and last_voice_at is not None and now - last_voice_at >= self._silence_seconds:
+            if should_stop_for_silence(first_voice_at, last_voice_at, now, self._silence_seconds):
               break
         self.level.emit(0)
         self.stopped.emit()
