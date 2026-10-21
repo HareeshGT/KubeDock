@@ -101,4 +101,4 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - [x] Show a targeted billing message with the official billing URL when the API reports insufficient quota/no remaining credits.
 - [x] Preserve neural preference but fall back to local system speech for the remainder of the session; automatic speech turns do not repeatedly call the paid endpoint. Users can manually retry with Preview after addressing billing.
 - [x] Add tests for insufficient-quota classification, billing guidance, redaction of credentials, and distinguishing normal rate limits.
-- GitHub Actions validation is running for this quota-handling patch.
+- GitHub Actions validation on Python 3.12: focused voice/security/ops tests **33 passed**; full suite **178 passed, 1 skipped**. Two SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39672886957
