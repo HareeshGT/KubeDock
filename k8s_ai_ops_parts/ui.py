@@ -34,7 +34,7 @@ from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
-from .core import _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE
+from .core import _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE, _QWEN_TTS_AVAILABLE
 
 
 class K8sAIOpsUIMixin:
@@ -56,7 +56,13 @@ class K8sAIOpsUIMixin:
         self._voice_engine = get_voice_engine()
         if self._voice_engine == "openai" and not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
             self._voice_engine = "system"
-        self._voice_feedback_available = bool(_TTS_AVAILABLE or (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE and ai_assist.get_api_key('openai')))
+        if self._voice_engine == "qwen" and not _QT_MULTIMEDIA_AVAILABLE:
+            self._voice_engine = "system"
+        self._voice_feedback_available = bool(
+            _TTS_AVAILABLE
+            or (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE and ai_assist.get_api_key('openai'))
+            or (_QWEN_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE)
+        )
         self._voice_feedback_enabled = bool(self._voice_feedback_available and get_voice_feedback_enabled())
         self._voice_id = get_voice_id(self._personality) if _TTS_AVAILABLE else ''
         self._continuous_voice_enabled = bool(get_continuous_voice_enabled() and _VOICE_AVAILABLE)
@@ -68,6 +74,10 @@ class K8sAIOpsUIMixin:
         self._neural_current_text = ''
         self._neural_temp_file = None
         self._neural_tts_failed = False
+        self._qwen_tts_model = get_qwen_tts_model()
+        self._qwen_tts_failed = not _QWEN_TTS_AVAILABLE
+        self._qwen_worker = None
+        self._qwen_job_active = False
         self._neural_playback_active = False
         self._neural_audio_player = QMediaPlayer(self) if _QT_MULTIMEDIA_AVAILABLE else None
         self._neural_end_of_media_status = QMediaPlayer.EndOfMedia if _QT_MULTIMEDIA_AVAILABLE else None
