@@ -6,6 +6,8 @@ from k8s_ai_ops_parts.core import (
     is_duplicate_voice_transcript,
     normalize_voice_transcript,
     personality_prompt_style,
+    personalize_local_response,
+    personalize_spoken_phrase,
     should_stop_for_silence,
     should_timeout_without_speech,
     speech_friendly_text,
@@ -68,6 +70,18 @@ class VoiceConversationTests(unittest.TestCase):
     def test_tts_sanitizer_replaces_raw_json(self):
         text = speech_friendly_text('{"action":"delete","resource":"pod","name":"api-1"}')
         self.assertEqual(text, "The structured operation details are available in the written response.")
+
+    def test_local_responses_change_with_selected_personality(self):
+        base = "Hello! Tell me what you want to do in Kubernetes."
+        self.assertIn("investigate", personalize_local_response(base, "jarvis"))
+        self.assertIn("check", personalize_local_response(base, "friday"))
+        self.assertIn("online", personalize_local_response(base, "edith"))
+
+    def test_spoken_operation_results_are_conversational(self):
+        self.assertEqual(personalize_spoken_phrase("Get completed.", "jarvis"), "The requested information is ready.")
+        self.assertIn("found", personalize_spoken_phrase("Get completed.", "friday"))
+        self.assertIn("complete", personalize_spoken_phrase("Get completed.", "edith"))
+        self.assertIn("unconfirmed", personalize_spoken_phrase("Restart failed.", "jarvis"))
 
     def test_personalities_have_distinct_style_and_voice_profiles(self):
         self.assertEqual(set(PERSONALITY_CONFIG), {"jarvis", "friday", "edith"})
