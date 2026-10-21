@@ -70,7 +70,7 @@ class K8sAIOpsVoiceMixin:
             self._narrator = None
         if hasattr(self, "voice_hint_lbl"):
             if engine == "openai":
-                self.voice_hint_lbl.setText("Neural AI voice enabled. Audio is generated with OpenAI Realtime using your OpenAI API key; this is an original character-inspired voice, not a character/actor clone.")
+                self.voice_hint_lbl.setText("Neural TTS enabled · OpenAI gpt-4o-mini-tts. This is an original character-inspired voice direction, not an exact character/actor clone.")
             else:
                 self.voice_hint_lbl.setText("Offline system voice enabled. Voice input sends captured speech to Google Web Speech for transcription; KubeDock does not save raw recordings.")
         if engine == "openai":
