@@ -102,3 +102,24 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - [x] Preserve neural preference but fall back to local system speech for the remainder of the session; automatic speech turns do not repeatedly call the paid endpoint. Users can manually retry with Preview after addressing billing.
 - [x] Add tests for insufficient-quota classification, billing guidance, redaction of credentials, and distinguishing normal rate limits.
 - GitHub Actions validation on Python 3.12: focused voice/security/ops tests **33 passed**; full suite **178 passed, 1 skipped**. Two SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39672886957
+
+
+## Qwen3-TTS local voice engine (2026-10-22)
+
+### Implementation
+- [x] Added a third engine choice, **Qwen3-TTS · Local**, alongside OpenAI neural TTS and System · Offline. Selecting Qwen does not read or require an OpenAI API key.
+- [x] Added persona-specific local voice instructions for JARVIS (measured contemporary British-English), FRIDAY (warm conversational delivery with a subtle Irish-English lilt), and EDITH (calm, precise, analytical delivery). These are inspired voice directions, not exact actor/character clones.
+- [x] Added model choices: **Voice Design · 1.7B** for natural-language voice design and **Lower memory · 0.6B** for preset speaker voices on lower-memory machines.
+- [x] Loads Qwen on demand in a dedicated worker thread and reuses loaded weights between utterances. Handles model-load/inference errors by speaking via the local system voice.
+- [x] Uses the current voice/pace settings for Qwen generation, clips output duration, writes temporary WAV files with restrictive permissions, deletes them after playback, and rejects stale audio after interruption/engine change.
+- [x] Unloads Qwen weights when the user switches to another TTS engine or exits Ops Mind to free GPU/MPS memory.
+- [x] Added optional installation requirements in `requirements-qwen-tts.txt`; the primary `requirements.txt` remains unchanged so the heavier ML stack is not installed for users who do not choose Qwen.
+- [x] Added tests for Qwen model IDs, personality instructions, pace handling, local-engine selection without an OpenAI key, settings persistence, and WAV output conversion.
+
+### Install and runtime requirements
+- Use an isolated Python 3.12 environment for the optional TTS runtime where possible, then install with `python -m pip install -r requirements-qwen-tts.txt` using the same Python interpreter that launches KubeDock.
+- The requirement currently pins an upstream compatibility branch (Qwen3-TTS PR #360) because the PyPI release's exact Transformers dependency conflicts with the current model code. This is an explicitly documented compatibility workaround, not an official upstream release. Check the upstream PR before upgrading that pin: https://github.com/QwenLM/Qwen3-TTS/pull/360
+- First use downloads model weights and can take several minutes and multiple GB of disk space. The 1.7B model needs more memory; choose 0.6B if model loading exhausts local memory. CUDA has the most-tested acceleration path; Apple Silicon MPS is attempted when available but should be treated as less-tested than CUDA.
+- Speech generation is local after the model weights are downloaded. It does not call OpenAI's paid TTS endpoint. Microphone transcription is unchanged and still sends captured audio to Google Web Speech; this change only localizes speech synthesis.
+- If Qwen is not installed, the application remains usable and shows installation guidance. System speech remains available as a fallback. Core dependencies are not changed.
+- Regression results for this branch will be added after CI completes.
