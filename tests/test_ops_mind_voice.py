@@ -271,8 +271,10 @@ class VoiceConversationTests(unittest.TestCase):
         compact = get_qwen_tts_model_config("custom_voice")
         self.assertEqual(design["model_id"], QWEN_VOICEDESIGN_MODEL_ID)
         self.assertTrue(design["voice_design"])
+        self.assertTrue(design["supports_voice_instructions"])
         self.assertEqual(compact["model_id"], QWEN_CUSTOMVOICE_MODEL_ID)
         self.assertFalse(compact["voice_design"])
+        self.assertFalse(compact["supports_voice_instructions"])
         self.assertEqual(compact["key"], "custom_voice")
 
     def test_qwen_engine_is_independent_of_openai_credits_or_key(self):
@@ -286,6 +288,17 @@ class VoiceConversationTests(unittest.TestCase):
             save_qwen_tts_model("custom_voice")
         save.assert_called_once_with(**{QWEN_TTS_MODEL_SETTINGS_KEY: "custom_voice"})
 
+    def test_qwen_worker_assigns_ids_to_ignore_stale_audio_after_interruptions(self):
+        worker = _Qwen3TTSWorker()
+        first = worker.enqueue("hello", "jarvis", "natural", "voice_design")
+        second = worker.enqueue("goodbye", "friday", "brisk", "custom_voice")
+        self.assertGreater(second, first)
+        first_job = worker._requests.get_nowait()
+        second_job = worker._requests.get_nowait()
+        self.assertEqual(first_job[0], first)
+        self.assertEqual(second_job[0], second)
+        self.assertEqual(first_job[1], "hello")
+        self.assertEqual(second_job[1], "goodbye")
     def test_qwen_wav_conversion_creates_a_valid_pcm_wav(self):
         try:
             import numpy as np
