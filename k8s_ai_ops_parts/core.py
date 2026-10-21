@@ -272,8 +272,15 @@ def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> 
     key = "jarvis"
   profile = dict(NEURAL_VOICE_PROFILES[key])
   factor = VOICE_PACE_FACTORS.get(str(pace or "natural").strip().lower(), 1.0)
-  profile["speed"] = max(0.7, min(1.3, round(profile["speed"] * factor, 2)))
-  profile["instructions"] = str(profile["instructions"])
+  speed = max(0.7, min(1.3, round(profile["speed"] * factor, 2)))
+  profile["speed"] = speed
+  if speed < 0.9:
+    pace_instruction = "Deliver at a deliberately unhurried pace with slightly longer pauses between clauses."
+  elif speed > 1.08:
+    pace_instruction = "Deliver at a brisk, energetic pace while keeping every word clearly intelligible."
+  else:
+    pace_instruction = "Deliver at a natural conversational pace with clean, comfortable pauses."
+  profile["instructions"] = str(profile["instructions"]) + " " + pace_instruction
   return profile
 
 def personality_prompt_style(personality: str = None) -> str:
@@ -1486,7 +1493,13 @@ class _OpenAINeuralTTSWorker(QThread):
   def __init__(self, api_key: str, text: str, personality: str, pace: str = "natural", parent=None):
     super().__init__(parent)
     self._api_key = str(api_key or "").strip()
-    self._text = speech_friendly_text(text, limit=500)
+    # TTS is an external API call too; sanitize credential-shaped content
+    # before sending any spoken phrase off-device.
+    redacted_text = ai_assist._redact_sensitive_text(
+      str(text or ""),
+      secrets=[self._api_key] if self._api_key else [],
+    )
+    self._text = speech_friendly_text(redacted_text, limit=500)
     self._personality = personality
     self._pace = pace
     self._cancelled = threading.Event()
