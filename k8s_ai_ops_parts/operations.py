@@ -210,7 +210,7 @@ class K8sAIOpsOperationsMixin:
             self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
             self._remember_conversation_turn('assistant', action['reason'])
             self._write_info('\nAI needs more information:\n' + action['reason'])
-            self._speak('I need more information to do that.')
+            self._speak(action.get('reason') or 'I need more information to do that.')
             self.request_input.setFocus()
             return
         if action['kind'] == 'unsupported':
@@ -219,10 +219,22 @@ class K8sAIOpsOperationsMixin:
             self._write_error('\n' + action['reason'])
             self._speak(action.get('reason') or "That operation isn't supported.")
             return
+        if action.get('action') == 'logs' and not action.get('namespace'):
+            target = resolve_target_from_history(action, self._history, self._kube_context())
+            if target:
+                action['namespace'], action['name'] = target
+                self._write_info(f"\nUsing pod {action['name']} in namespace \"{action['namespace']}\" from earlier context.")
+            else:
+                reason = "Please specify the namespace for that pod's logs, or first look up the pod so I can resolve it unambiguously."
+                self._remember_conversation_turn('assistant', reason)
+                self._write_info('\n' + reason)
+                self._speak(reason)
+                self.request_input.setFocus()
+                return
         if action.get('action') == 'get' and (action.get('key') or action.get('keys')) and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace to read keys from this {action.get('resource')}."
             self._write_info('\nAI needs more information:\n' + reason)
-            self._speak('I need the Kubernetes namespace to do that.')
+            self._speak(reason)
             self.request_input.setFocus()
             return
         if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
@@ -237,7 +249,7 @@ class K8sAIOpsOperationsMixin:
         if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace for this {action.get('action')} operation."
             self._write_info('\nAI needs more information:\n' + reason)
-            self._speak('I need the Kubernetes namespace to do that safely.')
+            self._speak(reason)
             self.request_input.setFocus()
             return
         self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
