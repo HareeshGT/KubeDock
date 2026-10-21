@@ -52,7 +52,7 @@ class K8sAIOpsVoiceMixin:
         engine = str(self.voice_engine_combo.itemData(index) or "system").lower()
         if engine == "openai":
             if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
-                QMessageBox.information(self, "Neural Voice Unavailable", "Install the updated KubeDock requirements to enable OpenAI Realtime neural voices.")
+                QMessageBox.information(self, "Neural Voice Unavailable", "Qt Multimedia audio playback is unavailable in this KubeDock build. Use a build that includes PyQt5.QtMultimedia or select System · Offline.")
                 engine = "system"
             elif not ai_assist.get_api_key("openai"):
                 QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Neural voice generation uses OpenAI API usage and may incur charges.")
@@ -63,6 +63,8 @@ class K8sAIOpsVoiceMixin:
         self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData(engine)))
         self.voice_engine_combo.blockSignals(False)
         self.voice_combo.setEnabled(engine == "system" and _TTS_AVAILABLE)
+        self.voice_combo_label.setVisible(engine == "system")
+        self.voice_combo.setVisible(engine == "system")
         self._neural_tts_failed = False
         self._stop_neural_voice(clear_queue=True)
         if self._narrator is not None:
