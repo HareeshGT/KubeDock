@@ -1,0 +1,64 @@
+name: Temporary Qwen Homebrew Python Path Validation
+
+on:
+  push:
+    branches:
+      - fix/qwen-python312-homebrew-path
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate installer syntax
+        run: |
+          bash -n installer/installer.sh
+          bash -n installer/build_pkg.sh
+          python -m py_compile installer/installer-win.py
+          echo "Installer syntax checks passed."
+      - name: Exercise versioned Python candidate resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/formula/bin" "$tmp/brew/bin"
+          cat > "$tmp/formula/bin/python3.12" <<'PY'
+          #!/usr/bin/env bash
+          exec python3.12 "$@"
+          PY
+          chmod +x "$tmp/formula/bin/python3.12"
+          FORMULA_PREFIX="$tmp/formula"
+          BREW_PREFIX="$tmp/brew"
+          PYTHON_MINOR="3.12"
+          PYTHON=""
+          PYTHON_CANDIDATES=(
+            "$FORMULA_PREFIX/bin/python3.12"
+            "$BREW_PREFIX/bin/python3.12"
+            "$FORMULA_PREFIX/libexec/bin/python3.12"
+            "$FORMULA_PREFIX/bin/python3"
+            "$FORMULA_PREFIX/libexec/bin/python3"
+          )
+          for candidate in "${PYTHON_CANDIDATES[@]}"; do
+            if [ -x "$candidate" ] && "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (${PYTHON_MINOR/./, }) else 1)" >/dev/null 2>&1; then
+              PYTHON="$candidate"
+              break
+            fi
+          done
+          test "$PYTHON" = "$tmp/formula/bin/python3.12"
+          echo "Versioned Python 3.12 candidate resolution passed."
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Full regression suite
+        run: python -m pytest -q
