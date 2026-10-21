@@ -354,9 +354,28 @@ class K8sAIOpsVoiceMixin:
             return
         self._speak_system(styled_text)
     def _preview_personality_voice(self):
-        if self._continuous_voice_enabled or self._voice_recording or self._voice_worker is not None:
-            self._write_info("\n Pause hands-free listening before previewing the assistant voice.")
+        if self._busy:
+            self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
             return
+        worker = self._voice_worker
+        if worker is not None:
+            if not self._continuous_voice_enabled:
+                self._write_info("\n Stop the current push-to-talk capture before previewing the assistant voice.")
+                return
+            # Hands-free capture is paused, not disabled or forgotten. The
+            # selected voice previews as soon as the microphone worker exits;
+            # normal narration completion will resume hands-free listening.
+            self._voice_preview_pending = True
+            self._voice_error_occurred = False
+            self._restart_voice_timer.stop()
+            self._continuous_restart_pending = False
+            worker.cancel()
+            self._write_info("\n Pausing hands-free capture to preview the selected assistant voice…")
+            return
+        self._restart_voice_timer.stop()
+        self._play_personality_voice_preview()
+
+    def _play_personality_voice_preview(self):
         if self._busy:
             self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
             return
@@ -367,7 +386,6 @@ class K8sAIOpsVoiceMixin:
             self._neural_tts_failed = False
         preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
         self._speak(preview, force=True)
-
     def _on_narration_phrase_finished(self):
         if self._continuous_voice_enabled and not self._busy:
             self._continuous_restart_pending = True
@@ -529,6 +547,11 @@ class K8sAIOpsVoiceMixin:
             self.mic_level_bar.setValue(0)
         if hasattr(self, "mic_level_label"):
             self.mic_level_label.setText("Mic")
+        if self._voice_preview_pending:
+            self._voice_preview_pending = False
+            self._set_voice_state("IDLE")
+            QTimer.singleShot(180, self._play_personality_voice_preview)
+            return
         if self._busy:
             self._set_voice_state("THINKING")
         elif self._voice_error_occurred:
