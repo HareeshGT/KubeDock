@@ -35,3 +35,8 @@ The final live-evidence refinement fetches the alternate log stream without re-r
 - Rollout verification is bounded to 30 seconds. A timeout, RBAC error, or unavailable connection reports `unverified` and requires a manual state check.
 - Credential redaction is heuristic defense-in-depth and cannot guarantee detection of every organization-specific secret format. Kubernetes Secret values/private keys are not proactively queried for AI context.
 - Transient retries are deliberately limited to one retry for connection failures and HTTP 5xx. Rate limits and timeouts are not retried to avoid unnecessary duplicate provider calls/costs.
+
+
+## Post-merge follow-up (2026-10-21)
+
+A quick review of the merged code found that resource evidence was tail-truncated to fit the prompt budget. For long pod descriptions this could drop the initial readiness/container state while retaining only later events. Added `_clip_resource_evidence()` to preserve both the beginning (status/configuration) and ending (events/metrics) within the same 4,000-character budget, with a marker showing omitted middle content. Added a regression test covering both ends. GitHub Actions validation passed: focused tests **11 passed**; full suite **156 passed, 1 skipped**. Two existing SpeechRecognition deprecation warnings remain.

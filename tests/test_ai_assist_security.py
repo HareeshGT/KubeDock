@@ -32,6 +32,22 @@ class AIContextSecurityTests(unittest.TestCase):
         self.assertNotIn("super-secret-password", prompt)
         self.assertNotIn("super-secret-token", prompt)
 
+    def test_resource_evidence_clip_preserves_head_and_tail(self):
+        resource = (
+            "Name: api-123\nNamespace: prod\nStatus: Running\n"
+            "Containers:\n  State: Running\n  Ready: False\n"
+            + "".join(f"annotation-{i}: value-{i}\n" for i in range(500))
+            + "Events:\n  Warning BackOff: restarting container\n"
+            "Metrics:\n  api 120m 256Mi"
+        )
+        clipped = ai_assist._clip_resource_evidence(resource, limit=4_000)
+        self.assertLessEqual(len(clipped), 4_000)
+        self.assertIn("Status: Running", clipped)
+        self.assertIn("Ready: False", clipped)
+        self.assertIn("Warning BackOff", clipped)
+        self.assertIn("api 120m 256Mi", clipped)
+        self.assertIn("middle of resource evidence omitted", clipped)
+
     def test_followup_context_is_redacted_and_bounded(self):
         prompt = ai_assist._build_followup_prompt(
             "Pod: api\nDB_PASSWORD=super-secret-password",
