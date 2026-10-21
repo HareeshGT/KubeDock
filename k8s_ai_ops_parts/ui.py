@@ -140,7 +140,11 @@ class K8sAIOpsUIMixin:
         root.addWidget(examples)
         initial_voice_hint = {
             "openai": "OpenAI neural voice selected · API usage may incur charges. ",
-            "qwen": "Qwen3-TTS local voice selected · no per-utterance API fee; first use downloads model weights. ",
+            "qwen": (
+                "Qwen3-TTS selected, but its optional local runtime is missing. Install requirements-qwen-tts.txt and restart. "
+                if not _QWEN_TTS_AVAILABLE
+                else "Qwen3-TTS local voice selected · no per-utterance API fee; first use downloads model weights. "
+            ),
             "system": "Using the local system voice. ",
         }.get(self._voice_engine, "Using the local system voice. ")
         self.voice_hint_lbl = QLabel(
@@ -320,7 +324,7 @@ class K8sAIOpsUIMixin:
         self.voice_volume_slider.setFixedWidth(75)
         self.voice_volume_slider.setToolTip("Speech playback volume")
         self.voice_volume_slider.valueChanged.connect(self._on_voice_volume_changed)
-        self.voice_volume_slider.setEnabled(self._voice_engine == "openai" or _TTS_AVAILABLE)
+        self.voice_volume_slider.setEnabled(self._voice_engine in {"openai", "qwen"} or _TTS_AVAILABLE)
         voice_settings_row2.addWidget(self.voice_volume_slider)
 
         self.voice_state_lbl = QLabel(self._voice_state_machine.state)
