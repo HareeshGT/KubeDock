@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from k8s_ai_ops_parts.core import (
     PERSONALITY_CONFIG,
@@ -83,6 +84,13 @@ class VoiceConversationTests(unittest.TestCase):
         self.assertIn("complete", personalize_spoken_phrase("Get completed.", "edith"))
         self.assertIn("unconfirmed", personalize_spoken_phrase("Restart failed.", "jarvis"))
 
+    def test_explicit_system_default_voice_does_not_fall_back_to_legacy_voice(self):
+        from k8s_ai_ops_parts import core
+        with patch.object(core, "load_settings", return_value={
+            core.PERSONALITY_VOICES_SETTINGS_KEY: {"friday": ""},
+            core.VOICE_ID_SETTINGS_KEY: "legacy-non-default-voice",
+        }):
+            self.assertEqual(core.get_voice_id("friday"), "")
     def test_personalities_have_distinct_style_and_voice_profiles(self):
         self.assertEqual(set(PERSONALITY_CONFIG), {"jarvis", "friday", "edith"})
         self.assertEqual(len({config["rate"] for config in PERSONALITY_CONFIG.values()}), 3)
