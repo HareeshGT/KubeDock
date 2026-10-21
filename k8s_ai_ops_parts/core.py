@@ -1540,7 +1540,7 @@ class _OpenAINeuralTTSWorker(QThread):
           "instructions": profile["instructions"],
           "audio": {
             "output": {
-              "format": {"type": "audio/pcm", "rate": NEURAL_TTS_SAMPLE_RATE},
+              "format": {"type": "audio/pcm"},
               "voice": profile["voice"],
             },
           },
