@@ -121,9 +121,9 @@ class K8sAIOpsVoiceMixin:
         factor = VOICE_PACE_FACTORS.get(self._voice_pace, 1.0)
         return int(base * factor)
 
-    def _speak(self, text: str):
-        """Queue concise, presentation-safe speech through the local TTS engine."""
-        if not self._voice_feedback_enabled or not _TTS_AVAILABLE:
+    def _speak(self, text: str, force: bool = False):
+        """Queue concise, presentation-safe speech through local TTS."""
+        if (not self._voice_feedback_enabled and not force) or not _TTS_AVAILABLE:
             return
         if self._narrator is None or not self._narrator.isRunning():
             self._narrator = _NarrationThread(
@@ -137,6 +137,15 @@ class K8sAIOpsVoiceMixin:
             self._narrator.idle.connect(self._on_narrator_idle)
             self._narrator.start()
         self._narrator.speak(text)
+
+    def _preview_personality_voice(self):
+        if self._busy:
+            self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
+            return
+        if self._narrator is not None:
+            self._narrator.interrupt()
+        preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
+        self._speak(preview, force=True)
 
     def _on_narration_phrase_finished(self):
         if self._continuous_voice_enabled and not self._busy:
