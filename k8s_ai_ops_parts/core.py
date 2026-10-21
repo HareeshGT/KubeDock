@@ -1,11 +1,10 @@
-import base64
-import io
 import json
 import queue
 import re
 import threading
 import time
-import wave
+import urllib.error
+import urllib.request
 from datetime import datetime
 import os
 import sys
@@ -52,12 +51,7 @@ except ImportError:
   pyttsx3 = None
   _TTS_AVAILABLE = False
 
-try:
-  import websocket
-  _NEURAL_TTS_AVAILABLE = True
-except ImportError:
-  websocket = None
-  _NEURAL_TTS_AVAILABLE = False
+_NEURAL_TTS_AVAILABLE = True  # Neural TTS uses the standard-library HTTP client.
 
 GOOGLE_STT_LANGUAGE = "en-IN"
 VOICE_MAX_SECONDS = 90
@@ -129,7 +123,7 @@ VOICE_SILENCE_SETTINGS_KEY = "k8s_ops_voice_silence_seconds"
 VOICE_PACE_SETTINGS_KEY = "k8s_ops_voice_pace"
 VOICE_VOLUME_SETTINGS_KEY = "k8s_ops_voice_volume"
 VOICE_ENGINE_SETTINGS_KEY = "k8s_ops_voice_engine"
-OPENAI_REALTIME_TTS_MODEL = "gpt-realtime-2.1-mini"
+OPENAI_NEURAL_TTS_MODEL = "gpt-4o-mini-tts"
 NEURAL_TTS_SAMPLE_RATE = 24000
 NEURAL_TTS_MAX_AUDIO_BYTES = 12 * 1024 * 1024
 PERSONALITY_CONFIG = {
@@ -140,18 +134,18 @@ PERSONALITY_CONFIG = {
 NEURAL_VOICE_PROFILES = {
   "jarvis": {
     "voice": "cedar",
-    "speed": 0.96,
-    "instructions": "Speak with an original, polished British-English cinematic AI-assistant delivery: low, warm resonance; crisp consonants; measured tempo; elegant short pauses; composed, discreet, quietly reassuring, with understated dry wit only when the text supports it. Keep vocal variation controlled and natural, never metallic or monotone. Do not imitate any specific actor or existing fictional character. Read only the provided text exactly; do not add words or commentary.",
+    "speed": 0.92,
+    "instructions": "Use a measured, cinematic delivery in a polished contemporary British-English accent. Aim for a resonant lower-mid register, steady pitch movement, crisp consonants, restrained emotion, and deliberate pauses between clauses. Sound intelligent, composed, discreet, confident, and quietly reassuring, with very subtle dry wit only when the words support it. Avoid a cheerful announcer tone, exaggerated drama, a flat monotone, or an artificial robotic effect. Pronounce technical terms clearly. This is an original voice direction, not an imitation of a particular actor or fictional character. Speak the supplied text verbatim without adding commentary.",
   },
   "friday": {
     "voice": "coral",
-    "speed": 1.04,
-    "instructions": "Speak in an original, confident, warm feminine-presenting assistant voice: bright and natural intonation, lightly playful energy, quick but clear phrasing, conversational warmth, and a subtle Irish lilt without exaggeration. Sound like a capable teammate under pressure, never cartoonish. Do not imitate any specific actor or existing fictional character. Read only the provided text exactly; do not add words or commentary.",
+    "speed": 1.02,
+    "instructions": "Use an original, warm, feminine-presenting assistant voice with lively but controlled intonation and a natural, confident conversational cadence. Be agile, direct, friendly, lightly playful, and reassuring without sounding bubbly or childish. A very subtle Irish-English lilt is acceptable, but keep pronunciation clear and understated. This is an original voice direction, not an imitation of a particular actor or fictional character. Speak the supplied text verbatim without adding commentary.",
   },
   "edith": {
     "voice": "sage",
-    "speed": 0.98,
-    "instructions": "Speak in an original, composed feminine-presenting digital-assistant voice: cool precision, clean articulation, controlled emotional variation, deliberate pacing, restrained authority, and a subtle futuristic edge. Sound analytical and confident rather than robotic. Do not imitate any specific actor or existing fictional character. Read only the provided text exactly; do not add words or commentary.",
+    "speed": 0.96,
+    "instructions": "Use an original, composed feminine-presenting digital-assistant voice with clean articulation, cool precision, restrained emotion, deliberate phrasing, and quiet authority. Sound analytical and alert, slightly futuristic but still human and natural; do not sound cold, breathy, theatrical, or monotone. Prioritize clear enunciation and decisive sentence endings. This is an original voice direction, not an imitation of a particular actor or fictional character. Speak the supplied text verbatim without adding commentary.",
   },
 }
 VOICE_PACE_FACTORS = {"slow": 0.88, "natural": 1.0, "brisk": 1.12}
@@ -1482,10 +1476,10 @@ class K8sGoogleSpeechWorker(QThread):
 
 
 class _OpenAINeuralTTSWorker(QThread):
-  """Generate a single spoken phrase with OpenAI Realtime audio in a worker thread.
+  """Generate expressive speech using OpenAI's dedicated text-to-speech API.
 
-  Audio is requested from the Realtime WebSocket (not the deprecated Speech API),
-  buffered only in memory, wrapped as a WAV stream, and handed to the UI player.
+  The HTTP request runs off the UI thread. The returned WAV is buffered in
+  bounded memory, then played by the Qt audio player. It is never logged.
   """
   audio_ready = pyqtSignal(bytes)
   error = pyqtSignal(str)
@@ -1493,155 +1487,97 @@ class _OpenAINeuralTTSWorker(QThread):
   def __init__(self, api_key: str, text: str, personality: str, pace: str = "natural", parent=None):
     super().__init__(parent)
     self._api_key = str(api_key or "").strip()
-    # TTS is an external API call too; sanitize credential-shaped content
-    # before sending any spoken phrase off-device.
     redacted_text = ai_assist._redact_sensitive_text(
-      str(text or ""),
-      secrets=[self._api_key] if self._api_key else [],
+      str(text or ""), secrets=[self._api_key] if self._api_key else [],
     )
     self._text = speech_friendly_text(redacted_text, limit=500)
     self._personality = personality
     self._pace = pace
     self._cancelled = threading.Event()
-    self._socket_lock = threading.Lock()
-    self._socket = None
     self.finished.connect(self.deleteLater)
 
   def cancel(self):
     self._cancelled.set()
-    with self._socket_lock:
-      ws = self._socket
-    if ws is not None:
-      try: ws.close()
-      except Exception: pass
 
   @staticmethod
-  def _event_error(event: dict) -> str:
-    detail = event.get("error") if isinstance(event, dict) else None
-    if isinstance(detail, dict):
-      return str(detail.get("message") or detail.get("code") or "Realtime voice request failed")[:500]
-    return str(detail or "Realtime voice request failed")[:500]
+  def _safe_api_error(body: bytes, api_key: str, status: int) -> str:
+    detail = ai_assist._redact_sensitive_text(
+      (body or b"")[:4096].decode("utf-8", errors="replace"),
+      secrets=[api_key] if api_key else [],
+    )
+    try:
+      parsed = json.loads(detail)
+      err = parsed.get("error", {}) if isinstance(parsed, dict) else {}
+      if isinstance(err, dict):
+        detail = str(err.get("message") or err.get("code") or detail)
+    except Exception:
+      pass
+    detail = re.sub(r"\s+", " ", detail).strip()[:400]
+    return f"OpenAI speech request failed (HTTP {status}): {detail or 'no error detail returned'}"
 
   def run(self):
     if not _NEURAL_TTS_AVAILABLE:
-      self.error.emit("Neural voice needs websocket-client. Install the updated KubeDock requirements.")
+      self.error.emit("Neural voice transport is unavailable.")
       return
     if not self._api_key:
       self.error.emit("Add an OpenAI API key in Settings → AI to use neural voices.")
       return
-    if not self._text:
+    if not self._text or self._cancelled.is_set():
       return
-    ws = None
     try:
       profile = get_neural_voice_profile(self._personality, self._pace)
-      url = f"wss://api.openai.com/v1/realtime?model={OPENAI_REALTIME_TTS_MODEL}"
-      ws = websocket.create_connection(
-        url,
-        header=[f"Authorization: Bearer {self._api_key}"],
-        timeout=12,
-        enable_multithread=True,
+      payload = json.dumps({
+        "model": OPENAI_NEURAL_TTS_MODEL,
+        "voice": profile["voice"],
+        "input": self._text,
+        "instructions": profile["instructions"],
+        "response_format": "wav",
+        "speed": profile["speed"],
+      }).encode("utf-8")
+      request = urllib.request.Request(
+        "https://api.openai.com/v1/audio/speech",
+        data=payload,
+        headers={
+          "Authorization": f"Bearer {self._api_key}",
+          "Content-Type": "application/json",
+          "Accept": "audio/wav",
+          "User-Agent": "KubeDock-OpsMind/1.0",
+        },
+        method="POST",
       )
-      ws.settimeout(1.0)
-      with self._socket_lock:
-        self._socket = ws
-      ws.send(json.dumps({
-        "type": "session.update",
-        "session": {
-          "type": "realtime",
-          "model": OPENAI_REALTIME_TTS_MODEL,
-          "output_modalities": ["audio"],
-          "instructions": profile["instructions"],
-          "audio": {
-            "output": {
-              "format": {"type": "audio/pcm"},
-              "voice": profile["voice"],
-            },
-          },
-        },
-      }))
-      session_deadline = time.monotonic() + 15
-      configured = False
-      while not self._cancelled.is_set() and time.monotonic() < session_deadline:
-        try:
-          event = json.loads(ws.recv())
-        except websocket.WebSocketTimeoutException:
-          continue
-        if event.get("type") == "error":
-          raise RuntimeError(self._event_error(event))
-        if event.get("type") == "session.updated":
-          configured = True
-          break
+      audio = bytearray()
+      with urllib.request.urlopen(request, timeout=30) as response:
+        content_length = response.headers.get("Content-Length", "")
+        if content_length.isdigit() and int(content_length) > NEURAL_TTS_MAX_AUDIO_BYTES:
+          raise ValueError("Generated voice audio exceeded the 12 MiB safety limit.")
+        while not self._cancelled.is_set():
+          chunk = response.read(64 * 1024)
+          if not chunk:
+            break
+          audio.extend(chunk)
+          if len(audio) > NEURAL_TTS_MAX_AUDIO_BYTES:
+            raise ValueError("Generated voice audio exceeded the 12 MiB safety limit.")
       if self._cancelled.is_set():
         return
-      if not configured:
-        raise TimeoutError("OpenAI Realtime voice session did not finish initializing.")
-      ws.send(json.dumps({
-        "type": "conversation.item.create",
-        "item": {
-          "type": "message",
-          "role": "user",
-          "content": [{"type": "input_text", "text": self._text}],
-        },
-      }))
-      ws.send(json.dumps({
-        "type": "response.create",
-        "response": {
-          "output_modalities": ["audio"],
-          "instructions": (
-            "This request is speech synthesis, not a conversation. Speak the provided "
-            "user text verbatim. Do not answer its meaning, paraphrase, summarize, "
-            "or add a greeting or other words. " + profile["instructions"]
-          ),
-        },
-      }))
-      pcm = bytearray()
-      response_deadline = time.monotonic() + 35
-      completed = False
-      while not self._cancelled.is_set() and time.monotonic() < response_deadline:
-        try:
-          event = json.loads(ws.recv())
-        except websocket.WebSocketTimeoutException:
-          continue
-        event_type = event.get("type")
-        if event_type == "error":
-          raise RuntimeError(self._event_error(event))
-        if event_type == "response.output_audio.delta":
-          chunk = base64.b64decode(event.get("delta", ""), validate=True)
-          pcm.extend(chunk)
-          if len(pcm) > NEURAL_TTS_MAX_AUDIO_BYTES:
-            raise ValueError("Neural voice audio exceeded the 12 MiB safety limit.")
-        elif event_type == "response.done":
-          response = event.get("response") or {}
-          status = response.get("status", "completed")
-          if status != "completed":
-            details = response.get("status_details") or {}
-            raise RuntimeError(str((details.get("error") or {}).get("message") or f"Voice response status: {status}")[:500])
-          completed = True
-          break
-      if self._cancelled.is_set():
-        return
-      if not completed:
-        raise TimeoutError("OpenAI Realtime voice generation timed out.")
-      if not pcm:
-        raise RuntimeError("OpenAI Realtime returned no audio data.")
-      audio_buffer = io.BytesIO()
-      with wave.open(audio_buffer, "wb") as audio_file:
-        audio_file.setnchannels(1)
-        audio_file.setsampwidth(2)
-        audio_file.setframerate(NEURAL_TTS_SAMPLE_RATE)
-        audio_file.writeframes(bytes(pcm))
+      if not audio:
+        raise RuntimeError("OpenAI returned an empty speech response.")
+      if not bytes(audio).startswith(b"RIFF") or bytes(audio)[8:12] != b"WAVE":
+        raise RuntimeError("OpenAI returned audio that was not a valid WAV file.")
+      self.audio_ready.emit(bytes(audio))
+    except urllib.error.HTTPError as exc:
+      try: body = exc.read(4096)
+      except Exception: body = b""
+      message = self._safe_api_error(body, self._api_key, exc.code)
       if not self._cancelled.is_set():
-        self.audio_ready.emit(audio_buffer.getvalue())
+        self.error.emit(message)
+    except urllib.error.URLError as exc:
+      if not self._cancelled.is_set():
+        reason = ai_assist._redact_sensitive_text(str(getattr(exc, "reason", exc)), secrets=[self._api_key])
+        self.error.emit(f"OpenAI speech connection failed: {reason[:300]}")
     except Exception as exc:
       if not self._cancelled.is_set():
         message = ai_assist._redact_sensitive_text(str(exc), secrets=[self._api_key])
         self.error.emit(message[:700] or "Neural voice generation failed.")
-    finally:
-      with self._socket_lock:
-        self._socket = None
-      if ws is not None:
-        try: ws.close()
-        except Exception: pass
 
 class _NarrationThread(QThread):
   """Single-engine local TTS worker with queue draining and best-effort interrupt."""
