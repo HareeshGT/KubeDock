@@ -133,7 +133,9 @@ class K8sAIOpsOperationsMixin:
         namespace = self._namespace()
         local_response = _general_question_response(request, namespace)
         if local_response is not None:
+            local_response = personalize_local_response(local_response, getattr(self, '_personality', 'jarvis'))
             self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(local_response).replace(chr(10), '<br>')}</span>""")
+            self._speak(local_response)
             self.status_lbl.setText('Ready')
             self.request_input.setFocus()
             return
