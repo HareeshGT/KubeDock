@@ -92,8 +92,7 @@ class K8sAIOpsVoiceMixin:
         worker = getattr(self, "_neural_worker", None)
         if worker is not None and worker.isRunning():
             worker.cancel()
-        else:
-            self._neural_current_text = ""
+        self._neural_current_text = ""
 
     def _cleanup_neural_temp_file(self):
         path = getattr(self, "_neural_temp_file", None)
@@ -140,7 +139,7 @@ class K8sAIOpsVoiceMixin:
         worker.start()
 
     def _on_neural_audio_ready(self, wav_bytes: bytes):
-        if self._voice_engine != "openai" or self._neural_tts_failed or not self._voice_feedback_enabled:
+        if not self._neural_current_text or self._voice_engine != "openai" or self._neural_tts_failed or not self._voice_feedback_enabled:
             return
         try:
             with tempfile.NamedTemporaryFile(prefix="kubedock-ops-mind-", suffix=".wav", delete=False) as handle:
@@ -252,6 +251,7 @@ class K8sAIOpsVoiceMixin:
         if self._narrator is not None:
             self._narrator.stop()
             self._narrator = None
+        self._stop_neural_voice(clear_queue=True)
         self._write_info(f"\nAssistant personality changed to {PERSONALITY_CONFIG[key]['label']}.")
         self.voice_hint_lbl.setText(
             f"{PERSONALITY_CONFIG[key]['label']} · local system voice · "
@@ -566,6 +566,8 @@ class K8sAIOpsVoiceMixin:
     def _on_voice_volume_changed(self, volume: int):
         self._voice_volume = max(0, min(100, int(volume)))
         save_voice_volume(self._voice_volume)
+        if self._neural_audio_player is not None and self._neural_playback_active:
+            self._neural_audio_player.setVolume(self._voice_volume)
         if self._narrator is not None and not self._narrator.is_speaking and not self._narrator.has_pending:
             self._replace_narrator()
 
