@@ -1618,6 +1618,25 @@ class _Qwen3TTSWorker(QThread):
     self.clear_pending()
     self._requests.put(None)
 
+  def release_model(self):
+    """Release GPU/MPS memory after the current synthesis finishes."""
+    if not self._shutdown.is_set():
+      self.clear_pending()
+      self._requests.put("__release_model__")
+
+  def _release_loaded_model(self):
+    self._model = None
+    self._model_id = ""
+    gc.collect()
+    try:
+      import torch
+      if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+      elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    except Exception:
+      pass
+
   def _load_model(self, model_id: str):
     if self._model is not None and self._model_id == model_id:
       return self._model
@@ -1696,6 +1715,9 @@ class _Qwen3TTSWorker(QThread):
     return buffer.getvalue()
 
   def _generate(self, text: str, personality: str, pace: str, model_key: str) -> bytes:
+    text = speech_friendly_text(ai_assist._redact_sensitive_text(str(text or "")), limit=500)
+    if not text:
+      raise RuntimeError("There is no safe text left to speak after removing code and sensitive values.")
     config = get_qwen_tts_model_config(model_key)
     profile = get_qwen_voice_profile(personality, pace)
     model = self._load_model(config["model_id"])
@@ -1718,6 +1740,10 @@ class _Qwen3TTSWorker(QThread):
       job = self._requests.get()
       if job is None or self._shutdown.is_set():
         break
+      if job == "__release_model__":
+        self._release_loaded_model()
+        self.status.emit("Qwen3-TTS model unloaded to free memory.")
+        continue
       job_id, text, personality, pace, model_key = job
       if not text.strip():
         continue
