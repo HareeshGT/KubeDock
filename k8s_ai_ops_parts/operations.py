@@ -127,13 +127,18 @@ class K8sAIOpsOperationsMixin:
         request = self.request_input.text().strip()
         if not request:
             return
+        self._last_submitted_request = request
         if len(request) > MAX_PROMPT_CHARS:
             self._write_error(f'Request is too long. Maximum is {MAX_PROMPT_CHARS} characters.')
             return
         namespace = self._namespace()
         local_response = _general_question_response(request, namespace)
         if local_response is not None:
+            self._remember_conversation_turn('user', request)
+            local_response = personalize_local_response(local_response, getattr(self, '_personality', 'jarvis'))
+            self._remember_conversation_turn('assistant', local_response)
             self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(local_response).replace(chr(10), '<br>')}</span>""")
+            self._speak(local_response)
             self.status_lbl.setText('Ready')
             self.request_input.setFocus()
             return
@@ -149,7 +154,7 @@ class K8sAIOpsOperationsMixin:
             self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
             if followup.get('clarify'):
                 self._write_info('\n' + followup['clarify'])
-                self._speak('I need more information to do that.')
+                self._speak(followup.get('clarify') or 'I need more information to do that.')
                 self.request_input.setFocus()
                 return
             self._write_info('\n' + followup['note'])
@@ -172,7 +177,11 @@ class K8sAIOpsOperationsMixin:
         self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')}</span>""")
         self._set_busy(True)
         self._speak('Processing your request.')
-        worker = K8sAIInterpretWorker(provider, api_key, ai_assist.get_model(provider), request, namespace, context, history_for_context)
+        worker = K8sAIInterpretWorker(
+            provider, api_key, ai_assist.get_model(provider), request,
+            namespace, context, history_for_context,
+            conversation=getattr(self, '_voice_conversation', []),
+        )
         worker.done.connect(self._on_ai_done)
         worker.error.connect(self._on_ai_error)
         worker.finished.connect(self._on_ai_finished)
@@ -188,19 +197,44 @@ class K8sAIOpsOperationsMixin:
             self._write_error(f'AI interpretation failed: {exc}')
             self._speak("Sorry, I couldn't understand that request.")
             return
+        if action['kind'] == 'conversation':
+            user_request = getattr(self, '_last_submitted_request', '')
+            response = action['response']
+            self._remember_conversation_turn('user', user_request)
+            self._remember_conversation_turn('assistant', response)
+            self.output.append(f"""<br><span style=\"color:{T['ACCENT']}; font-weight:700;\">Assistant:</span><br><span style=\"color:{T['TEXT_PRIMARY']}\">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+            self._speak(response)
+            self.request_input.setFocus()
+            return
         if action['kind'] == 'clarification':
+            self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+            self._remember_conversation_turn('assistant', action['reason'])
             self._write_info('\nAI needs more information:\n' + action['reason'])
-            self._speak('I need more information to do that.')
+            self._speak(action.get('reason') or 'I need more information to do that.')
             self.request_input.setFocus()
             return
         if action['kind'] == 'unsupported':
+            self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+            self._remember_conversation_turn('assistant', action['reason'])
             self._write_error('\n' + action['reason'])
-            self._speak("That operation isn't supported.")
+            self._speak(action.get('reason') or "That operation isn't supported.")
             return
+        if action.get('action') == 'logs' and not action.get('namespace'):
+            target = resolve_target_from_history(action, self._history, self._kube_context())
+            if target:
+                action['namespace'], action['name'] = target
+                self._write_info(f"\nUsing pod {action['name']} in namespace \"{action['namespace']}\" from earlier context.")
+            else:
+                reason = "Please specify the namespace for that pod's logs, or first look up the pod so I can resolve it unambiguously."
+                self._remember_conversation_turn('assistant', reason)
+                self._write_info('\n' + reason)
+                self._speak(reason)
+                self.request_input.setFocus()
+                return
         if action.get('action') == 'get' and (action.get('key') or action.get('keys')) and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace to read keys from this {action.get('resource')}."
             self._write_info('\nAI needs more information:\n' + reason)
-            self._speak('I need the Kubernetes namespace to do that.')
+            self._speak(reason)
             self.request_input.setFocus()
             return
         if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
@@ -215,9 +249,10 @@ class K8sAIOpsOperationsMixin:
         if action.get('action') in {'scale', 'restart', 'delete'} and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace for this {action.get('action')} operation."
             self._write_info('\nAI needs more information:\n' + reason)
-            self._speak('I need the Kubernetes namespace to do that safely.')
+            self._speak(reason)
             self.request_input.setFocus()
             return
+        self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
         self._execute_action(action)
 
     def _on_ai_error(self, message: str):
@@ -388,9 +423,44 @@ class K8sAIOpsOperationsMixin:
         track_worker(self._workers, worker)
         worker.start()
 
+    def _record_operation_conversation(self, action: dict, status: str, output: str = ""):
+        """Keep a short, redacted outcome for follow-ups, not raw logs or secret values."""
+        resource = str(action.get('resource') or '')
+        verb = str(action.get('action') or 'operation')
+        target = f"{resource}/{action.get('name') or '(unknown)'}"
+        namespace = str(action.get('namespace') or 'all namespaces')
+        if resource in {'secret', 'configmap'}:
+            evidence = "Resource values omitted from conversational memory for safety."
+        else:
+            evidence = ai_assist._redact_sensitive_text(str(output or '').strip())[-700:]
+        summary = f"Result: {verb} {target} in namespace {namespace} — {status}."
+        if evidence:
+            summary += f" Evidence excerpt (untrusted output): {evidence}"
+        self._remember_conversation_turn('assistant', summary)
+
     def _on_operation_result(self, action: dict, command: str, output: str, err: str, exit_code: int):
         output = (output or '').strip()
         error_text = (err or '').strip()
+        if action.get('action') == 'logs':
+            target = f"pod {action.get('name')} in namespace {action.get('namespace')}"
+            if exit_code != 0 or error_text:
+                detail = ai_assist._redact_sensitive_text(error_text or output or f"kubectl exited with code {exit_code}")[-700:]
+                self._remember_operation(action, command, 'failed', 'Log retrieval failed; raw output omitted from persistent history.')
+                self._record_operation_conversation(action, 'failed', detail)
+                self._write_error(f'\n Could not retrieve logs for {target}:\n{detail}')
+                self._speak(_spoken_done_phrase(action, success=False))
+                return
+            shown = output[-12000:]
+            if len(output) > len(shown):
+                shown = '[…earlier log lines omitted…]\n' + shown
+            safe_context = ai_assist._redact_sensitive_text(output)[-700:]
+            self.output.append(f"""<br><span style=\"color:{T['TEXT_DIM']}\">kubectl logs:</span><br><span style=\"color:{T['TEXT_PRIMARY']}\">{self._escape_html(shown).replace(chr(10), '<br>')}</span>""")
+            self._remember_operation(action, command, 'success', 'Logs retrieved; raw application output omitted from persistent history.')
+            self._record_operation_conversation(action, 'succeeded', safe_context)
+            self._write_success('\n Log retrieval completed. Raw logs are shown above and are not saved to persistent Ops Mind history.')
+            self._speak(_spoken_done_phrase(action, success=True))
+            self.operation_finished.emit()
+            return
         if action.get('action') == 'get' and action.get('keys'):
             requested = list(action['keys'])
             found, missing = ({}, [])
@@ -415,11 +485,13 @@ class K8sAIOpsOperationsMixin:
                 summary = (summary + '; ' if summary else '') + 'missing: ' + ', '.join(missing)
             if found:
                 self._remember_operation(action, command, 'success', summary)
+                self._record_operation_conversation(action, 'succeeded', summary)
                 self._write_success('\n Kubernetes operation completed successfully.')
                 self._speak(_spoken_done_phrase(action, success=True))
                 self.operation_finished.emit()
             else:
                 self._remember_operation(action, command, 'failed', summary)
+                self._record_operation_conversation(action, 'failed', summary)
                 self._speak(_spoken_done_phrase(action, success=False))
             return
         combined_lower = (output + ' ' + error_text).lower()
@@ -427,6 +499,7 @@ class K8sAIOpsOperationsMixin:
         if action.get('action') == 'get' and action.get('key') and (not resource_missing) and (exit_code != 0 or (not error_text and (not output))):
             message = 'Key not found. in resource. Check the key name and try again.'
             self._remember_operation(action, command, 'failed', message)
+            self._record_operation_conversation(action, 'failed', message)
             self._write_error(f'\n {message}')
             self._speak(_spoken_done_phrase(action, success=False))
             return
@@ -439,6 +512,7 @@ class K8sAIOpsOperationsMixin:
         if exit_code != 0 or error_text:
             combined = error_text or output or 'kubectl returned a non-zero exit code.'
             self._remember_operation(action, command, 'failed', combined)
+            self._record_operation_conversation(action, 'failed', combined)
             hint = _kubectl_failure_hint(combined)
             details = f'\n Kubernetes operation failed (exit code {exit_code}):\n{combined}'
             if hint:
@@ -450,6 +524,7 @@ class K8sAIOpsOperationsMixin:
             self._start_mutation_verification(action, command)
             return
         self._remember_operation(action, command, 'success', output)
+        self._record_operation_conversation(action, 'succeeded', output)
         self._write_success('\n Kubernetes operation completed successfully.')
         self._speak(_spoken_done_phrase(action, success=True))
         self.operation_finished.emit()
@@ -497,6 +572,7 @@ class K8sAIOpsOperationsMixin:
                 f"{(output or '').strip()}\nVerification: {detail}".strip(),
             )
             self._write_success(f'\n Kubernetes operation completed and verified: {detail}.')
+            self._record_operation_conversation(action, 'verified', detail)
             self._speak(_spoken_done_phrase(action, success=True))
             self.operation_finished.emit()
         else:
@@ -508,6 +584,7 @@ class K8sAIOpsOperationsMixin:
                 '\n The initial kubectl command returned success, but the resulting state was '
                 f'not verified: {detail}. Check the target resource before retrying.'
             )
+            self._record_operation_conversation(action, 'unverified', detail)
             self._speak(_spoken_done_phrase(action, success=False))
         self._set_busy(False)
 
@@ -588,9 +665,13 @@ class K8sAIOpsOperationsMixin:
         dlg.exec_()
 
     def closeEvent(self, event):
+        if getattr(self, "_restart_voice_timer", None) is not None:
+            self._restart_voice_timer.stop()
+        if getattr(self, "_voice_state_machine", None) is not None:
+            self._voice_state_machine.state = "CLOSED"
         if self._voice_worker is not None:
             try:
-                self._voice_worker.stop()
+                self._voice_worker.cancel()
             except Exception:
                 pass
         if self._narrator is not None:

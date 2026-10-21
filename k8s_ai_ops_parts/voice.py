@@ -1,3 +1,4 @@
+import time
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -13,7 +14,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QComboBox,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QGraphicsBlurEffect
 
@@ -26,51 +27,151 @@ from .core import _NarrationThread, _TTS_AVAILABLE, _VOICE_AVAILABLE
 
 class K8sAIOpsVoiceMixin:
     def _toggle_voice_feedback(self, checked: bool):
-        self._voice_feedback_enabled = checked and _TTS_AVAILABLE
-        apply_text_icon(self.speaker_btn, ' Speak' if self._voice_feedback_enabled else ' Speak', size=15)
+        self._voice_feedback_enabled = bool(checked and _TTS_AVAILABLE)
         save_voice_feedback_enabled(self._voice_feedback_enabled)
         if not self._voice_feedback_enabled and self._narrator is not None:
             self._narrator.stop()
             self._narrator = None
 
     def _populate_voice_combo(self):
-        """Fill the voice picker from the system's installed TTS voices,
-        selecting whichever one is currently persisted. Falls back to
-        "System Default" if nothing is persisted, or if a persisted voice
-        id no longer matches an installed voice (e.g. settings carried
-        over from a different machine)."""
         self.voice_combo.blockSignals(True)
         self.voice_combo.clear()
-        self.voice_combo.addItem('System Default', '')
+        self.voice_combo.addItem("System Default", "")
         for voice in list_voices():
-            self.voice_combo.addItem(voice['name'], voice['id'])
+            self.voice_combo.addItem(voice["name"], voice["id"])
         idx = self.voice_combo.findData(self._voice_id)
         self.voice_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.voice_combo.blockSignals(False)
 
+    def _on_personality_changed(self, index: int):
+        key = str(self.personality_combo.itemData(index) or "jarvis").lower()
+        if key not in PERSONALITY_CONFIG or key == self._personality:
+            return
+        save_voice_id(self._voice_id, self._personality)
+        self._personality = key
+        save_assistant_personality(key)
+        self._voice_id = get_voice_id(key) if _TTS_AVAILABLE else ""
+        self._populate_voice_combo()
+        if self._narrator is not None:
+            self._narrator.stop()
+            self._narrator = None
+        self._write_info(f"\nAssistant personality changed to {PERSONALITY_CONFIG[key]['label']}.")
+        self.voice_hint_lbl.setText(
+            f"{PERSONALITY_CONFIG[key]['label']} · local system voice · "
+            "Voice input sends captured audio to Google Web Speech; KubeDock does not save raw audio."
+        )
+
     def _on_voice_combo_changed(self, index: int):
-        voice_id = self.voice_combo.itemData(index) or ''
+        voice_id = self.voice_combo.itemData(index) or ""
         if voice_id == self._voice_id:
             return
         self._voice_id = voice_id
-        save_voice_id(voice_id)
+        save_voice_id(voice_id, self._personality)
         if self._narrator is not None:
             self._narrator.stop()
             self._narrator = None
 
-    def _speak(self, text: str):
-        """Queue `text` to be spoken aloud, if narration is available and
-        currently enabled. Safe to call from any point in the flow — a
-        disabled/unavailable narrator just drops the phrase."""
-        if not self._voice_feedback_enabled or not _TTS_AVAILABLE:
+    def _on_voice_silence_changed(self, index: int):
+        seconds = self.silence_combo.itemData(index)
+        if seconds is None:
             return
-        if self._narrator is None:
-            self._narrator = _NarrationThread(voice_id=self._voice_id, parent=self)
+        self._voice_silence_seconds = float(seconds)
+        save_voice_silence_seconds(self._voice_silence_seconds)
+
+    def _on_voice_pace_changed(self, index: int):
+        pace = str(self.voice_pace_combo.itemData(index) or "natural")
+        self._voice_pace = pace
+        save_voice_pace(pace)
+        if self._narrator is not None:
+            self._narrator.stop()
+            self._narrator = None
+
+    def _on_voice_volume_changed(self, volume: int):
+        self._voice_volume = max(0, min(100, int(volume)))
+        save_voice_volume(self._voice_volume)
+        # Volume is read when the next narrator instance starts to avoid
+        # touching an engine while its background thread is speaking.
+        if self._narrator is not None and not self._narrator.is_speaking and not self._narrator.has_pending:
+            self._narrator.stop()
+            self._narrator = None
+
+    def _set_voice_state(self, state: str):
+        state = str(state or "IDLE").upper()
+        controller = getattr(self, "_voice_state_machine", None)
+        if controller is not None and not controller.transition(state):
+            # The UI can receive late worker signals during shutdown; do not
+            # let an impossible transition break the active operation.
+            if state == "CLOSED":
+                controller.state = "CLOSED"
+            elif controller.state != "CLOSED":
+                controller.state = state
+        if hasattr(self, "voice_state_lbl"):
+            self.voice_state_lbl.setText(state)
+        if hasattr(self, "status_lbl") and state in {"LISTENING", "TRANSCRIBING", "THINKING", "SPEAKING", "ERROR"}:
+            labels = {
+                "LISTENING": "Listening…",
+                "TRANSCRIBING": "Transcribing…",
+                "THINKING": "Thinking…",
+                "SPEAKING": "Speaking…",
+                "ERROR": "Voice unavailable",
+            }
+            self.status_lbl.setText(labels[state])
+
+    def _narrator_rate(self) -> int:
+        base = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["rate"]
+        factor = VOICE_PACE_FACTORS.get(self._voice_pace, 1.0)
+        return int(base * factor)
+
+    def _speak(self, text: str, force: bool = False):
+        """Queue concise, presentation-safe speech through local TTS."""
+        if (not self._voice_feedback_enabled and not force) or not _TTS_AVAILABLE:
+            return
+        if self._narrator is None or not self._narrator.isRunning():
+            self._narrator = _NarrationThread(
+                voice_id=self._voice_id,
+                rate=self._narrator_rate(),
+                volume=self._voice_volume / 100.0,
+                parent=self,
+            )
+            self._narrator.speaking_started.connect(lambda: self._set_voice_state("SPEAKING"))
+            self._narrator.speaking_finished.connect(self._on_narration_phrase_finished)
+            self._narrator.idle.connect(self._on_narrator_idle)
             self._narrator.start()
-        self._narrator.speak(text)
+        styled_text = text if force else personalize_spoken_phrase(text, self._personality)
+        self._narrator.speak(
+            styled_text,
+            rate=self._narrator_rate(),
+            volume=self._voice_volume / 100.0,
+            voice_id=self._voice_id,
+        )
+
+    def _preview_personality_voice(self):
+        if self._continuous_voice_enabled or self._voice_recording or self._voice_worker is not None:
+            self._write_info("\n Pause hands-free listening before previewing the assistant voice.")
+            return
+        if self._busy:
+            self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
+            return
+        if self._narrator is not None:
+            self._narrator.interrupt()
+        preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
+        self._speak(preview, force=True)
+
+    def _on_narration_phrase_finished(self):
+        if self._continuous_voice_enabled and not self._busy:
+            self._continuous_restart_pending = True
+
+    def _on_narrator_idle(self):
+        if self._voice_state_machine.state == "CLOSED":
+            return
+        if self._continuous_voice_enabled and self._continuous_restart_pending:
+            self._continuous_restart_pending = False
+            self._schedule_continuous_voice(delay_ms=350)
+        elif self._voice_state_machine.state == "SPEAKING":
+            self._set_voice_state("IDLE")
 
     def _toggle_voice_recording(self):
-        """Start/stop microphone capture without using an LLM for STT."""
+        """Push-to-talk entry point; hands-free mode uses silence-based VAD."""
         if not self._ai_access_allowed:
             self.refresh_ai_access()
             return
@@ -80,27 +181,47 @@ class K8sAIOpsVoiceMixin:
         if self._busy:
             return
         if not _VOICE_AVAILABLE:
-            QMessageBox.information(self, 'Voice Input Unavailable', 'Install the voice-input dependencies first:\n\npython3 -m pip install SpeechRecognition PyAudio\n\nOn macOS, install PortAudio first if PyAudio cannot build:\nbrew install portaudio')
+            QMessageBox.information(
+                self, "Voice Input Unavailable",
+                "Install optional voice input dependencies:\n\n"
+                "python3 -m pip install -r requirements-voice.txt\n\n"
+                "Voice input sends captured audio to Google Web Speech for transcription."
+            )
             return
         if self._ai_worker is not None or self._operation_worker is not None:
-            self._write_info('\nPlease wait for the current AI/Kubernetes operation to finish.')
+            self._write_info("\nPlease wait for the current AI/Kubernetes operation to finish.")
             return
         self._start_voice_recording()
 
-    def _start_voice_recording(self):
-        if self._voice_worker is not None:
+    def _start_voice_recording(self, force: bool = False):
+        if self._voice_worker is not None or self._voice_recording:
             return
+        if self._busy and not force:
+            return
+        if not _VOICE_AVAILABLE:
+            self._set_voice_state("ERROR")
+            return
+        self._voice_error_occurred = False
         self._voice_recording = True
-        self.voice_btn.setText('⏹ Stop Voice')
-        self.voice_btn.setToolTip('Stop recording and send the transcription to Ops Mind')
+        self.voice_btn.setEnabled(True)
+        self._set_voice_state("LISTENING")
+        self.voice_btn.setText("⏹ Stop Voice")
+        self.voice_btn.setToolTip("Stop capture and transcribe this utterance. Ctrl+Shift+Space")
         self.request_input.clear()
-        self.request_input.setPlaceholderText('Listening… speak your Kubernetes command')
+        self.request_input.setPlaceholderText("Listening… speak naturally")
         self.request_input.setEnabled(False)
         self.run_btn.setEnabled(False)
         self.clear_history_btn.setEnabled(False)
-        self.status_lbl.setText('Listening…')
-        self._write_info('\n Listening… say a Kubernetes operation, then press Stop Voice or Ctrl+Shift+Space.')
-        worker = K8sGoogleSpeechWorker(language=GOOGLE_STT_LANGUAGE, max_seconds=VOICE_MAX_SECONDS)
+        self._write_info(
+            "\n Listening… speak your request and pause. "
+            "Hands-free mode submits after silence; push-to-talk uses Stop Voice."
+        )
+        worker = K8sGoogleSpeechWorker(
+            language=GOOGLE_STT_LANGUAGE,
+            max_seconds=VOICE_MAX_SECONDS,
+            auto_stop_on_silence=self._continuous_voice_enabled,
+            silence_seconds=self._voice_silence_seconds,
+        )
         worker.listening.connect(self._on_voice_listening)
         worker.stopped.connect(self._on_voice_stopped)
         worker.level.connect(self._on_voice_level)
@@ -115,71 +236,200 @@ class K8sAIOpsVoiceMixin:
         worker = self._voice_worker
         if worker is None:
             return
-        self.status_lbl.setText('Transcribing…')
-        self.voice_btn.setText('⌛ Transcribing…')
+        self._set_voice_state("TRANSCRIBING")
+        self.voice_btn.setText("⌛ Transcribing…")
         self.voice_btn.setEnabled(False)
         worker.stop()
 
     def _on_voice_level(self, level: int):
-        """Update the live microphone meter."""
-        if not hasattr(self, 'mic_level_bar'):
+        if not hasattr(self, "mic_level_bar"):
             return
         level = max(0, min(100, int(level)))
         self.mic_level_bar.setValue(level)
         if level >= 75:
-            self.mic_level_label.setText('Mic • high')
+            self.mic_level_label.setText("Mic • high")
         elif level >= 35:
-            self.mic_level_label.setText('Mic • medium')
+            self.mic_level_label.setText("Mic • medium")
         elif level >= 5:
-            self.mic_level_label.setText('Mic • low')
+            self.mic_level_label.setText("Mic • low")
         else:
-            self.mic_level_label.setText('Mic')
+            self.mic_level_label.setText("Mic")
 
     def _on_voice_listening(self):
         if self._voice_recording:
-            self.status_lbl.setText('Listening…')
+            self._set_voice_state("LISTENING")
 
     def _on_voice_stopped(self):
         if self._voice_recording:
-            self.status_lbl.setText('Transcribing…')
+            self._set_voice_state("TRANSCRIBING")
 
     def _on_voice_done(self, text: str):
-        text = (text or '').strip()
+        text = (text or "").strip()
         if not text:
-            self._on_voice_error('The voice transcription was empty.')
+            self._on_voice_error("The voice transcription was empty.")
             return
-        self.request_input.setPlaceholderText('Ask AI to perform a Kubernetes operation…')
+        now = time.monotonic()
+        if is_duplicate_voice_transcript(
+            text, self._last_voice_transcript, now, self._last_voice_timestamp
+        ):
+            self._voice_recording = False
+            self._write_info("\n Duplicate voice transcript ignored to prevent repeating an operation.")
+            self.request_input.clear()
+            self._set_voice_state("IDLE")
+            return
+        self._last_voice_transcript = text
+        self._last_voice_timestamp = now
+        self.request_input.setPlaceholderText("Ask AI to perform a Kubernetes operation…")
         self.request_input.setText(text)
         self._write_info(f'\n You said: "{self._escape_html(text)}"')
         self._voice_recording = False
         self.voice_btn.setEnabled(True)
-        apply_text_icon(self.voice_btn, ' Voice', size=15)
-        self.voice_btn.setToolTip('Start/stop voice command. Hotkey: Ctrl+Shift+Space')
-        self.request_input.setEnabled(True)
+        apply_text_icon(self.voice_btn, " Voice", size=15)
+        self.voice_btn.setToolTip("Push-to-talk. Ctrl+Shift+Space")
+        self.request_input.setEnabled(not self._busy)
+        self._set_voice_state("THINKING")
+        if self._busy:
+            self._queued_voice_request = text
+            self._write_info("\n I will handle that request after the current operation finishes; it will not cancel the running operation.")
+            return
         self._submit()
 
     def _on_voice_error(self, message: str):
-        self._write_error('\n Voice input error:\n' + str(message))
+        self._voice_error_occurred = True
+        self._write_error("\n Voice input error:\n" + str(message))
         self._voice_recording = False
-        self.request_input.setPlaceholderText('Ask AI to perform a Kubernetes operation…')
+        self.request_input.setPlaceholderText("Ask AI to perform a Kubernetes operation…")
         self.request_input.setEnabled(not self._busy)
         self.voice_btn.setEnabled(not self._busy)
-        apply_text_icon(self.voice_btn, ' Voice', size=15)
-        self.voice_btn.setToolTip('Start/stop voice command. Hotkey: Ctrl+Shift+Space')
-        self.status_lbl.setText('Ready')
+        apply_text_icon(self.voice_btn, " Voice", size=15)
+        self.voice_btn.setToolTip("Push-to-talk. Ctrl+Shift+Space")
+        self._set_voice_state("ERROR")
 
     def _on_voice_finished(self):
         self._voice_worker = None
         if self._voice_recording:
             self._voice_recording = False
         self.voice_btn.setEnabled(not self._busy)
-        apply_text_icon(self.voice_btn, ' Voice', size=15)
-        self.voice_btn.setToolTip('Start/stop voice command. Hotkey: Ctrl+Shift+Space')
-        self.request_input.setPlaceholderText('Ask AI to perform a Kubernetes operation…')
+        apply_text_icon(self.voice_btn, " Voice", size=15)
+        self.voice_btn.setToolTip("Push-to-talk. Ctrl+Shift+Space")
+        self.request_input.setPlaceholderText("Ask AI to perform a Kubernetes operation…")
         self.request_input.setEnabled(not self._busy)
-        if hasattr(self, 'mic_level_bar'):
+        if hasattr(self, "mic_level_bar"):
             self.mic_level_bar.setValue(0)
-        if hasattr(self, 'mic_level_label'):
-            self.mic_level_label.setText('Mic')
+        if hasattr(self, "mic_level_label"):
+            self.mic_level_label.setText("Mic")
+        if self._busy:
+            self._set_voice_state("THINKING")
+        elif self._voice_error_occurred:
+            self._set_voice_state("ERROR")
+        elif self._continuous_voice_enabled:
+            self._set_voice_state("IDLE")
+            self._schedule_continuous_voice()
+        else:
+            self._set_voice_state("IDLE")
+            self.status_lbl.setText("Ready")
+
+    def _on_continuous_voice_toggled(self, checked: bool):
+        if checked and not _VOICE_AVAILABLE:
+            self.continuous_voice_btn.blockSignals(True)
+            self.continuous_voice_btn.setChecked(False)
+            self.continuous_voice_btn.blockSignals(False)
+            QMessageBox.information(
+                self, "Hands-free Voice Unavailable",
+                "Install optional voice dependencies with:\npython3 -m pip install -r requirements-voice.txt"
+            )
+            return
+        if checked and not self._ai_access_allowed:
+            self.continuous_voice_btn.blockSignals(True)
+            self.continuous_voice_btn.setChecked(False)
+            self.continuous_voice_btn.blockSignals(False)
+            self.refresh_ai_access()
+            return
+        self._continuous_voice_enabled = bool(checked)
+        save_continuous_voice_enabled(self._continuous_voice_enabled)
+        self.continuous_voice_btn.setText("Hands-free ON" if checked else "Hands-free")
+        if checked:
+            self._write_info("\n Hands-free conversation enabled. Audio is sent to Google Web Speech for transcription; raw recordings are not saved by KubeDock.")
+            if not self._busy:
+                self._start_voice_recording()
+        else:
+            self._restart_voice_timer.stop()
+            self._continuous_restart_pending = False
+            worker = self._voice_worker
+            if worker is not None:
+                worker.cancel()
+            self._voice_recording = False
+            self._set_voice_state("IDLE")
+
+    def _on_voice_silence_changed(self, index: int):
+        seconds = self.silence_combo.itemData(index)
+        if seconds is not None:
+            self._voice_silence_seconds = float(seconds)
+            save_voice_silence_seconds(self._voice_silence_seconds)
+
+    def _on_voice_pace_changed(self, index: int):
+        pace = str(self.voice_pace_combo.itemData(index) or "natural")
+        self._voice_pace = pace
+        save_voice_pace(pace)
+        self._replace_narrator()
+
+    def _on_voice_volume_changed(self, volume: int):
+        self._voice_volume = max(0, min(100, int(volume)))
+        save_voice_volume(self._voice_volume)
+        if self._narrator is not None and not self._narrator.is_speaking and not self._narrator.has_pending:
+            self._replace_narrator()
+
+    def _replace_narrator(self):
+        if self._narrator is not None:
+            self._narrator.stop()
+            self._narrator = None
+
+    def _schedule_continuous_voice(self, delay_ms: int = 500):
+        if not self._continuous_voice_enabled or self._voice_state_machine.state == "CLOSED":
+            return
+        if self._busy or self._voice_recording or self._voice_worker is not None:
+            return
+        narrator = self._narrator
+        if narrator is not None and (narrator.is_speaking or narrator.has_pending):
+            self._continuous_restart_pending = True
+            return
+        self._restart_voice_timer.start(max(0, int(delay_ms)))
+
+    def _maybe_resume_continuous_voice(self):
+        if not self._continuous_voice_enabled or self._busy:
+            return
+        if self._voice_recording or self._voice_worker is not None:
+            return
+        if self._narrator is not None and (self._narrator.is_speaking or self._narrator.has_pending):
+            self._continuous_restart_pending = True
+            return
+        self._start_voice_recording()
+
+    def _run_queued_voice_request(self):
+        request = getattr(self, "_queued_voice_request", None)
+        if not request or self._busy:
+            return
+        self._queued_voice_request = None
+        self.request_input.setText(request)
+        self._set_voice_state("THINKING")
+        self._submit()
         if not self._busy:
-            self.status_lbl.setText('Ready')
+            self._schedule_continuous_voice()
+    def _interrupt_and_listen(self):
+        if not _VOICE_AVAILABLE:
+            QMessageBox.information(self, "Voice Input Unavailable", "Install PyAudio and SpeechRecognition to use voice input.")
+            return
+        if self._voice_worker is not None:
+            self._write_info("\n Already listening; stop the current capture before interrupting.")
+            return
+        narrator = self._narrator
+        if narrator is not None:
+            narrator.interrupt()
+        self._set_voice_state("INTERRUPTED")
+        if self._busy:
+            self._write_info("\n Speech stopped. The current Kubernetes operation will continue; your next request will be queued until it finishes.")
+            self._start_voice_recording(force=True)
+        else:
+            self._start_voice_recording()
+
+

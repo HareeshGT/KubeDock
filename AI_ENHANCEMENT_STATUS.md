@@ -40,3 +40,29 @@ The final live-evidence refinement fetches the alternate log stream without re-r
 ## Post-merge follow-up (2026-10-21)
 
 A quick review of the merged code found that resource evidence was tail-truncated to fit the prompt budget. For long pod descriptions this could drop the initial readiness/container state while retaining only later events. Added `_clip_resource_evidence()` to preserve both the beginning (status/configuration) and ending (events/metrics) within the same 4,000-character budget, with a marker showing omitted middle content. Added a regression test covering both ends. GitHub Actions validation passed: focused tests **11 passed**; full suite **156 passed, 1 skipped**. Two existing SpeechRecognition deprecation warnings remain.
+
+
+## Ops Mind conversational voice upgrade (2026-10-21)
+
+### Verified implementation
+- [x] Add JARVIS, FRIDAY, and EDITH personality profiles with distinct local response wording, spoken status phrasing, default speaking pace, and per-personality system voice settings.
+- [x] Persist personality, selected voice IDs, hands-free preference, silence threshold, speech pace, and volume using the existing SQLite-backed settings API.
+- [x] Add explicit voice states and a configurable local audio-level silence detector; retain push-to-talk as an alternative and bound no-speech/utterance duration.
+- [x] Add hands-free re-listening after each completed turn, transcript duplicate suppression, and an “Interrupt & Listen” control. Interruption does not cancel a Kubernetes operation already in progress; its request is queued and still goes through the existing validation and confirmation path.
+- [x] Make local greetings, short status updates, clarifications, and operation outcomes more natural for the selected personality. Sanitize code blocks, Markdown, raw JSON, and stack traces before local speech.
+- [x] Maintain a short, in-memory, redacted conversation transcript so prior outcomes can help answer follow-ups. Fresh-state questions continue through live Kubernetes operations instead of relying on stale conversation text.
+- [x] Support a typed, bounded conversational AI response for questions/follow-ups that do not require a new operation or live state.
+- [x] Support a bounded, read-only logs action for current or previous pod logs, with validated pod/container/namespace fields. Log output is displayed in the UI but omitted from persistent Ops Mind history; a short redacted excerpt may be held in session memory.
+- [x] Preserve provider handling, allowlisted operations, resource validation, protected namespaces, and existing confirmation safeguards.
+
+### Speech setup and behavior
+- Speech-to-text: existing SpeechRecognition + PyAudio capture with Google Web Speech transcription. Hands-free end-of-utterance detection is local; captured speech is sent to Google for transcription. Raw audio recordings are not saved by KubeDock.
+- Text-to-speech: existing optional local pyttsx3 engine and the system voices available on the machine. No external voice API or audio samples are added. The persona selector changes delivery/style, system voice preference, and speaking pace; these are original profiles, not cloned Marvel/actor voices.
+- Optional voice dependencies remain in requirements-voice.txt; the main application can still run without them. Voice-related controls fall back to disabled/unavailable states when speech dependencies or a microphone are absent.
+- No streaming partial transcription is available from the current Google recognizer call. Playback interruption is exposed through the explicit “Interrupt & Listen” control; fully automatic acoustic barge-in detection while the assistant is speaking is not implemented because the microphone is not concurrently monitored during TTS playback.
+- Voice capture, ASR, and TTS run in existing background worker/thread paths. TTS interruption is best-effort because OS speech drivers vary.
+- No continuous background AI scans are started; the microphone is active only while a voice utterance is being captured.
+
+### Voice regression tests
+- Added tests/test_ops_mind_voice.py for voice-state transitions, VAD thresholds, duplicate transcript prevention, TTS sanitization, personality profiles/responses, bounded conversational context, and safe log command construction.
+- GitHub Actions validation on Python 3.12: focused voice/security/ops tests **27 passed**; full suite **172 passed, 1 skipped**. Two pre-existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39654258687
