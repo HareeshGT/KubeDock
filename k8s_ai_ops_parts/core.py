@@ -1,3 +1,6 @@
+import gc
+import importlib.util
+import io
 import json
 import queue
 import re
@@ -5,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import wave
 from datetime import datetime
 import os
 import sys
@@ -124,6 +128,13 @@ VOICE_PACE_SETTINGS_KEY = "k8s_ops_voice_pace"
 VOICE_VOLUME_SETTINGS_KEY = "k8s_ops_voice_volume"
 VOICE_ENGINE_SETTINGS_KEY = "k8s_ops_voice_engine"
 VOICE_ENGINE_EXPLICIT_SETTINGS_KEY = "k8s_ops_voice_engine_explicit"
+QWEN_TTS_MODEL_SETTINGS_KEY = "k8s_ops_qwen_tts_model"
+QWEN_VOICEDESIGN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+QWEN_CUSTOMVOICE_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+try:
+  _QWEN_TTS_AVAILABLE = importlib.util.find_spec("qwen_tts") is not None
+except (ImportError, ValueError):
+  _QWEN_TTS_AVAILABLE = False
 OPENAI_NEURAL_TTS_MODEL = "gpt-4o-mini-tts"
 NEURAL_TTS_SAMPLE_RATE = 24000
 NEURAL_TTS_MAX_AUDIO_BYTES = 12 * 1024 * 1024
@@ -236,25 +247,26 @@ def save_voice_volume(volume: int):
 
 
 def get_voice_engine() -> str:
-  """Return the selected engine; migrate old automatic fallback to neural once."""
+  """Return the selected speech engine without tying local engines to API keys."""
   try:
     settings = load_settings()
     selected = str(settings.get(VOICE_ENGINE_SETTINGS_KEY, "") or "").strip().lower()
     explicitly_selected = bool(settings.get(VOICE_ENGINE_EXPLICIT_SETTINGS_KEY, False))
   except Exception:
     selected, explicitly_selected = "", False
+  if selected == "qwen":
+    return "qwen"
+  if selected == "system" and explicitly_selected:
+    return "system"
   try:
     openai_key_available = bool(ai_assist.get_api_key("openai"))
   except Exception:
     openai_key_available = False
+  if selected == "openai" and openai_key_available:
+    return "openai"
   if not openai_key_available:
     return "system"
-  if selected == "openai":
-    return "openai"
-  if selected == "system" and explicitly_selected:
-    return "system"
-  # Older builds permanently saved "system" after a neural request failed.
-  # Treat that unmarked value as an automatic fallback, not a user preference.
+  # Older builds automatically saved "system" after neural TTS failed.
   if selected == "system" and not explicitly_selected:
     try:
       save_settings(**{
@@ -268,7 +280,7 @@ def get_voice_engine() -> str:
 
 def save_voice_engine(engine: str):
   value = str(engine or "system").strip().lower()
-  if value not in {"openai", "system"}:
+  if value not in {"openai", "system", "qwen"}:
     value = "system"
   try:
     save_settings(**{
@@ -278,6 +290,73 @@ def save_voice_engine(engine: str):
   except Exception:
     pass
 
+
+def get_qwen_tts_model() -> str:
+  """Return the saved Qwen model choice (full voice design or lower-memory preset voices)."""
+  try:
+    value = str(load_settings().get(QWEN_TTS_MODEL_SETTINGS_KEY, "voice_design") or "voice_design").strip().lower()
+    return value if value in {"voice_design", "custom_voice"} else "voice_design"
+  except Exception:
+    return "voice_design"
+
+
+def save_qwen_tts_model(model_key: str):
+  value = str(model_key or "voice_design").strip().lower()
+  if value not in {"voice_design", "custom_voice"}:
+    value = "voice_design"
+  try: save_settings(**{QWEN_TTS_MODEL_SETTINGS_KEY: value})
+  except Exception: pass
+
+
+def get_qwen_tts_model_config(model_key: str = None) -> dict:
+  """Resolve model ID and generation mode without importing the ML runtime."""
+  key = str(model_key or get_qwen_tts_model()).strip().lower()
+  if key == "custom_voice":
+    return {
+      "key": "custom_voice",
+      "model_id": QWEN_CUSTOMVOICE_MODEL_ID,
+      "label": "Lower memory · 0.6B preset voices",
+      "voice_design": False,
+      "supports_voice_instructions": False,
+    }
+  return {
+    "key": "voice_design",
+    "model_id": QWEN_VOICEDESIGN_MODEL_ID,
+    "label": "Voice Design · 1.7B",
+    "voice_design": True,
+    "supports_voice_instructions": True,
+  }
+
+
+def get_qwen_voice_profile(personality: str = None, pace: str = "natural") -> dict:
+  """Original persona directions for local Qwen voice design."""
+  key = str(personality or get_assistant_personality()).strip().lower()
+  if key not in {"jarvis", "friday", "edith"}:
+    key = "jarvis"
+  profiles = {
+    "jarvis": {
+      "speaker": "Ryan",
+      "description": "Adult masculine voice, lower-mid register, polished contemporary British-English accent, warm resonant timbre, crisp consonants, steady pitch movement, measured cadence and deliberate short pauses. Sound composed, intelligent, discreet, quietly authoritative and reassuring, with understated dry wit only when supported by the words. Cinematic futuristic assistant delivery, natural and human; not booming, theatrical or monotone. Clearly articulate technical terms. Original voice direction, not an imitation of a specific actor or fictional character.",
+    },
+    "friday": {
+      "speaker": "Vivian",
+      "description": "Warm feminine-presenting assistant voice, bright and confidently conversational, lively but controlled intonation, clear articulation, agile phrasing and subtle playful energy. Use a light, understated Irish-English lilt while staying natural and professional, never bubbly or cartoonish. Original voice direction, not an imitation of a specific actor or fictional character.",
+    },
+    "edith": {
+      "speaker": "Aiden",
+      "description": "Composed, precise digital-assistant delivery with cool clarity, controlled emotional variation, deliberate phrasing, clean consonants and quiet authority. Sound analytical, alert and subtly futuristic while still natural and human; avoid sounding cold, breathy, theatrical or monotone. Original voice direction, not an imitation of a specific actor or fictional character.",
+    },
+  }
+  profile = dict(profiles[key])
+  pace_key = str(pace or "natural").strip().lower()
+  pace_notes = {
+    "slow": "Use a deliberately unhurried pace and slightly longer pauses between clauses.",
+    "natural": "Keep the persona's default pace and use natural pauses with clear articulation.",
+    "brisk": "Use a brisk, energetic pace while keeping every word clearly intelligible.",
+  }
+  profile["instructions"] = profile["description"] + " " + pace_notes.get(pace_key, pace_notes["natural"])
+  profile["pace"] = pace_key if pace_key in pace_notes else "natural"
+  return profile
 
 def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> dict:
   """Return safe, deterministic TTS parameters for the selected persona."""
@@ -1494,6 +1573,192 @@ class K8sGoogleSpeechWorker(QThread):
       self.error.emit("Microphone support is unavailable. Install PyAudio and SpeechRecognition.")
     except Exception as exc:
       self.error.emit(f"Voice input failed: {exc}")
+
+
+class _Qwen3TTSWorker(QThread):
+  """Persistent, lazy-loaded Qwen3-TTS local inference worker.
+
+  Model loading and inference stay off the Qt UI thread. A loaded model is
+  reused across utterances; changing model choice reloads it on the worker.
+  The only network access is the first-time public model download from the
+  configured Hugging Face cache. No API key or paid inference endpoint is used.
+  """
+  audio_ready = pyqtSignal(bytes, int)
+  error = pyqtSignal(str, int)
+  status = pyqtSignal(str)
+
+  def __init__(self, parent=None):
+    super().__init__(parent)
+    self._requests = queue.Queue()
+    self._shutdown = threading.Event()
+    self._model = None
+    self._model_id = ""
+    self._model_lock = threading.Lock()
+    self._job_sequence = 0
+    self._job_lock = threading.Lock()
+    self.finished.connect(self.deleteLater)
+
+  @property
+  def is_generating(self) -> bool:
+    return not self._requests.empty() or self.isRunning() and bool(self._model_id)
+
+  def enqueue(self, text: str, personality: str, pace: str, model_key: str) -> int:
+    with self._job_lock:
+      self._job_sequence += 1
+      job_id = self._job_sequence
+    if not self._shutdown.is_set():
+      self._requests.put((job_id, str(text or ""), str(personality or "jarvis"), str(pace or "natural"), str(model_key or "voice_design")))
+    return job_id
+
+  def clear_pending(self):
+    while True:
+      try: self._requests.get_nowait()
+      except queue.Empty: break
+
+  def shutdown(self):
+    self._shutdown.set()
+    self.clear_pending()
+    self._requests.put(None)
+
+  def release_model(self):
+    """Release GPU/MPS memory after the current synthesis finishes."""
+    if not self._shutdown.is_set():
+      self.clear_pending()
+      self._requests.put("__release_model__")
+
+  def _release_loaded_model(self):
+    self._model = None
+    self._model_id = ""
+    gc.collect()
+    try:
+      import torch
+      if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+      elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    except Exception:
+      pass
+
+  def _load_model(self, model_id: str):
+    if self._model is not None and self._model_id == model_id:
+      return self._model
+    self._release_loaded_model()
+    try:
+      import torch
+      from qwen_tts import Qwen3TTSModel
+    except Exception as exc:
+      detail = str(exc)
+      if "check_model_inputs" in detail or "transformers" in detail.lower():
+        raise RuntimeError(
+          "Qwen3-TTS could not import because its Transformers dependency is incompatible. "
+          "Install the optional Qwen voice dependencies in KubeDock's Python environment; see requirements-qwen-tts.txt."
+        ) from exc
+      raise RuntimeError(
+        "Qwen3-TTS is not installed or could not be imported. Install the optional dependencies from requirements-qwen-tts.txt. "
+        + detail[:300]
+      ) from exc
+    if torch.cuda.is_available():
+      device = "cuda:0"
+      try:
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+      except Exception:
+        dtype = torch.float16
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+      device = "mps"
+      dtype = torch.float16
+    else:
+      device = "cpu"
+      dtype = torch.float32
+    self.status.emit(f"Loading local Qwen3-TTS model {model_id}. First use downloads model weights; this can take several minutes and several GB of disk space.")
+    try:
+      model = Qwen3TTSModel.from_pretrained(
+        model_id, device_map=device, dtype=dtype, attn_implementation="eager",
+      )
+    except Exception as exc:
+      detail = str(exc)
+      if "check_model_inputs" in detail or "transformers" in detail.lower():
+        raise RuntimeError(
+          "The installed Qwen3-TTS package and Transformers versions are incompatible. "
+          "Follow the compatibility note in requirements-qwen-tts.txt, then restart KubeDock."
+        ) from exc
+      raise RuntimeError(f"Qwen3-TTS could not load model on {device}: {detail[:350]}") from exc
+    self._model = model
+    self._model_id = model_id
+    self.status.emit(f"Qwen3-TTS loaded on {device}. Generating speech locally.")
+    return model
+
+  @staticmethod
+  def _to_wav_bytes(waveform, sample_rate: int) -> bytes:
+    """Convert Qwen's returned float waveform into a bounded mono PCM WAV."""
+    import numpy as np
+    audio = np.asarray(waveform, dtype=np.float32)
+    if audio.ndim > 1:
+      # Qwen returns mono in normal TTS mode; if a backend returns channels,
+      # downmix small channel-last arrays rather than generating invalid WAV.
+      if audio.shape[-1] <= 2:
+        audio = audio.mean(axis=-1)
+      else:
+        audio = audio.mean(axis=0)
+    audio = np.nan_to_num(audio.reshape(-1), nan=0.0, posinf=1.0, neginf=-1.0)
+    if audio.size == 0:
+      raise RuntimeError("Qwen3-TTS returned an empty audio waveform.")
+    max_samples = int(max(1, sample_rate) * 90)
+    if audio.size > max_samples:
+      audio = audio[:max_samples]
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2", copy=False).tobytes()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+      wav.setnchannels(1)
+      wav.setsampwidth(2)
+      wav.setframerate(int(sample_rate))
+      wav.writeframes(pcm)
+    return buffer.getvalue()
+
+  def _generate(self, text: str, personality: str, pace: str, model_key: str) -> bytes:
+    text = speech_friendly_text(ai_assist._redact_sensitive_text(str(text or "")), limit=500)
+    if not text:
+      raise RuntimeError("There is no safe text left to speak after removing code and sensitive values.")
+    config = get_qwen_tts_model_config(model_key)
+    profile = get_qwen_voice_profile(personality, pace)
+    model = self._load_model(config["model_id"])
+    self.status.emit(f"Generating {PERSONALITY_CONFIG.get(personality, PERSONALITY_CONFIG['jarvis'])['label']} speech locally…")
+    if config["voice_design"]:
+      wavs, sample_rate = model.generate_voice_design(
+        text=text, language="English", instruct=profile["instructions"], max_new_tokens=1024,
+      )
+    else:
+      # The 0.6B release uses fixed speaker presets and ignores style instructions
+      # in its current upstream implementation; keep the speaker distinct but
+      # do not imply pace/accent directions are controllable in this mode.
+      wavs, sample_rate = model.generate_custom_voice(
+        text=text, language="English", speaker=profile["speaker"],
+        max_new_tokens=1024,
+      )
+    if not wavs:
+      raise RuntimeError("Qwen3-TTS returned no audio.")
+    return self._to_wav_bytes(wavs[0], sample_rate)
+
+  def run(self):
+    while not self._shutdown.is_set():
+      job = self._requests.get()
+      if job is None or self._shutdown.is_set():
+        break
+      if job == "__release_model__":
+        self._release_loaded_model()
+        self.status.emit("Qwen3-TTS model unloaded to free memory.")
+        continue
+      job_id, text, personality, pace, model_key = job
+      if not text.strip():
+        continue
+      try:
+        audio = self._generate(text, personality, pace, model_key)
+        if not self._shutdown.is_set():
+          self.audio_ready.emit(audio, job_id)
+      except Exception as exc:
+        if not self._shutdown.is_set():
+          safe = re.sub(r"\s+", " ", str(exc)).strip()[:700]
+          self.error.emit(safe or "Qwen3-TTS local synthesis failed.", job_id)
+    self._release_loaded_model()
 
 
 class _OpenAINeuralTTSWorker(QThread):

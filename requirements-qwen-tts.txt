@@ -1,0 +1,15 @@
+# Optional local Qwen3-TTS voice engine for Ops Mind.
+#
+# Install with the same Python environment that launches KubeDock:
+#   python -m pip install -r requirements-qwen-tts.txt
+#
+# Qwen's released qwen-tts 0.1.1 pins Transformers 4.57.3, while the current
+# model code needs newer Transformers compatibility changes. Until upstream
+# merges/releases that fix, this pins the tested Transformers-5 compatibility
+# branch from Qwen3-TTS PR #360. It still uses the open-source Qwen3-TTS model
+# locally; there is no TTS API key or per-generation fee.
+#
+# Python 3.12 is the conservative choice for this optional ML stack. Model
+# weights (1.7B VoiceDesign or 0.6B CustomVoice) download on first use.
+# Apple Silicon uses PyTorch MPS when available; CUDA systems use their GPU.
+qwen-tts @ git+https://github.com/andimarafioti/Qwen3-TTS.git@00969daa8064e23adc9e5f52cdf20cf247f94159

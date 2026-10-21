@@ -7,6 +7,13 @@ from unittest.mock import patch
 from k8s_ai_ops_parts.core import (
     PERSONALITY_CONFIG,
     NEURAL_VOICE_PROFILES,
+    QWEN_VOICEDESIGN_MODEL_ID,
+    QWEN_CUSTOMVOICE_MODEL_ID,
+    QWEN_TTS_MODEL_SETTINGS_KEY,
+    _Qwen3TTSWorker,
+    get_qwen_tts_model_config,
+    get_qwen_voice_profile,
+    save_qwen_tts_model,
     OPENAI_NEURAL_TTS_MODEL,
     _OpenAINeuralTTSWorker,
     get_neural_voice_profile,
@@ -246,6 +253,64 @@ class VoiceConversationTests(unittest.TestCase):
         self.assertIn("contemporary British-English", payload["instructions"])
         self.assertFalse(errors, errors)
         self.assertEqual(audio, [wav_bytes])
+    def test_qwen3_tts_profiles_are_local_and_personality_specific(self):
+        jarvis = get_qwen_voice_profile("jarvis", "natural")
+        friday = get_qwen_voice_profile("friday", "natural")
+        edith = get_qwen_voice_profile("edith", "natural")
+        self.assertIn("British-English", jarvis["instructions"])
+        self.assertIn("Irish-English", friday["instructions"])
+        self.assertIn("analytical", edith["instructions"].lower())
+        self.assertEqual({"jarvis": jarvis["speaker"], "friday": friday["speaker"], "edith": edith["speaker"]}, {"jarvis": "Ryan", "friday": "Vivian", "edith": "Aiden"})
+        self.assertNotEqual(jarvis["instructions"], friday["instructions"])
+        self.assertNotEqual(friday["instructions"], edith["instructions"])
+        self.assertIn("deliberately unhurried", get_qwen_voice_profile("jarvis", "slow")["instructions"])
+        self.assertIn("brisk, energetic", get_qwen_voice_profile("edith", "brisk")["instructions"])
+
+    def test_qwen_model_config_uses_voice_design_and_lower_memory_custom_voice(self):
+        design = get_qwen_tts_model_config("voice_design")
+        compact = get_qwen_tts_model_config("custom_voice")
+        self.assertEqual(design["model_id"], QWEN_VOICEDESIGN_MODEL_ID)
+        self.assertTrue(design["voice_design"])
+        self.assertTrue(design["supports_voice_instructions"])
+        self.assertEqual(compact["model_id"], QWEN_CUSTOMVOICE_MODEL_ID)
+        self.assertFalse(compact["voice_design"])
+        self.assertFalse(compact["supports_voice_instructions"])
+        self.assertEqual(compact["key"], "custom_voice")
+
+    def test_qwen_engine_is_independent_of_openai_credits_or_key(self):
+        from k8s_ai_ops_parts import core
+        with patch.object(core, "load_settings", return_value={core.VOICE_ENGINE_SETTINGS_KEY: "qwen"}), patch.object(core.ai_assist, "get_api_key", return_value=""):
+            self.assertEqual(get_voice_engine(), "qwen")
+
+    def test_qwen_model_preference_is_saved_through_existing_settings(self):
+        from k8s_ai_ops_parts import core
+        with patch.object(core, "save_settings") as save:
+            save_qwen_tts_model("custom_voice")
+        save.assert_called_once_with(**{QWEN_TTS_MODEL_SETTINGS_KEY: "custom_voice"})
+
+    def test_qwen_worker_assigns_ids_to_ignore_stale_audio_after_interruptions(self):
+        worker = _Qwen3TTSWorker()
+        first = worker.enqueue("hello", "jarvis", "natural", "voice_design")
+        second = worker.enqueue("goodbye", "friday", "brisk", "custom_voice")
+        self.assertGreater(second, first)
+        first_job = worker._requests.get_nowait()
+        second_job = worker._requests.get_nowait()
+        self.assertEqual(first_job[0], first)
+        self.assertEqual(second_job[0], second)
+        self.assertEqual(first_job[1], "hello")
+        self.assertEqual(second_job[1], "goodbye")
+    def test_qwen_wav_conversion_creates_a_valid_pcm_wav(self):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("NumPy is installed with the optional Qwen3-TTS runtime.")
+        wav_bytes = _Qwen3TTSWorker._to_wav_bytes(np.array([0.0, 0.25, -0.25, 0.5], dtype=np.float32), 24000)
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+            self.assertEqual(wf.getnchannels(), 1)
+            self.assertEqual(wf.getsampwidth(), 2)
+            self.assertEqual(wf.getframerate(), 24000)
+            self.assertEqual(wf.getnframes(), 4)
+
     def test_personalities_have_distinct_style_and_voice_profiles(self):
         self.assertEqual(set(PERSONALITY_CONFIG), {"jarvis", "friday", "edith"})
         self.assertEqual(len({config["rate"] for config in PERSONALITY_CONFIG.values()}), 3)
