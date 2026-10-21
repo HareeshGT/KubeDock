@@ -121,6 +121,11 @@ class K8sAIOpsVoiceMixin:
         if qwen_worker is not None and qwen_worker.isRunning():
             try: qwen_worker.clear_pending()
             except Exception: pass
+            if self._voice_engine != "qwen":
+                # Release multi-GB weights after the current inference finishes
+                # when the user switches to OpenAI or system TTS.
+                try: qwen_worker.release_model()
+                except Exception: pass
         player = getattr(self, "_neural_audio_player", None)
         if player is not None:
             try: player.stop()
