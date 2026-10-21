@@ -97,9 +97,29 @@ class K8sAIOpsVoiceMixin:
         self._write_info("\n" + notice)
         if engine == "qwen" and not _QWEN_TTS_AVAILABLE:
             self._write_info("\nInstall command: python -m pip install -r requirements-qwen-tts.txt (use the Python environment that launches KubeDock).")
+    def _on_qwen_model_changed(self, index: int):
+        model_key = str(self.qwen_model_combo.itemData(index) or "voice_design")
+        if model_key == self._qwen_tts_model:
+            return
+        self._qwen_tts_model = model_key
+        save_qwen_tts_model(model_key)
+        self._stop_neural_voice(clear_queue=True)
+        self._qwen_tts_failed = not _QWEN_TTS_AVAILABLE
+        model_label = get_qwen_tts_model_config(model_key)["label"]
+        self._write_info(f"\nQwen3-TTS model changed to {model_label}. The model will load on the next spoken response.")
+        if self._voice_engine == "qwen":
+            self.voice_hint_lbl.setText(
+                f"Qwen3-TTS local · {model_label}. First use downloads weights; generation runs locally."
+            )
+
     def _stop_neural_voice(self, clear_queue: bool = True):
         if clear_queue:
             self._neural_speech_queue.clear()
+        self._qwen_job_active = False
+        qwen_worker = getattr(self, "_qwen_worker", None)
+        if qwen_worker is not None and qwen_worker.isRunning():
+            try: qwen_worker.clear_pending()
+            except Exception: pass
         player = getattr(self, "_neural_audio_player", None)
         if player is not None:
             try: player.stop()
@@ -123,6 +143,9 @@ class K8sAIOpsVoiceMixin:
 
     def _process_neural_speech_queue(self):
         if self._voice_state_machine.state == "CLOSED":
+            return
+        if self._voice_engine == "qwen":
+            self._process_qwen_speech_queue()
             return
         if self._voice_engine != "openai" or self._neural_tts_failed:
             while self._neural_speech_queue:
@@ -157,6 +180,118 @@ class K8sAIOpsVoiceMixin:
         track_worker(self._workers, worker)
         worker.start()
 
+    def _process_qwen_speech_queue(self):
+        if self._voice_state_machine.state == "CLOSED":
+            return
+        if self._voice_engine != "qwen" or self._qwen_tts_failed:
+            self._qwen_job_active = False
+            while self._neural_speech_queue:
+                self._speak_system(self._neural_speech_queue.popleft())
+            return
+        if self._neural_temp_file or self._neural_playback_active or self._qwen_job_active:
+            return
+        if not self._neural_speech_queue:
+            if self._continuous_voice_enabled and self._continuous_restart_pending and not self._busy:
+                self._continuous_restart_pending = False
+                self._schedule_continuous_voice(delay_ms=350)
+            elif self._voice_state_machine.state == "SPEAKING":
+                self._set_voice_state("IDLE")
+                self.status_lbl.setText("Ready")
+            return
+        if not _QWEN_TTS_AVAILABLE:
+            self._on_qwen_tts_error(
+                "Qwen3-TTS local runtime is not installed. Install requirements-qwen-tts.txt "
+                "in KubeDock's Python environment, then restart the app."
+            )
+            return
+        if not _QT_MULTIMEDIA_AVAILABLE or self._neural_audio_player is None:
+            self._on_qwen_tts_error("Qt Multimedia audio playback is unavailable in this KubeDock build.")
+            return
+        self._neural_current_text = self._neural_speech_queue.popleft()
+        worker = getattr(self, "_qwen_worker", None)
+        if worker is None or not worker.isRunning():
+            worker = _Qwen3TTSWorker()
+            worker.audio_ready.connect(self._on_qwen_audio_ready)
+            worker.error.connect(self._on_qwen_tts_error)
+            worker.status.connect(self._on_qwen_tts_status)
+            worker.finished.connect(self._on_qwen_worker_finished)
+            self._qwen_worker = worker
+            track_worker(self._workers, worker)
+            worker.start()
+        self._qwen_job_active = True
+        worker.enqueue(
+            self._neural_current_text, self._personality, self._voice_pace,
+            self._qwen_tts_model,
+        )
+
+    def _on_qwen_tts_status(self, message: str):
+        message = str(message or "").strip()[:500]
+        if not message:
+            return
+        self._write_info("\n" + message)
+        if message.lower().startswith("loading local qwen3-tts"):
+            self.status_lbl.setText("Loading local voice model…")
+        elif message.lower().startswith("generating") or message.lower().startswith("qwen3-tts loaded"):
+            self.status_lbl.setText("Generating local speech…")
+
+    def _on_qwen_audio_ready(self, wav_bytes: bytes):
+        if not self._neural_current_text or self._voice_engine != "qwen" or self._qwen_tts_failed:
+            return
+        try:
+            with tempfile.NamedTemporaryFile(prefix="kubedock-qwen-voice-", suffix=".wav", delete=False) as handle:
+                self._neural_temp_file = handle.name
+                handle.write(wav_bytes)
+            try: os.chmod(self._neural_temp_file, 0o600)
+            except OSError: pass
+            player = self._neural_audio_player
+            if player is None:
+                raise RuntimeError("Qt audio playback is unavailable.")
+            player.setVolume(self._voice_volume)
+            player.setMedia(QMediaContent(QUrl.fromLocalFile(self._neural_temp_file)))
+            self._neural_playback_active = True
+            player.play()
+        except Exception as exc:
+            self._on_qwen_tts_error(str(exc))
+
+    def _on_qwen_worker_finished(self):
+        # The persistent worker normally stays alive. If loading/inference
+        # terminated it, the next request creates a fresh worker.
+        self._qwen_job_active = False
+        if self._voice_state_machine.state == "CLOSED":
+            return
+        if self._voice_engine == "qwen" and self._neural_current_text and not self._neural_playback_active:
+            self._process_neural_speech_queue()
+
+    def _on_qwen_tts_error(self, message: str):
+        text = self._neural_current_text
+        self._qwen_tts_failed = True
+        self._qwen_job_active = False
+        worker = getattr(self, "_qwen_worker", None)
+        if worker is not None and worker.isRunning():
+            try: worker.clear_pending()
+            except Exception: pass
+        player = self._neural_audio_player
+        if player is not None:
+            try: player.stop()
+            except Exception: pass
+            try: player.setMedia(QMediaContent())
+            except Exception: pass
+        self._neural_playback_active = False
+        self._cleanup_neural_temp_file()
+        detail = str(message or "unknown Qwen3-TTS error")[:600]
+        notice = (
+            "Qwen3-TTS local speech failed; this utterance is falling back to the system voice. "
+            "No OpenAI TTS request was made. Check the optional Qwen installation, model download, "
+            "or available memory, then click Preview to retry. " + detail
+        )
+        self._write_info("\n" + notice)
+        if hasattr(self, "voice_hint_lbl"):
+            self.voice_hint_lbl.setText("Qwen3-TTS unavailable for this session · using system voice. Fix setup, then click Preview to retry.")
+            self.voice_hint_lbl.setToolTip(notice)
+        if text:
+            self._speak_system(text)
+        self._neural_current_text = ""
+        self._process_neural_speech_queue()
     def _on_neural_audio_ready(self, wav_bytes: bytes):
         if not self._neural_current_text or self._voice_engine != "openai" or self._neural_tts_failed:
             return
@@ -191,6 +326,8 @@ class K8sAIOpsVoiceMixin:
             try: player.setMedia(QMediaContent())
             except Exception: pass
         self._neural_playback_active = False
+        if self._voice_engine == "qwen":
+            self._qwen_job_active = False
         self._neural_current_text = ""
         self._cleanup_neural_temp_file()
         if self._neural_speech_queue:
@@ -206,7 +343,10 @@ class K8sAIOpsVoiceMixin:
     def _on_neural_player_error(self, _error=None):
         if self._neural_temp_file or self._neural_playback_active:
             message = self._neural_audio_player.errorString() if self._neural_audio_player is not None else "Audio playback failed."
-            self._on_neural_tts_error(message or "Audio playback failed.")
+            if self._voice_engine == "qwen":
+                self._on_qwen_tts_error(message or "Audio playback failed.")
+            else:
+                self._on_neural_tts_error(message or "Audio playback failed.")
 
     def _on_neural_tts_error(self, message: str):
         text = self._neural_current_text
