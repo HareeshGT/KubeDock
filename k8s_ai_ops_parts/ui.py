@@ -22,7 +22,7 @@ from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
-from .core import _TTS_AVAILABLE
+from .core import _TTS_AVAILABLE, _VOICE_AVAILABLE
 
 
 class K8sAIOpsUIMixin:
@@ -50,6 +50,8 @@ class K8sAIOpsUIMixin:
         self._voice_state_machine = VoiceConversationStateMachine()
         self._last_voice_transcript = ''
         self._last_voice_timestamp = 0.0
+        self._queued_voice_request = None
+        self._voice_error_occurred = False
         self._continuous_restart_pending = False
         self._restart_voice_timer = QTimer(self)
         self._restart_voice_timer.setSingleShot(True)
@@ -373,7 +375,10 @@ class K8sAIOpsUIMixin:
         else:
             apply_text_icon(self.run_btn, ' Run with AI', size=15)
             self.status_lbl.setText('Ready')
-            if hasattr(self, '_schedule_continuous_voice'):
+            queued = getattr(self, '_queued_voice_request', None)
+            if queued:
+                QTimer.singleShot(0, self._run_queued_voice_request)
+            elif hasattr(self, '_schedule_continuous_voice'):
                 self._schedule_continuous_voice()
 
     def _clear_output(self):
