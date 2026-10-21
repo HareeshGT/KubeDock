@@ -205,14 +205,16 @@ class K8sAIOpsVoiceMixin:
             except Exception: pass
         self._neural_playback_active = False
         self._cleanup_neural_temp_file()
-        self._write_info("\nNeural voice failed; switching to the offline system voice for this session: " + str(message or "unknown error")[:300])
-        if self._voice_engine == "openai":
-            self._voice_engine = "system"
-            save_voice_engine("system")
-            self.voice_engine_combo.blockSignals(True)
-            self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData("system")))
-            self.voice_engine_combo.blockSignals(False)
-            self.voice_combo.setEnabled(_TTS_AVAILABLE)
+        self._write_info(
+            "\nNeural voice failed; this utterance is falling back to the local system voice. "
+            "The Neural · OpenAI selection has been kept so you can retry after checking the OpenAI API key, model access, or network. "
+            + str(message or "unknown error")[:300]
+        )
+        if hasattr(self, "voice_hint_lbl"):
+            self.voice_hint_lbl.setText(
+                "Neural voice request failed; using system voice for this session. "
+                "Neural selection is preserved—check Settings → AI and use Preview to retry."
+            )
         if text:
             self._speak_system(text)
         self._neural_current_text = ""
@@ -353,6 +355,8 @@ class K8sAIOpsVoiceMixin:
         if self._narrator is not None:
             self._narrator.interrupt()
         self._stop_neural_voice(clear_queue=True)
+        if self._voice_engine == "openai":
+            self._neural_tts_failed = False
         preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
         self._speak(preview, force=True)
 
