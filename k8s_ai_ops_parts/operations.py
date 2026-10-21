@@ -588,9 +588,13 @@ class K8sAIOpsOperationsMixin:
         dlg.exec_()
 
     def closeEvent(self, event):
+        if getattr(self, "_restart_voice_timer", None) is not None:
+            self._restart_voice_timer.stop()
+        if getattr(self, "_voice_state_machine", None) is not None:
+            self._voice_state_machine.state = "CLOSED"
         if self._voice_worker is not None:
             try:
-                self._voice_worker.stop()
+                self._voice_worker.cancel()
             except Exception:
                 pass
         if self._narrator is not None:
