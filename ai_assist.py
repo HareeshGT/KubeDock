@@ -963,33 +963,34 @@ class AIConversationWorker(QThread):
 
 
 class AIExplainWorker(QThread):
-    """Sends pod log/event text to the selected provider's API and returns
-    a plain-English diagnosis. Mirrors workers.CommandWorker's done/error
-    signal shape so call sites can reuse the same progress-spinner/
-    button-state wiring already used for SSH commands, regardless of which
-    provider/model is backing it."""
+    """Send bounded pod logs plus optional live resource evidence to the selected provider."""
 
     done  = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, provider: str, api_key: str, model: str, pod: str,
-                 namespace: str, container: str, log_text: str, parent=None):
+                 namespace: str, container: str, log_text: str, parent=None,
+                 resource_context: str = ""):
         super().__init__(parent)
-        self._provider   = provider
-        self._api_key    = api_key
-        self._model      = model
-        self._pod        = pod
-        self._namespace  = namespace
-        self._container  = container
-        self._log_text   = log_text
+        self._provider = provider
+        self._api_key = api_key
+        self._model = model
+        self._pod = pod
+        self._namespace = namespace
+        self._container = container
+        self._log_text = log_text
+        self._resource_context = resource_context
         self.finished.connect(self.deleteLater)
 
     def run(self):
-        if not (self._log_text or "").strip():
-            self.error.emit("Nothing to analyze — the log is empty.")
+        if not (self._log_text or "").strip() and not (self._resource_context or "").strip():
+            self.error.emit("Nothing to analyze — no logs or resource evidence were collected.")
             return
 
-        prompt = _build_prompt(self._pod, self._namespace, self._container, self._log_text)
+        prompt = _build_prompt(
+            self._pod, self._namespace, self._container, self._log_text,
+            resource_context=self._resource_context,
+        )
         text, err = _call_provider(self._provider, self._api_key, self._model, prompt)
         if err:
             self.error.emit(err)
