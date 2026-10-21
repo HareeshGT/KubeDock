@@ -237,49 +237,37 @@ def personalize_local_response(text: str, personality: str = None) -> str:
 
 
 def personalize_spoken_phrase(text: str, personality: str = None) -> str:
-  """Make routine spoken status updates match the selected assistant style."""
+  """Make routine spoken status updates natural for the selected persona."""
   key = str(personality or get_assistant_personality()).lower()
   value = str(text or "").strip()
   exact = {
-    "Processing your request.": {
-      "jarvis": "Certainly. I'll take care of that.",
-      "friday": "On it. Let me check that for you.",
-      "edith": "Request received. Evaluating the operation.",
-    },
-    "Command build completed.": {
-      "jarvis": "The command is prepared and validated.",
-      "friday": "The command is ready to go.",
-      "edith": "Command validated.",
-    },
-    "I need more information to do that safely.": {
-      "jarvis": "I need one more detail before I can proceed safely.",
-      "friday": "Quick clarification before I do that safely.",
-      "edith": "Clarification required before execution.",
-    },
-    "Operation cancelled.": {
-      "jarvis": "Understood. No change was made.",
-      "friday": "No problem. I've cancelled it; nothing was changed.",
-      "edith": "Cancelled. No operation was executed.",
-    },
+    "Processing your request.": {"jarvis": "Certainly. I'll take care of that.", "friday": "On it. Let me check that for you.", "edith": "Request received. Evaluating the operation."},
+    "Command build completed.": {"jarvis": "The command is prepared and validated.", "friday": "The command is ready to go.", "edith": "Command validated."},
+    "I need more information to do that safely.": {"jarvis": "I need one more detail before I can proceed safely.", "friday": "Quick clarification before I do that safely.", "edith": "Clarification required before execution."},
+    "Operation cancelled.": {"jarvis": "Understood. No change was made.", "friday": "No problem. I've cancelled it; nothing was changed.", "edith": "Cancelled. No operation was executed."},
   }
-  for source, variants in exact.items():
-    if value == source:
-      return variants.get(key, value)
+  if value in exact:
+    return exact[value].get(key, value)
   match = re.fullmatch(r"(Scale up|Scale down|Scale|Restart|Delete|Get|Describe|Rollout status check) (completed|failed)\.", value, flags=re.I)
-  if match:
-    operation, outcome = match.group(1).lower(), match.group(2).lower()
-    if outcome == "failed":
-      return {
-        "jarvis": f"The {operation} did not succeed. I'll leave the state unconfirmed.",
-        "friday": f"That {operation} didn't go through, so I can't say it worked.",
-        "edith": f"Operation failed: {operation}. Result not confirmed.",
-      }.get(key, value)
-    return {
-      "jarvis": f"The {operation} is complete.",
-      "friday": f"All set — the {operation} is complete.",
-      "edith": f"Confirmed: {operation} completed.",
-    }.get(key, value)
-  return value
+  if not match:
+    return value
+  operation, outcome = match.group(1).lower(), match.group(2).lower()
+  if outcome == "failed":
+    if operation == "get": return {"jarvis": "I couldn't retrieve the requested information.", "friday": "I couldn't get that information just now.", "edith": "Read operation failed; result unavailable."}.get(key, value)
+    if operation == "describe": return {"jarvis": "I couldn't retrieve the resource details.", "friday": "I couldn't finish checking that resource.", "edith": "Resource inspection failed; state is unconfirmed."}.get(key, value)
+    return {"jarvis": f"The {operation} did not succeed. I'll leave the state unconfirmed.", "friday": f"That {operation} didn't go through, so I can't say it worked.", "edith": f"Operation failed: {operation}. Result not confirmed."}.get(key, value)
+  operation_words = {
+    "get": ("The requested information is ready.", "I found the requested information.", "Read completed; information is ready."),
+    "describe": ("The resource details are ready.", "I've finished checking the resource details.", "Resource inspection complete."),
+    "rollout status check": ("The rollout status check is complete.", "The rollout check is done.", "Rollout status check complete."),
+    "scale up": ("The scale-up operation is complete.", "Scaling up is complete.", "Scale-up operation complete."),
+    "scale down": ("The scale-down operation is complete.", "Scaling down is complete.", "Scale-down operation complete."),
+    "scale": ("The scaling operation is complete.", "The scaling change is complete.", "Scaling operation complete."),
+    "restart": ("The restart is complete.", "The restart is done.", "Restart completed."),
+    "delete": ("The deletion is complete.", "The deletion is done.", "Deletion completed."),
+  }
+  variant = {"jarvis": 0, "friday": 1, "edith": 2}.get(key, 0)
+  return operation_words.get(operation, (value, value, value))[variant]
 def normalize_voice_transcript(text: str) -> str:
   """Normalize ASR variants so duplicate transcripts cannot repeat an operation."""
   return re.sub(r"[^a-z0-9._/-]+", " ", str(text or "").casefold()).strip()
