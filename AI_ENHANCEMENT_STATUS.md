@@ -86,10 +86,10 @@ A quick review of the merged code found that resource evidence was tail-truncate
 
 ## Ops Mind voice layout and expressive TTS follow-up (2026-10-22)
 
-- [x] Split engine/persona/voice preview and turn-taking/pacing/volume controls into two rows to prevent horizontal clipping on normal window widths.
+- [x] Split engine/persona/voice preview and turn-taking/pacing/volume controls into two rows to prevent horizontal clipping on normal window widths. Preview pauses active hands-free capture, plays the chosen voice, and automatically resumes listening after playback.
 - [x] Replaced the empty preview icon-only control with a labeled Preview button; the installed system voice selector is hidden when the neural engine is active.
 - [x] Replaced the WebSocket-based speech path with OpenAI's dedicated gpt-4o-mini-tts speech endpoint, which supports explicit vocal delivery instructions and speed. JARVIS-inspired delivery is more measured, resonant and contemporary British-English; FRIDAY is warm and lively; EDITH is composed and precise.
 - [x] Removed the unnecessary websocket-client dependency. Neural speech is delivered through Python's standard-library HTTP client in a worker thread with 30-second timeout, bounded WAV response size, validation and credential redaction.
 - [x] Changed automatic fallback handling so an API or audio failure does not save System · Offline as the permanent choice. The app uses offline speech for the affected session, preserves Neural · OpenAI as selected, and allows a retry from Preview.
-- [x] Added a one-time migration: older unmarked System · Offline values are treated as a previous automatic fallback when an OpenAI key is configured. Explicit current offline selections remain respected. If Neural · OpenAI is selected before a key is configured, KubeDock preserves that preference so it can be used once the key is added.
+- [x] Added a one-time migration: older unmarked System · Offline values are treated as a previous automatic fallback when an OpenAI key is configured. Explicit offline selections saved by this build remain respected. If Neural · OpenAI is selected before a key is configured, KubeDock preserves that preference so it can be used once the key is added.
 - GitHub Actions validation on Python 3.12: focused voice/security/ops tests **31 passed**; full suite **176 passed, 1 skipped**. Two existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39671505352
