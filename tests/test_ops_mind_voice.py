@@ -12,6 +12,9 @@ from k8s_ai_ops_parts.core import (
     should_stop_for_silence,
     should_timeout_without_speech,
     speech_friendly_text,
+    validate_action,
+    build_kubectl_command,
+    _build_k8s_ops_prompt,
 )
 
 
@@ -91,6 +94,43 @@ class VoiceConversationTests(unittest.TestCase):
             core.VOICE_ID_SETTINGS_KEY: "legacy-non-default-voice",
         }):
             self.assertEqual(core.get_voice_id("friday"), "")
+    def test_conversation_response_is_typed_and_bounded(self):
+        action = validate_action({"action": "conversation", "response": "The earlier output indicates a scheduling error."})
+        self.assertEqual(action["kind"], "conversation")
+        self.assertIn("scheduling error", action["response"])
+        clipped = validate_action({"action": "conversation", "response": "x" * 2000})
+        self.assertLessEqual(len(clipped["response"]), 1201)
+
+    def test_prompt_includes_bounded_recent_context_without_changing_ops_schema(self):
+        prompt = _build_k8s_ops_prompt(
+            "Why did that happen?", "prod", "cluster context", [],
+            conversation=[
+                {"role": "user", "content": "describe pod payments-1"},
+                {"role": "assistant", "content": "Events show BackOff and the pod is not ready."},
+            ],
+        )
+        self.assertIn("recent_conversation", prompt)
+        self.assertIn("Events show BackOff", prompt)
+        self.assertIn('"action":"conversation"', prompt)
+        self.assertIn("use exactly one allow-listed operation", prompt)
+
+    def test_logs_action_builds_bounded_command_and_validates_container(self):
+        action = validate_action({
+            "action": "logs", "resource": "pod", "name": "payments-api-1",
+            "namespace": "prod", "previous": True, "container": "api",
+        })
+        command = build_kubectl_command(action)
+        self.assertIn("logs --tail=100 --previous -c api payments-api-1", command)
+        self.assertIn("-n prod", command)
+        with self.assertRaises(ValueError):
+            validate_action({"action": "logs", "resource": "deployment", "name": "payments", "namespace": "prod"})
+        with self.assertRaises(ValueError):
+            validate_action({"action": "logs", "resource": "pod", "name": "payments-1", "namespace": "prod", "container": "api; rm -rf /"})
+
+    def test_logs_require_a_namespace(self):
+        with self.assertRaises(ValueError):
+            validate_action({"action": "logs", "resource": "pod", "name": "payments-1", "namespace": ""})
+
     def test_personalities_have_distinct_style_and_voice_profiles(self):
         self.assertEqual(set(PERSONALITY_CONFIG), {"jarvis", "friday", "edith"})
         self.assertEqual(len({config["rate"] for config in PERSONALITY_CONFIG.values()}), 3)
