@@ -161,7 +161,7 @@ class VoiceConversationTests(unittest.TestCase):
 
     def test_realtime_worker_wraps_pcm_as_wav_without_network_or_audio_hardware(self):
         from k8s_ai_ops_parts import core
-        pcm = (b"\\x00\\x00\\x10\\x00") * 600
+        pcm = bytes((0, 0, 16, 0)) * 300
         events = [
             {"type": "session.created"},
             {"type": "session.updated"},
