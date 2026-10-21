@@ -20,13 +20,13 @@ Three highest-impact verified weaknesses were recorded before editing:
 
 ## Test results
 
-GitHub Actions on Python 3.12 (latest full passing run before the final log-collection refinement):
+GitHub Actions on Python 3.12 (run `39646785124`, validating the alternate-log collection change):
 
 - Focused tests: **10 passed**.
 - Full test suite: **155 passed, 1 skipped**.
 - Warnings: two pre-existing `SpeechRecognition` deprecations (`aifc` and `audioop`).
 
-The targeted live-evidence command was subsequently updated to fetch the alternate log stream without re-reading the displayed stream. A fresh validation run is being triggered for that final refinement.
+The final live-evidence refinement fetches the alternate log stream without re-reading the displayed stream; that version passed the same focused and full test suites.
 
 ## Known limitations
 
