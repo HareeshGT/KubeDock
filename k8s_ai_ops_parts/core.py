@@ -1585,7 +1585,14 @@ class _OpenAINeuralTTSWorker(QThread):
       }))
       ws.send(json.dumps({
         "type": "response.create",
-        "response": {"output_modalities": ["audio"]},
+        "response": {
+          "output_modalities": ["audio"],
+          "instructions": (
+            "This request is speech synthesis, not a conversation. Speak the provided "
+            "user text verbatim. Do not answer its meaning, paraphrase, summarize, "
+            "or add a greeting or other words. " + profile["instructions"]
+          ),
+        },
       }))
       pcm = bytearray()
       response_deadline = time.monotonic() + 35
