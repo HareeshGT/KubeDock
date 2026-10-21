@@ -88,8 +88,8 @@ A quick review of the merged code found that resource evidence was tail-truncate
 
 - [x] Split engine/persona/voice preview and turn-taking/pacing/volume controls into two rows to prevent horizontal clipping on normal window widths.
 - [x] Replaced the empty preview icon-only control with a labeled Preview button; the installed system voice selector is hidden when the neural engine is active.
-- [x] Replaced the Realtime WebSocket-based speech path with OpenAI's dedicated gpt-4o-mini-tts speech endpoint, which supports explicit vocal delivery instructions and speed. JARVIS-inspired delivery is more measured, resonant and contemporary British-English; FRIDAY is warm and lively; EDITH is composed and precise.
+- [x] Replaced the WebSocket-based speech path with OpenAI's dedicated gpt-4o-mini-tts speech endpoint, which supports explicit vocal delivery instructions and speed. JARVIS-inspired delivery is more measured, resonant and contemporary British-English; FRIDAY is warm and lively; EDITH is composed and precise.
 - [x] Removed the unnecessary websocket-client dependency. Neural speech is delivered through Python's standard-library HTTP client in a worker thread with 30-second timeout, bounded WAV response size, validation and credential redaction.
 - [x] Changed automatic fallback handling so an API or audio failure does not save System · Offline as the permanent choice. The app uses offline speech for the affected session, preserves Neural · OpenAI as selected, and allows a retry from Preview.
-- [x] Added a one-time migration: older unmarked System · Offline values are treated as previous automatic fallback if an OpenAI key is already configured; intentional current offline selections remain respected.
+- [x] Added a one-time migration: older unmarked System · Offline values are treated as a previous automatic fallback when an OpenAI key is configured. Explicit current offline selections remain respected. If Neural · OpenAI is selected before a key is configured, KubeDock preserves that preference so it can be used once the key is added.
 - GitHub Actions validation for this follow-up is pending.
