@@ -258,7 +258,7 @@ class K8sAIOpsUIMixin:
         self.interrupt_btn.setToolTip("Stop the current spoken phrase and listen for a new instruction. Does not cancel an operation already running.")
         voice_settings_row2.addWidget(self.interrupt_btn)
 
-        voice_settings_row.addWidget(QLabel("Silence"))
+        voice_settings_row2.addWidget(QLabel("Silence"))
         self.silence_combo = QComboBox()
         self.silence_combo.setFixedWidth(82)
         for seconds in VOICE_SILENCE_CHOICES:
@@ -270,7 +270,7 @@ class K8sAIOpsUIMixin:
         self.silence_combo.setEnabled(_VOICE_AVAILABLE)
         voice_settings_row2.addWidget(self.silence_combo)
 
-        voice_settings_row.addWidget(QLabel("Pace"))
+        voice_settings_row2.addWidget(QLabel("Pace"))
         self.voice_pace_combo = QComboBox()
         self.voice_pace_combo.setFixedWidth(95)
         for pace, label in (("slow", "Slow"), ("natural", "Natural"), ("brisk", "Brisk")):
@@ -280,7 +280,7 @@ class K8sAIOpsUIMixin:
         self.voice_pace_combo.currentIndexChanged.connect(self._on_voice_pace_changed)
         voice_settings_row2.addWidget(self.voice_pace_combo)
 
-        voice_settings_row.addWidget(QLabel("Volume"))
+        voice_settings_row2.addWidget(QLabel("Volume"))
         self.voice_volume_slider = QSlider(Qt.Horizontal)
         self.voice_volume_slider.setRange(0, 100)
         self.voice_volume_slider.setValue(self._voice_volume)
