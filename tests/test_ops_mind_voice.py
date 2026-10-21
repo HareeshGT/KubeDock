@@ -168,7 +168,14 @@ class VoiceConversationTests(unittest.TestCase):
             self.assertEqual(get_voice_engine(), "openai")
         with patch.object(core, "load_settings", return_value={}), patch.object(core.ai_assist, "get_api_key", return_value=""):
             self.assertEqual(get_voice_engine(), "system")
+        # An unmarked "system" value can be an automatic fallback from an older build.
         with patch.object(core, "load_settings", return_value={core.VOICE_ENGINE_SETTINGS_KEY: "system"}), patch.object(core.ai_assist, "get_api_key", return_value="sk-test-key"):
+            self.assertEqual(get_voice_engine(), "openai")
+        # A current, explicit offline choice must still be respected.
+        with patch.object(core, "load_settings", return_value={
+            core.VOICE_ENGINE_SETTINGS_KEY: "system",
+            core.VOICE_ENGINE_EXPLICIT_SETTINGS_KEY: True,
+        }), patch.object(core.ai_assist, "get_api_key", return_value="sk-test-key"):
             self.assertEqual(get_voice_engine(), "system")
 
     def test_neural_tts_uses_expressive_speech_endpoint_and_wav_output(self):
