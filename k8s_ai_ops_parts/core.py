@@ -123,6 +123,7 @@ VOICE_SILENCE_SETTINGS_KEY = "k8s_ops_voice_silence_seconds"
 VOICE_PACE_SETTINGS_KEY = "k8s_ops_voice_pace"
 VOICE_VOLUME_SETTINGS_KEY = "k8s_ops_voice_volume"
 VOICE_ENGINE_SETTINGS_KEY = "k8s_ops_voice_engine"
+VOICE_ENGINE_EXPLICIT_SETTINGS_KEY = "k8s_ops_voice_engine_explicit"
 OPENAI_NEURAL_TTS_MODEL = "gpt-4o-mini-tts"
 NEURAL_TTS_SAMPLE_RATE = 24000
 NEURAL_TTS_MAX_AUDIO_BYTES = 12 * 1024 * 1024
@@ -235,28 +236,47 @@ def save_voice_volume(volume: int):
 
 
 def get_voice_engine() -> str:
-  """Return the selected neural or offline voice engine, defaulting safely."""
+  """Return the selected engine; migrate old automatic fallback to neural once."""
   try:
-    selected = str(load_settings().get(VOICE_ENGINE_SETTINGS_KEY, "") or "").strip().lower()
+    settings = load_settings()
+    selected = str(settings.get(VOICE_ENGINE_SETTINGS_KEY, "") or "").strip().lower()
+    explicitly_selected = bool(settings.get(VOICE_ENGINE_EXPLICIT_SETTINGS_KEY, False))
   except Exception:
-    selected = ""
+    selected, explicitly_selected = "", False
   try:
     openai_key_available = bool(ai_assist.get_api_key("openai"))
   except Exception:
     openai_key_available = False
-  if selected == "openai" and openai_key_available:
-    return "openai"
-  if selected == "system":
+  if not openai_key_available:
     return "system"
-  return "openai" if openai_key_available else "system"
+  if selected == "openai":
+    return "openai"
+  if selected == "system" and explicitly_selected:
+    return "system"
+  # Older builds permanently saved "system" after a neural request failed.
+  # Treat that unmarked value as an automatic fallback, not a user preference.
+  if selected == "system" and not explicitly_selected:
+    try:
+      save_settings(**{
+        VOICE_ENGINE_SETTINGS_KEY: "openai",
+        VOICE_ENGINE_EXPLICIT_SETTINGS_KEY: False,
+      })
+    except Exception:
+      pass
+  return "openai"
 
 
 def save_voice_engine(engine: str):
   value = str(engine or "system").strip().lower()
   if value not in {"openai", "system"}:
     value = "system"
-  try: save_settings(**{VOICE_ENGINE_SETTINGS_KEY: value})
-  except Exception: pass
+  try:
+    save_settings(**{
+      VOICE_ENGINE_SETTINGS_KEY: value,
+      VOICE_ENGINE_EXPLICIT_SETTINGS_KEY: True,
+    })
+  except Exception:
+    pass
 
 
 def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> dict:
