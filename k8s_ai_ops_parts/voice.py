@@ -116,6 +116,7 @@ class K8sAIOpsVoiceMixin:
         if clear_queue:
             self._neural_speech_queue.clear()
         self._qwen_job_active = False
+        self._qwen_current_job_id = None
         qwen_worker = getattr(self, "_qwen_worker", None)
         if qwen_worker is not None and qwen_worker.isRunning():
             try: qwen_worker.clear_pending()
@@ -219,7 +220,7 @@ class K8sAIOpsVoiceMixin:
             track_worker(self._workers, worker)
             worker.start()
         self._qwen_job_active = True
-        worker.enqueue(
+        self._qwen_current_job_id = worker.enqueue(
             self._neural_current_text, self._personality, self._voice_pace,
             self._qwen_tts_model,
         )
@@ -234,7 +235,9 @@ class K8sAIOpsVoiceMixin:
         elif message.lower().startswith("generating") or message.lower().startswith("qwen3-tts loaded"):
             self.status_lbl.setText("Generating local speech…")
 
-    def _on_qwen_audio_ready(self, wav_bytes: bytes):
+    def _on_qwen_audio_ready(self, wav_bytes: bytes, job_id: int = None):
+        if job_id is not None and job_id != self._qwen_current_job_id:
+            return
         if not self._neural_current_text or self._voice_engine != "qwen" or self._qwen_tts_failed:
             return
         try:
@@ -262,10 +265,13 @@ class K8sAIOpsVoiceMixin:
         if self._voice_engine == "qwen" and self._neural_current_text and not self._neural_playback_active:
             self._process_neural_speech_queue()
 
-    def _on_qwen_tts_error(self, message: str):
+    def _on_qwen_tts_error(self, message: str, job_id: int = None):
+        if job_id is not None and job_id != self._qwen_current_job_id:
+            return
         text = self._neural_current_text
         self._qwen_tts_failed = True
         self._qwen_job_active = False
+        self._qwen_current_job_id = None
         worker = getattr(self, "_qwen_worker", None)
         if worker is not None and worker.isRunning():
             try: worker.clear_pending()
@@ -328,6 +334,7 @@ class K8sAIOpsVoiceMixin:
         self._neural_playback_active = False
         if self._voice_engine == "qwen":
             self._qwen_job_active = False
+            self._qwen_current_job_id = None
         self._neural_current_text = ""
         self._cleanup_neural_temp_file()
         if self._neural_speech_queue:
