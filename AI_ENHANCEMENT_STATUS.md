@@ -2,18 +2,36 @@
 
 ## Baseline inspection (2026-10-21)
 
-### Three highest-impact verified weaknesses
-1. **External-context redaction is prompt-only, not deterministic.** `ai_assist.py` includes instructions about untrusted logs and secrets, but `_build_prompt` and `_build_command_prompt` pass captured text into prompts without removing credential-shaped values.
-2. **Pod diagnoses rely on logs alone.** `dialogs_parts/log_viewer.py` forwards the displayed logs to `AIExplainWorker`; it does not first collect the pod's live status, readiness, specification, or recent events.
-3. **Mutation success is inferred from the initiating command.** `k8s_ai_ops_parts/operations.py` records successful scale/restart/delete actions after a successful command exit, without verifying the resulting resource state.
+Three highest-impact verified weaknesses were recorded before editing:
 
-### Implementation checklist
+1. **External-context redaction was prompt-only.** `ai_assist.py` instructed the model not to disclose secrets but passed captured evidence without deterministic credential redaction.
+2. **Pod diagnoses relied on the displayed logs.** `dialogs_parts/log_viewer.py` did not collect live pod status, events, configuration, or metrics before requesting a diagnosis.
+3. **Mutation success was inferred from the initiating command.** `k8s_ai_ops_parts/operations.py` did not verify the resulting state before recording a mutation as successful.
+
+## Implementation checklist
+
 - [x] Trace provider request/response handling, AI explain/follow-up workers, Ops Mind parsing/validation, confirmation, execution, and history.
-- [ ] P0: add compact, resource-specific live pod evidence to AI explanations while keeping collection off the GUI thread.
-- [ ] P0/P1: deterministically redact sensitive values and cap provider response/error payloads.
-- [ ] P0: verify mutating operation outcomes before marking them successful.
-- [ ] Add focused tests for redaction, bounded provider response handling, and operation verification decisions.
-- [ ] Run targeted tests and the existing regression suite; record exact outcomes.
+- [x] Collect target-specific pod description (status/readiness/configuration/events), the alternate current/previous container log stream when applicable, and container metrics through a bounded existing background worker. Secret contents are not queried.
+- [x] Use a five-section evidence-grounded diagnosis format: Finding, Evidence, Likely cause and uncertainty, Recommended fix, and Verification.
+- [x] Redact recognizable credentials, bearer/API tokens, private-key blocks, and credential-bearing command/output values before provider submission and from returned text/errors.
+- [x] Bound provider request time, response/error body sizes and follow-up context. Retry once for transient connection failures or HTTP 5xx; do not retry rate-limit/authentication failures or read timeouts, and never switch providers.
+- [x] Verify scale, restart, and delete outcomes with deterministic read-only probes; record `unverified` rather than success when target state cannot be confirmed.
+- [x] Add focused regression tests and run them together with the existing suite in GitHub Actions.
 
-### Baseline test status
-Not run yet. This repository is being edited through GitHub API access; a local checkout/test runner is not available in this execution environment. CI will be checked after the changes are committed to the work branch.
+## Test results
+
+GitHub Actions on Python 3.12 (latest full passing run before the final log-collection refinement):
+
+- Focused tests: **10 passed**.
+- Full test suite: **155 passed, 1 skipped**.
+- Warnings: two pre-existing `SpeechRecognition` deprecations (`aifc` and `audioop`).
+
+The targeted live-evidence command was subsequently updated to fetch the alternate log stream without re-reading the displayed stream. A fresh validation run is being triggered for that final refinement.
+
+## Known limitations
+
+- Live diagnosis requires an active SSH/Kubernetes connection. `kubectl top` evidence depends on a functioning metrics API; unavailable sections are supplied as errors/unknowns rather than inferred.
+- Evidence gathering is limited to one targeted pod description, one alternate log query (up to 100 lines), and one container-metrics query; it does not scan the cluster.
+- Rollout verification is bounded to 30 seconds. A timeout, RBAC error, or unavailable connection reports `unverified` and requires a manual state check.
+- Credential redaction is heuristic defense-in-depth and cannot guarantee detection of every organization-specific secret format. Kubernetes Secret values/private keys are not proactively queried for AI context.
+- Transient retries are deliberately limited to one retry for connection failures and HTTP 5xx. Rate limits and timeouts are not retried to avoid unnecessary duplicate provider calls/costs.
