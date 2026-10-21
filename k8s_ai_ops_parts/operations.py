@@ -670,6 +670,10 @@ class K8sAIOpsOperationsMixin:
         if hasattr(self, "_stop_neural_voice"):
             try: self._stop_neural_voice(clear_queue=True)
             except Exception: pass
+        qwen_worker = getattr(self, "_qwen_worker", None)
+        if qwen_worker is not None and qwen_worker.isRunning():
+            try: qwen_worker.shutdown()
+            except Exception: pass
         if getattr(self, "_voice_state_machine", None) is not None:
             self._voice_state_machine.state = "CLOSED"
         if self._voice_worker is not None:
