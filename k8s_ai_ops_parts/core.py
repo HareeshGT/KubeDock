@@ -1306,74 +1306,99 @@ class K8sGoogleSpeechWorker(QThread):
 
 
 class _NarrationThread(QThread):
-  """Speaks queued Ops Mind status phrases aloud, one at a time, off the
-  UI thread.
+  """Single-engine local TTS worker with queue draining and best-effort interrupt."""
+  speaking_started = pyqtSignal()
+  speaking_finished = pyqtSignal()
+  idle = pyqtSignal()
 
-  Owns a single pyttsx3 engine for its whole lifetime — repeatedly
-  calling pyttsx3.init() from different threads is unreliable, especially
-  on macOS — and drains an internal queue with engine.say()/
-  runAndWait() so that two phrases queued in quick succession (e.g.
-  "Command build completed." immediately followed by "Scaling up
-  deployment my-app.") are spoken in full, one after another, instead of
-  cutting each other off. One instance is created lazily per
-  K8sAIOpsWidget the first time it has something to say, and lives for
-  as long as that widget does; stop() lets it drain and exit cleanly.
-
-  `voice_id` is fixed for the life of the thread (pyttsx3 voices are set
-  once on the engine, not per-utterance) — the widget picks up a changed
-  voice selection by stopping the current thread and letting the next
-  _speak() call spin up a fresh one with the newly-selected voice.
-  """
-
-  def __init__(self, voice_id: str = "", parent=None):
+  def __init__(self, voice_id: str = "", rate: int = 175, volume: float = 0.85, parent=None):
     super().__init__(parent)
     self._queue = queue.Queue()
     self._voice_id = voice_id
+    self._rate = max(90, min(300, int(rate)))
+    self._volume = max(0.0, min(1.0, float(volume)))
+    self._engine = None
+    self._engine_lock = threading.Lock()
+    self._state_lock = threading.Lock()
+    self._is_speaking = False
+    self.finished.connect(self.deleteLater)
+
+  @property
+  def is_speaking(self) -> bool:
+    with self._state_lock:
+      return self._is_speaking
+
+  @property
+  def has_pending(self) -> bool:
+    return not self._queue.empty()
 
   def speak(self, text: str):
-    if text:
-      self._queue.put(text)
+    clean = speech_friendly_text(text)
+    if clean:
+      self._queue.put(clean)
+
+  def interrupt(self):
+    """Clear queued phrases and ask the active system voice to stop."""
+    while True:
+      try:
+        self._queue.get_nowait()
+      except queue.Empty:
+        break
+    with self._engine_lock:
+      engine = self._engine
+    if engine is not None:
+      try:
+        # Driver support differs by OS; the call is intentionally best-effort.
+        engine.stop()
+      except Exception:
+        pass
 
   def stop(self):
-    """Ask the loop to exit after anything already queued. Called from
-    the widget's closeEvent, and when the user mutes narration or
-    changes the selected voice."""
+    self.interrupt()
     self._queue.put(None)
 
   def run(self):
     try:
       engine = pyttsx3.init()
     except Exception:
+      self.idle.emit()
       return
+    with self._engine_lock:
+      self._engine = engine
     try:
-      engine.setProperty("rate", 175)
-    except Exception:
-      pass
-    if self._voice_id:
-      try:
-        engine.setProperty("voice", self._voice_id)
-      except Exception:
-        # An unrecognized/stale voice id (e.g. settings carried
-        # over from a different machine) just falls back to
-        # whatever voice pyttsx3 already defaulted to above.
-        pass
-
-    while True:
-      text = self._queue.get()
-      if text is None:
-        break
-      try:
-        engine.say(text)
-        engine.runAndWait()
-      except Exception:
-        # A single unsupported/bad phrase shouldn't silence
-        # narration for the rest of the session.
-        continue
-
-    try:
-      engine.stop()
-    except Exception:
-      pass
+      try: engine.setProperty("rate", self._rate)
+      except Exception: pass
+      try: engine.setProperty("volume", self._volume)
+      except Exception: pass
+      if self._voice_id:
+        try: engine.setProperty("voice", self._voice_id)
+        except Exception: pass
+      while True:
+        text = self._queue.get()
+        if text is None:
+          break
+        with self._state_lock:
+          self._is_speaking = True
+        self.speaking_started.emit()
+        try:
+          engine.say(text)
+          engine.runAndWait()
+        except Exception:
+          pass
+        finally:
+          with self._state_lock:
+            self._is_speaking = False
+          self.speaking_finished.emit()
+          if self._queue.empty():
+            self.idle.emit()
+    finally:
+      try: engine.stop()
+      except Exception: pass
+      with self._engine_lock:
+        self._engine = None
+      with self._state_lock:
+        self._is_speaking = False
+      self.idle.emit()
 
 
 def validate_action(data: dict):
