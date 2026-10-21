@@ -594,6 +594,23 @@ if [ -f requirements.txt ]; then
     fi
   fi
 
+  # Optional local Qwen runtime. This is deliberately opt-in because PyTorch,
+  # Transformers and Qwen increase both install time and bundle size.
+  if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+    if [ ! -f requirements-qwen-tts.txt ]; then
+      echo "ERROR: this branch does not contain requirements-qwen-tts.txt."
+      exit 1
+    fi
+    echo
+    echo "Installing optional Qwen3-TTS runtime (Python 3.12; PyTorch/Transformers)..."
+    if [[ "$OS" == "Darwin" ]]; then
+      "$PYTHON" -m pip install --break-system-packages -r requirements-qwen-tts.txt
+    else
+      "$PYTHON" -m pip install -r requirements-qwen-tts.txt
+    fi
+    "$PYTHON" -c "import torch, qwen_tts; print('[OK] Qwen3-TTS runtime:', getattr(qwen_tts, '__version__', 'installed')); print('[OK] PyTorch:', torch.__version__)"
+  fi
+
 else
 
   echo
@@ -881,6 +898,27 @@ else
   )
 fi
 
+# Collect dynamic Qwen/Torch modules only when the local TTS runtime is opted in.
+# This makes the onedir bundle much larger; downloaded model weights remain in the
+# Hugging Face cache and are not copied into the installer.
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  CMD=(
+    "${CMD[@]:0:${#CMD[@]}-1}"
+    --collect-all=qwen_tts
+    --collect-all=torch
+    --collect-all=torchaudio
+    --collect-all=transformers
+    --collect-all=accelerate
+    --collect-all=tokenizers
+    --collect-all=librosa
+    --collect-all=soundfile
+    --collect-all=onnxruntime
+    --collect-all=einops
+    --collect-all=sox
+    main.py
+  )
+fi
+
 "${CMD[@]}"
 
 # --------------------------------------------------
@@ -1101,4 +1139,9 @@ echo " [OK] Native FLAC support"
 echo " [OK] AI operation history"
 echo " [OK] Current Web App UI"
 echo " [OK] Embedded Web App static assets"
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  echo " [OK] Qwen3-TTS runtime bundled (weights download on first launch)"
+else
+  echo " [INFO] Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
+fi
 echo
