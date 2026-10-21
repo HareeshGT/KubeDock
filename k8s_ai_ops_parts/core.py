@@ -1522,19 +1522,46 @@ class _OpenAINeuralTTSWorker(QThread):
 
   @staticmethod
   def _safe_api_error(body: bytes, api_key: str, status: int) -> str:
+    """Return a brief actionable error without exposing credentials or raw payloads."""
     detail = ai_assist._redact_sensitive_text(
       (body or b"")[:4096].decode("utf-8", errors="replace"),
       secrets=[api_key] if api_key else [],
     )
+    code = error_type = ""
     try:
       parsed = json.loads(detail)
       err = parsed.get("error", {}) if isinstance(parsed, dict) else {}
       if isinstance(err, dict):
-        detail = str(err.get("message") or err.get("code") or detail)
+        code = str(err.get("code") or "").lower()
+        error_type = str(err.get("type") or "").lower()
+        detail = str(err.get("message") or code or detail)
     except Exception:
       pass
-    detail = re.sub(r"\s+", " ", detail).strip()[:400]
+    searchable = f"{code} {error_type} {detail}".lower()
+    if status == 429 and any(marker in searchable for marker in (
+      "insufficient_quota", "billing_hard_limit_reached", "no credits",
+      "no credit", "credit balance", "quota exceeded", "exceeded your current quota",
+      "billing limit",
+    )):
+      return (
+        "OpenAI API credits are exhausted (HTTP 429). Add API credits at "
+        "https://platform.openai.com/settings/organization/billing/. "
+        "Neural voice is paused for this session; use the local system voice, "
+        "then click Preview after billing is fixed."
+      )
+    if status == 429:
+      return (
+        "OpenAI voice API rate limit reached (HTTP 429). KubeDock will use "
+        "the local system voice for this session; wait before retrying Preview."
+      )
+    if status in (401, 403):
+      return (
+        f"OpenAI rejected the voice API request (HTTP {status}). Check the API key, "
+        "project access, and permissions in Settings → AI."
+      )
+    detail = re.sub(r"\s+", " ", detail).strip()[:300]
     return f"OpenAI speech request failed (HTTP {status}): {detail or 'no error detail returned'}"
+
 
   def run(self):
     if not _NEURAL_TTS_AVAILABLE:
