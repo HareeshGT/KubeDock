@@ -183,6 +183,25 @@ fi
 echo "Selected branch: $BRANCH"
 
 # --------------------------------------------------
+# Optional local Qwen3-TTS build selection
+# --------------------------------------------------
+
+QWEN_CHOICE="$(/usr/bin/osascript <<'APPLESCRIPT' 2>/dev/null || true
+on run
+    set choice to button returned of (display dialog "Include local Qwen3-TTS voice support? This builds a larger application bundle and downloads model weights on first use." with title "KubeDock Voice Engine" buttons {"Standard Install", "Include Qwen3-TTS"} default button "Standard Install")
+    return choice
+end run
+APPLESCRIPT
+)"
+if [ "$QWEN_CHOICE" = "Include Qwen3-TTS" ]; then
+  export KUBEDECK_ENABLE_QWEN_TTS=1
+  echo "Qwen3-TTS local voice support: enabled"
+else
+  export KUBEDECK_ENABLE_QWEN_TTS=0
+  echo "Qwen3-TTS local voice support: skipped"
+fi
+
+# --------------------------------------------------
 # Run the actual installer
 # --------------------------------------------------
 
