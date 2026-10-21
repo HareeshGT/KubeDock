@@ -1204,151 +1204,103 @@ def _mic_level_percent(chunk: bytes, sample_width: int) -> int:
 
 
 class K8sGoogleSpeechWorker(QThread):
-  """Record microphone audio until stopped, then transcribe it with
-  SpeechRecognition's classic Google Web Speech recognizer.
+  """Capture one utterance and transcribe it using Google Web Speech.
 
-  No LLM is used here. Only the resulting text is emitted to the Ops Mind
-  widget, which then uses the existing AI provider for Kubernetes intent.
+  When enabled, local audio-level VAD ends a recording after sustained
+  silence. KubeDock does not persist raw audio; the captured utterance is
+  sent to Google for recognition (disclosed in the voice controls).
   """
-
   done = pyqtSignal(str)
   error = pyqtSignal(str)
   listening = pyqtSignal()
   stopped = pyqtSignal()
   level = pyqtSignal(int)
 
-  def __init__(
-    self,
-    language: str = GOOGLE_STT_LANGUAGE,
-    max_seconds: int = VOICE_MAX_SECONDS,
-    parent=None,
-  ):
+  def __init__(self, language: str = GOOGLE_STT_LANGUAGE, max_seconds: int = VOICE_MAX_SECONDS,
+               auto_stop_on_silence: bool = False, silence_seconds: float = 1.0, parent=None):
     super().__init__(parent)
     self._language = language
     self._max_seconds = max_seconds
+    self._auto_stop_on_silence = bool(auto_stop_on_silence)
+    self._silence_seconds = max(0.4, min(3.0, float(silence_seconds)))
     self._stop_event = threading.Event()
+    self._discard_event = threading.Event()
     self.finished.connect(self.deleteLater)
 
   def stop(self):
+    """Finish capture and transcribe the current utterance."""
+    self._stop_event.set()
+
+  def cancel(self):
+    """Stop capture and discard a partial/accidental utterance."""
+    self._discard_event.set()
     self._stop_event.set()
 
   def run(self):
     if not _VOICE_AVAILABLE:
-      self.error.emit(
-        "Voice input is unavailable because SpeechRecognition/PyAudio "
-        "is not installed."
-      )
+      self.error.emit("Voice input is unavailable because SpeechRecognition/PyAudio is not installed.")
       return
-
     recognizer = sr.Recognizer()
-
     try:
       with sr.Microphone() as source:
-        recognizer.adjust_for_ambient_noise(
-          source,
-          duration=VOICE_AMBIENT_CALIBRATION_SECONDS,
-        )
-
+        recognizer.adjust_for_ambient_noise(source, duration=VOICE_AMBIENT_CALIBRATION_SECONDS)
         self.listening.emit()
-
         frames = []
         started = time.monotonic()
-
-        while (
-          not self._stop_event.is_set()
-          and (time.monotonic() - started) < self._max_seconds
-        ):
+        first_voice_at = None
+        last_voice_at = None
+        while not self._stop_event.is_set() and (time.monotonic() - started) < self._max_seconds:
           try:
-            chunk = source.stream.read(
-              source.CHUNK,
-              exception_on_overflow=False,
-            )
-
-            frames.append(chunk)
-
-            # Send microphone activity to the UI.
-            self.level.emit(
-              _mic_level_percent(
-                chunk,
-                source.SAMPLE_WIDTH,
-              )
-            )
-
+            chunk = source.stream.read(source.CHUNK, exception_on_overflow=False)
           except TypeError:
-            # Compatibility with older PyAudio versions.
             chunk = source.stream.read(source.CHUNK)
-
-            frames.append(chunk)
-
-            self.level.emit(
-              _mic_level_percent(
-                chunk,
-                source.SAMPLE_WIDTH,
-              )
-            )
-            
+          frames.append(chunk)
+          now = time.monotonic()
+          level = _mic_level_percent(chunk, source.SAMPLE_WIDTH)
+          self.level.emit(level)
+          if level >= VOICE_ACTIVITY_THRESHOLD:
+            if first_voice_at is None:
+              first_voice_at = now
+            last_voice_at = now
+          if self._auto_stop_on_silence:
+            if first_voice_at is None and now - started >= VOICE_NO_SPEECH_TIMEOUT_SECONDS:
+              self.error.emit("No speech detected. Check the microphone and speak a little closer to it.")
+              return
+            if first_voice_at is not None and last_voice_at is not None and now - last_voice_at >= self._silence_seconds:
+              break
         self.level.emit(0)
         self.stopped.emit()
-
+        if self._discard_event.is_set():
+          return
         if not frames:
           self.error.emit("No audio was captured.")
           return
-
-        audio = sr.AudioData(
-          b"".join(frames),
-          source.SAMPLE_RATE,
-          source.SAMPLE_WIDTH,
-        )
+        audio = sr.AudioData(b"".join(frames), source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+      if self._discard_event.is_set():
+        return
       flac_path = _get_flac_path()
       if not flac_path:
-        self.error.emit(
-          "FLAC executable not found. "
-          "Please install FLAC with: brew install flac"
-        )
+        self.error.emit("FLAC executable not found. Please install FLAC with: brew install flac")
         return
-
-      # Finder-launched macOS apps do not inherit the terminal PATH.
-      # Explicitly force SpeechRecognition to use Homebrew's native FLAC.
       flac_dir = os.path.dirname(flac_path)
-      os.environ["PATH"] = (
-        flac_dir
-        + os.pathsep
-        + os.environ.get("PATH", "")
-      )
-
+      os.environ["PATH"] = flac_dir + os.pathsep + os.environ.get("PATH", "")
       sr.audio.get_flac_converter = lambda: flac_path
-
       try:
-        text = recognizer.recognize_google(
-          audio,
-          language=self._language,
-        )
+        text = recognizer.recognize_google(audio, language=self._language)
       except sr.UnknownValueError:
-        self.error.emit(
-          "Google Speech could not understand the recording."
-        )
+        self.error.emit("Google Speech could not understand the recording.")
         return
       except sr.RequestError as exc:
-        self.error.emit(
-          f"Google Speech recognition request failed: {exc}"
-        )
+        self.error.emit(f"Google Speech recognition request failed: {exc}")
         return
-
       text = (text or "").strip()
-
       if not text:
-        self.error.emit(
-          "Google Speech returned an empty transcription."
-        )
+        self.error.emit("Google Speech returned an empty transcription.")
         return
-
-      self.done.emit(text)
-
+      if not self._discard_event.is_set():
+        self.done.emit(text)
     except AttributeError:
-      self.error.emit(
-        "Microphone support is unavailable. Install PyAudio "
-        "and SpeechRecognition."
-      )
+      self.error.emit("Microphone support is unavailable. Install PyAudio and SpeechRecognition.")
     except Exception as exc:
       self.error.emit(f"Voice input failed: {exc}")
 
