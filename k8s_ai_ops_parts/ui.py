@@ -146,7 +146,7 @@ class K8sAIOpsUIMixin:
         self.voice_test_btn.setFixedSize(34, 34)
         self.voice_test_btn.setEnabled(_TTS_AVAILABLE)
         self.voice_test_btn.setToolTip('Preview the selected voice')
-        self.voice_test_btn.clicked.connect(lambda: self._speak("This is how I'll sound when Ops Mind narrates status updates."))
+        self.voice_test_btn.clicked.connect(self._preview_personality_voice)
         self.voice_shortcut = QShortcut(QKeySequence('Ctrl+Shift+Space'), self)
         self.voice_shortcut.activated.connect(self._toggle_voice_recording)
         clear_btn = QPushButton('Clear Output')
