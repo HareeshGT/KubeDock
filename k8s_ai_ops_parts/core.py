@@ -1432,6 +1432,10 @@ class _NarrationThread(QThread):
     except Exception:
       self.idle.emit()
       return
+    try:
+      default_voice = engine.getProperty("voice")
+    except Exception:
+      default_voice = ""
     with self._engine_lock:
       self._engine = engine
     try:
@@ -1452,8 +1456,12 @@ class _NarrationThread(QThread):
           except Exception: pass
           try: engine.setProperty("volume", item["volume"])
           except Exception: pass
-          if item.get("voice_id"):
-            try: engine.setProperty("voice", item["voice_id"])
+          # Reset to the engine's default when a personality is configured
+          # for "System Default"; otherwise a previously selected voice can
+          # leak across utterances on the same long-lived engine.
+          selected_voice = item.get("voice_id") or default_voice
+          if selected_voice:
+            try: engine.setProperty("voice", selected_voice)
             except Exception: pass
         with self._state_lock:
           self._is_speaking = True
