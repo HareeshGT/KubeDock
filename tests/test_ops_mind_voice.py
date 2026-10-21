@@ -287,7 +287,10 @@ class VoiceConversationTests(unittest.TestCase):
         save.assert_called_once_with(**{QWEN_TTS_MODEL_SETTINGS_KEY: "custom_voice"})
 
     def test_qwen_wav_conversion_creates_a_valid_pcm_wav(self):
-        import numpy as np
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("NumPy is installed with the optional Qwen3-TTS runtime.")
         wav_bytes = _Qwen3TTSWorker._to_wav_bytes(np.array([0.0, 0.25, -0.25, 0.5], dtype=np.float32), 24000)
         with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
             self.assertEqual(wf.getnchannels(), 1)
