@@ -110,8 +110,137 @@ HISTORY_RESOLVED_LIMIT = 10
 DEFAULT_PROTECTED_NAMESPACE_PATTERNS = ["prod", "production", "mcp"]
 
 VOICE_FEEDBACK_SETTINGS_KEY = "k8s_ops_voice_feedback"
-
 VOICE_ID_SETTINGS_KEY = "k8s_ops_voice_id"
+PERSONALITY_SETTINGS_KEY = "k8s_ops_personality"
+PERSONALITY_VOICES_SETTINGS_KEY = "k8s_ops_personality_voice_ids"
+CONTINUOUS_VOICE_SETTINGS_KEY = "k8s_ops_continuous_voice"
+VOICE_SILENCE_SETTINGS_KEY = "k8s_ops_voice_silence_seconds"
+VOICE_PACE_SETTINGS_KEY = "k8s_ops_voice_pace"
+VOICE_VOLUME_SETTINGS_KEY = "k8s_ops_voice_volume"
+PERSONALITY_CONFIG = {
+  "jarvis": {"label": "JARVIS · Composed", "prompt_style": "Use calm, polished, concise wording in clarification/reason fields; be precise and subtly reassuring.", "rate": 165, "preview": "Systems are ready. I will provide precise findings and clearly identify operational risks."},
+  "friday": {"label": "FRIDAY · Conversational", "prompt_style": "Use friendly, natural, collaborative wording in clarification/reason fields while remaining technically precise.", "rate": 182, "preview": "All right, I am ready. I will keep things clear, practical, and easy to follow."},
+  "edith": {"label": "EDITH · Analytical", "prompt_style": "Use direct, structured, security-conscious wording in clarification/reason fields; prioritize impact and risk.", "rate": 174, "preview": "Mission systems ready. I will prioritize operational health, impact, and actionable findings."},
+}
+VOICE_PACE_FACTORS = {"slow": 0.88, "natural": 1.0, "brisk": 1.12}
+VOICE_SILENCE_CHOICES = (0.7, 1.0, 1.4, 1.8)
+VOICE_ACTIVITY_THRESHOLD = 5
+VOICE_NO_SPEECH_TIMEOUT_SECONDS = 12
+VOICE_DUPLICATE_WINDOW_SECONDS = 4.0
+
+class VoiceConversationStateMachine:
+  """Small state machine used by the Ops Mind voice turn controller."""
+  STATES = {"IDLE", "LISTENING", "TRANSCRIBING", "THINKING", "SPEAKING", "INTERRUPTED", "ERROR", "CLOSED"}
+  TRANSITIONS = {
+    "IDLE": {"LISTENING", "THINKING", "SPEAKING", "ERROR", "CLOSED"},
+    "LISTENING": {"TRANSCRIBING", "INTERRUPTED", "ERROR", "IDLE", "CLOSED"},
+    "TRANSCRIBING": {"THINKING", "LISTENING", "ERROR", "IDLE", "CLOSED"},
+    "THINKING": {"SPEAKING", "LISTENING", "ERROR", "IDLE", "CLOSED"},
+    "SPEAKING": {"LISTENING", "INTERRUPTED", "THINKING", "ERROR", "IDLE", "CLOSED"},
+    "INTERRUPTED": {"LISTENING", "THINKING", "SPEAKING", "IDLE", "ERROR", "CLOSED"},
+    "ERROR": {"LISTENING", "THINKING", "IDLE", "CLOSED"},
+    "CLOSED": set(),
+  }
+  def __init__(self):
+    self.state = "IDLE"
+  def transition(self, state: str) -> bool:
+    target = str(state or "").upper()
+    if target not in self.STATES:
+      raise ValueError(f"Unknown voice state: {state!r}")
+    if target == self.state:
+      return True
+    if target not in self.TRANSITIONS[self.state]:
+      return False
+    self.state = target
+    return True
+
+def get_assistant_personality() -> str:
+  try:
+    value = str(load_settings().get(PERSONALITY_SETTINGS_KEY, "jarvis") or "jarvis").strip().lower()
+    return value if value in PERSONALITY_CONFIG else "jarvis"
+  except Exception:
+    return "jarvis"
+
+def save_assistant_personality(personality: str):
+  value = str(personality or "jarvis").strip().lower()
+  if value not in PERSONALITY_CONFIG:
+    value = "jarvis"
+  try: save_settings(**{PERSONALITY_SETTINGS_KEY: value})
+  except Exception: pass
+
+def get_continuous_voice_enabled() -> bool:
+  try: return bool(load_settings().get(CONTINUOUS_VOICE_SETTINGS_KEY, False))
+  except Exception: return False
+
+def save_continuous_voice_enabled(enabled: bool):
+  try: save_settings(**{CONTINUOUS_VOICE_SETTINGS_KEY: bool(enabled)})
+  except Exception: pass
+
+def get_voice_silence_seconds() -> float:
+  try:
+    value = float(load_settings().get(VOICE_SILENCE_SETTINGS_KEY, 1.0))
+    return min(VOICE_SILENCE_CHOICES, key=lambda item: abs(item - value))
+  except Exception: return 1.0
+
+def save_voice_silence_seconds(seconds: float):
+  value = min(VOICE_SILENCE_CHOICES, key=lambda item: abs(item - float(seconds)))
+  try: save_settings(**{VOICE_SILENCE_SETTINGS_KEY: value})
+  except Exception: pass
+
+def get_voice_pace() -> str:
+  try:
+    value = str(load_settings().get(VOICE_PACE_SETTINGS_KEY, "natural") or "natural").lower()
+    return value if value in VOICE_PACE_FACTORS else "natural"
+  except Exception: return "natural"
+
+def save_voice_pace(pace: str):
+  value = str(pace or "natural").lower()
+  if value not in VOICE_PACE_FACTORS: value = "natural"
+  try: save_settings(**{VOICE_PACE_SETTINGS_KEY: value})
+  except Exception: pass
+
+def get_voice_volume() -> int:
+  try: return max(0, min(100, int(load_settings().get(VOICE_VOLUME_SETTINGS_KEY, 85))))
+  except Exception: return 85
+
+def save_voice_volume(volume: int):
+  try: save_settings(**{VOICE_VOLUME_SETTINGS_KEY: max(0, min(100, int(volume)))})
+  except Exception: pass
+
+def personality_prompt_style(personality: str = None) -> str:
+  key = str(personality or get_assistant_personality()).lower()
+  return PERSONALITY_CONFIG.get(key, PERSONALITY_CONFIG["jarvis"])["prompt_style"]
+
+def normalize_voice_transcript(text: str) -> str:
+  """Normalize ASR variants so duplicate transcripts cannot repeat an operation."""
+  return re.sub(r"[^a-z0-9._/-]+", " ", str(text or "").casefold()).strip()
+
+def is_duplicate_voice_transcript(text: str, previous_text: str, now: float, previous_at: float, window: float = VOICE_DUPLICATE_WINDOW_SECONDS) -> bool:
+  current = normalize_voice_transcript(text)
+  previous = normalize_voice_transcript(previous_text)
+  return bool(current and previous and current == previous and (now - previous_at) <= window)
+
+def speech_friendly_text(text: str, limit: int = 500) -> str:
+  """Remove markup, code and stack traces before handing text to TTS."""
+  value = str(text or "").strip()
+  if not value: return ""
+  if value.startswith("{") and value.endswith("}"):
+    try:
+      json.loads(value)
+      return "The structured operation details are available in the written response."
+    except Exception: pass
+  value = re.sub(r"(?s)```.*?```", " The command is shown in the written response. ", value)
+  value = re.sub(r"(?im)^\s*(?:Traceback \(most recent call last\):|File \".*?\", line \d+.*|Caused by:.*)$", " ", value)
+  value = re.sub(r"(?m)^\s*(?:at [\w.$]+\(|[\w.$]+Error:|[\w.$]+Exception:).*$", " ", value)
+  value = re.sub(r"[`*_#>~]+", "", value)
+  value = re.sub(r"\b(deployment|statefulset|daemonset|service|pod|configmap|secret|job|cronjob|ingress)/([a-z0-9][a-z0-9.-]*)\b", r"\1 \2", value, flags=re.I)
+  value = re.sub(r"\s+", " ", value).strip()
+  if len(value) > limit:
+    clipped = value[:limit]
+    boundary = max(clipped.rfind("."), clipped.rfind(";"), clipped.rfind(","))
+    value = (clipped[:boundary + 1] if boundary > limit // 2 else clipped).rstrip() + "…"
+  return value
+
 
 AUDIT_MAX_ENTRIES = 500
 
@@ -197,20 +326,29 @@ def list_voices() -> list:
     return []
 
 
-def get_voice_id() -> str:
-  """The persisted TTS voice id, or "" for the system default voice."""
+def get_voice_id(personality: str = None) -> str:
+  """Return a per-personality voice, falling back to the legacy voice id."""
   try:
-    stored = load_settings().get(VOICE_ID_SETTINGS_KEY)
+    settings = load_settings()
+    key = str(personality or get_assistant_personality()).lower()
+    voices = settings.get(PERSONALITY_VOICES_SETTINGS_KEY, {})
+    if isinstance(voices, dict) and voices.get(key): return str(voices[key]).strip()
+    stored = settings.get(VOICE_ID_SETTINGS_KEY)
     return str(stored).strip() if stored else ""
-  except Exception:
-    return ""
+  except Exception: return ""
 
-
-def save_voice_id(voice_id: str):
+def save_voice_id(voice_id: str, personality: str = None):
+  value = (voice_id or "").strip()
   try:
-    save_settings(**{VOICE_ID_SETTINGS_KEY: (voice_id or "").strip()})
-  except Exception:
-    pass
+    settings = load_settings()
+    voices = settings.get(PERSONALITY_VOICES_SETTINGS_KEY, {})
+    voices = dict(voices) if isinstance(voices, dict) else {}
+    key = str(personality or get_assistant_personality()).lower()
+    if key not in PERSONALITY_CONFIG: key = "jarvis"
+    voices[key] = value
+    # Keep the legacy key updated for older callers.
+    save_settings(**{VOICE_ID_SETTINGS_KEY: value, PERSONALITY_VOICES_SETTINGS_KEY: voices})
+  except Exception: pass
 
 
 def _load_history() -> list:
@@ -524,9 +662,11 @@ def resolve_followup_delete(request: str, history: list, kube_context: str = "")
 
 
 def _build_k8s_ops_prompt(user_request: str, namespace: str, context: str, history: list) -> str:
+  style = personality_prompt_style()
   return f"""
 You are the command interpreter for "Ops Mind", a Kubernetes operations assistant.
 Convert the user's request into EXACTLY ONE allow-listed operation, written as a single JSON object.
+Personality style for clarification/reason fields: {style} This affects wording only; all JSON and safety rules below remain mandatory.
 
 OUTPUT FORMAT
 - Reply with one raw JSON object and nothing else: no Markdown, no code fences, no prose, no shell commands, no kubectl arguments.
