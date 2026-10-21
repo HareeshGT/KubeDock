@@ -149,6 +149,19 @@ class VoiceConversationTests(unittest.TestCase):
         self.assertIn("analytical", get_neural_voice_profile("edith")["instructions"])
         self.assertLess(get_neural_voice_profile("jarvis", "slow")["speed"], get_neural_voice_profile("jarvis", "natural")["speed"])
         self.assertGreater(get_neural_voice_profile("friday", "brisk")["speed"], get_neural_voice_profile("friday", "natural")["speed"])
+        self.assertIn("unhurried pace", get_neural_voice_profile("jarvis", "slow")["instructions"])
+        self.assertIn("brisk, energetic pace", get_neural_voice_profile("jarvis", "brisk")["instructions"])
+
+    def test_neural_tts_redacts_credentials_before_external_request(self):
+        worker = _OpenAINeuralTTSWorker(
+            "sk-test-private-key",
+            "The password=supersecret99 was supplied. Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+            "jarvis",
+        )
+        self.assertNotIn("supersecret99", worker._text)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", worker._text)
+        self.assertNotIn("sk-test-private-key", worker._text)
+        self.assertIn("[REDACTED]", worker._text)
 
     def test_voice_engine_uses_openai_key_when_available_and_safe_fallback(self):
         from k8s_ai_ops_parts import core
