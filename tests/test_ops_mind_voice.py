@@ -151,6 +151,31 @@ class VoiceConversationTests(unittest.TestCase):
         self.assertIn("unhurried pace", get_neural_voice_profile("jarvis", "slow")["instructions"])
         self.assertIn("brisk, energetic pace", get_neural_voice_profile("jarvis", "brisk")["instructions"])
 
+    def test_tts_quota_error_has_specific_billing_guidance(self):
+        body = json.dumps({
+            "error": {
+                "message": "You have no credits remaining. Add credits to continue.",
+                "type": "billing_quota",
+                "code": "insufficient_quota",
+            }
+        }).encode("utf-8")
+        message = _OpenAINeuralTTSWorker._safe_api_error(body, "sk-test-secret", 429)
+        self.assertIn("API credits are exhausted", message)
+        self.assertIn("https://platform.openai.com/settings/organization/billing/", message)
+        self.assertIn("click Preview", message)
+        self.assertNotIn("sk-test-secret", message)
+
+    def test_tts_rate_limit_is_not_misreported_as_exhausted_credits(self):
+        body = json.dumps({
+            "error": {
+                "message": "Rate limit reached for requests.",
+                "type": "requests",
+                "code": "rate_limit_exceeded",
+            }
+        }).encode("utf-8")
+        message = _OpenAINeuralTTSWorker._safe_api_error(body, "sk-test-secret", 429)
+        self.assertIn("rate limit reached", message.lower())
+        self.assertNotIn("credits are exhausted", message.lower())
     def test_neural_tts_redacts_credentials_before_external_request(self):
         worker = _OpenAINeuralTTSWorker(
             "sk-test-private-key",
