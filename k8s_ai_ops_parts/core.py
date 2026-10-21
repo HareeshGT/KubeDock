@@ -1573,6 +1573,160 @@ class K8sGoogleSpeechWorker(QThread):
       self.error.emit(f"Voice input failed: {exc}")
 
 
+class _Qwen3TTSWorker(QThread):
+  """Persistent, lazy-loaded Qwen3-TTS local inference worker.
+
+  Model loading and inference stay off the Qt UI thread. A loaded model is
+  reused across utterances; changing model choice reloads it on the worker.
+  The only network access is the first-time public model download from the
+  configured Hugging Face cache. No API key or paid inference endpoint is used.
+  """
+  audio_ready = pyqtSignal(bytes)
+  error = pyqtSignal(str)
+  status = pyqtSignal(str)
+
+  def __init__(self, parent=None):
+    super().__init__(parent)
+    self._requests = queue.Queue()
+    self._shutdown = threading.Event()
+    self._model = None
+    self._model_id = ""
+    self._model_lock = threading.Lock()
+    self.finished.connect(self.deleteLater)
+
+  @property
+  def is_generating(self) -> bool:
+    return not self._requests.empty() or self.isRunning() and bool(self._model_id)
+
+  def enqueue(self, text: str, personality: str, pace: str, model_key: str):
+    if not self._shutdown.is_set():
+      self._requests.put((str(text or ""), str(personality or "jarvis"), str(pace or "natural"), str(model_key or "voice_design")))
+
+  def clear_pending(self):
+    while True:
+      try: self._requests.get_nowait()
+      except queue.Empty: break
+
+  def shutdown(self):
+    self._shutdown.set()
+    self.clear_pending()
+    self._requests.put(None)
+
+  def _load_model(self, model_id: str):
+    if self._model is not None and self._model_id == model_id:
+      return self._model
+    self._model = None
+    self._model_id = ""
+    gc.collect()
+    try:
+      import torch
+      from qwen_tts import Qwen3TTSModel
+    except Exception as exc:
+      detail = str(exc)
+      if "check_model_inputs" in detail or "transformers" in detail.lower():
+        raise RuntimeError(
+          "Qwen3-TTS could not import because its Transformers dependency is incompatible. "
+          "Install the optional Qwen voice dependencies in KubeDock's Python environment; see requirements-qwen-tts.txt."
+        ) from exc
+      raise RuntimeError(
+        "Qwen3-TTS is not installed or could not be imported. Install the optional dependencies from requirements-qwen-tts.txt. "
+        + detail[:300]
+      ) from exc
+    if torch.cuda.is_available():
+      device = "cuda:0"
+      try:
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+      except Exception:
+        dtype = torch.float16
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+      device = "mps"
+      dtype = torch.float16
+    else:
+      device = "cpu"
+      dtype = torch.float32
+    self.status.emit(f"Loading local Qwen3-TTS model {model_id}. First use downloads model weights; this can take several minutes and several GB of disk space.")
+    try:
+      model = Qwen3TTSModel.from_pretrained(
+        model_id, device_map=device, dtype=dtype, attn_implementation="eager",
+      )
+    except Exception as exc:
+      detail = str(exc)
+      if "check_model_inputs" in detail or "transformers" in detail.lower():
+        raise RuntimeError(
+          "The installed Qwen3-TTS package and Transformers versions are incompatible. "
+          "Follow the compatibility note in requirements-qwen-tts.txt, then restart KubeDock."
+        ) from exc
+      raise RuntimeError(f"Qwen3-TTS could not load model on {device}: {detail[:350]}") from exc
+    self._model = model
+    self._model_id = model_id
+    self.status.emit(f"Qwen3-TTS loaded on {device}. Generating speech locally.")
+    return model
+
+  @staticmethod
+  def _to_wav_bytes(waveform, sample_rate: int) -> bytes:
+    """Convert Qwen's returned float waveform into a bounded mono PCM WAV."""
+    import numpy as np
+    audio = np.asarray(waveform, dtype=np.float32)
+    if audio.ndim > 1:
+      # Qwen returns mono in normal TTS mode; if a backend returns channels,
+      # downmix small channel-last arrays rather than generating invalid WAV.
+      if audio.shape[-1] <= 2:
+        audio = audio.mean(axis=-1)
+      else:
+        audio = audio.mean(axis=0)
+    audio = np.nan_to_num(audio.reshape(-1), nan=0.0, posinf=1.0, neginf=-1.0)
+    if audio.size == 0:
+      raise RuntimeError("Qwen3-TTS returned an empty audio waveform.")
+    max_samples = int(max(1, sample_rate) * 90)
+    if audio.size > max_samples:
+      audio = audio[:max_samples]
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2", copy=False).tobytes()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+      wav.setnchannels(1)
+      wav.setsampwidth(2)
+      wav.setframerate(int(sample_rate))
+      wav.writeframes(pcm)
+    return buffer.getvalue()
+
+  def _generate(self, text: str, personality: str, pace: str, model_key: str) -> bytes:
+    config = get_qwen_tts_model_config(model_key)
+    profile = get_qwen_voice_profile(personality, pace)
+    model = self._load_model(config["model_id"])
+    self.status.emit(f"Generating {PERSONALITY_CONFIG.get(personality, PERSONALITY_CONFIG['jarvis'])['label']} speech locally…")
+    if config["voice_design"]:
+      wavs, sample_rate = model.generate_voice_design(
+        text=text, language="English", instruct=profile["instructions"], max_new_tokens=1024,
+      )
+    else:
+      wavs, sample_rate = model.generate_custom_voice(
+        text=text, language="English", speaker=profile["speaker"],
+        instruct=profile["instructions"], max_new_tokens=1024,
+      )
+    if not wavs:
+      raise RuntimeError("Qwen3-TTS returned no audio.")
+    return self._to_wav_bytes(wavs[0], sample_rate)
+
+  def run(self):
+    while not self._shutdown.is_set():
+      job = self._requests.get()
+      if job is None or self._shutdown.is_set():
+        break
+      text, personality, pace, model_key = job
+      if not text.strip():
+        continue
+      try:
+        audio = self._generate(text, personality, pace, model_key)
+        if not self._shutdown.is_set():
+          self.audio_ready.emit(audio)
+      except Exception as exc:
+        if not self._shutdown.is_set():
+          safe = re.sub(r"\\s+", " ", str(exc)).strip()[:700]
+          self.error.emit(safe or "Qwen3-TTS local synthesis failed.")
+    self._model = None
+    self._model_id = ""
+    gc.collect()
+
 class _OpenAINeuralTTSWorker(QThread):
   """Generate expressive speech using OpenAI's dedicated text-to-speech API.
 
