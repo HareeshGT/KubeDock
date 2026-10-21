@@ -95,6 +95,11 @@ def _redact_sensitive_text(value: str, secrets=None) -> str:
         text,
     )
     text = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer [REDACTED]", text)
+    text = re.sub(
+        r"(?i)(--?(?:password|passwd|token|secret|api[-_]?key|access[-_]?key|client[-_]?secret|private[-_]?key|credential)\s+)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+        r"\1[REDACTED]",
+        text,
+    )
     text = _SENSITIVE_ASSIGNMENT_RE.sub(
         lambda match: match.group("prefix") + "[REDACTED]",
         text,
