@@ -1640,9 +1640,7 @@ class _Qwen3TTSWorker(QThread):
   def _load_model(self, model_id: str):
     if self._model is not None and self._model_id == model_id:
       return self._model
-    self._model = None
-    self._model_id = ""
-    gc.collect()
+    self._release_loaded_model()
     try:
       import torch
       from qwen_tts import Qwen3TTSModel
