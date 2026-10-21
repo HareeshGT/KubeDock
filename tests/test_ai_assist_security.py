@@ -7,9 +7,9 @@ import ai_assist
 class AIContextSecurityTests(unittest.TestCase):
     def test_redacts_assignments_bearer_tokens_and_private_keys(self):
         raw = (
-            'DB_PASSWORD="db-password-value"\\n'
-            'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456\\n'
-            '-----BEGIN PRIVATE KEY-----\\nprivate-key-material\\n-----END PRIVATE KEY-----'
+            'DB_PASSWORD="db-password-value"\n'
+            'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456\n'
+            '-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----'
         )
         cleaned = ai_assist._redact_sensitive_text(raw)
         self.assertNotIn("db-password-value", cleaned)
@@ -21,7 +21,7 @@ class AIContextSecurityTests(unittest.TestCase):
         prompt = ai_assist._build_prompt(
             "orders-7f7c", "production", "api",
             "ERROR DB_PASSWORD=super-secret-password",
-            resource_context="Conditions: Ready=False\\nEvents: BackOff; API_TOKEN=super-secret-token",
+            resource_context="Conditions: Ready=False\nEvents: BackOff; API_TOKEN=super-secret-token",
         )
         self.assertIn("resource_evidence", prompt)
         self.assertIn("Conditions: Ready=False", prompt)
@@ -32,7 +32,7 @@ class AIContextSecurityTests(unittest.TestCase):
 
     def test_followup_context_is_redacted_and_bounded(self):
         prompt = ai_assist._build_followup_prompt(
-            "Pod: api\\nDB_PASSWORD=super-secret-password",
+            "Pod: api\nDB_PASSWORD=super-secret-password",
             [{"role": "assistant", "content": "Token: abcdefghijklmnopqrstuvwxyz123456"}],
             "Why did API_TOKEN=super-secret-token fail?",
         )
