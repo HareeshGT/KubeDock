@@ -214,6 +214,9 @@ class VoiceConversationTests(unittest.TestCase):
         session = fake_ws.sent[0]["session"]
         self.assertEqual(session["audio"]["output"]["voice"], "cedar")
         self.assertEqual(session["output_modalities"], ["audio"])
+        response = fake_ws.sent[-1]["response"]
+        self.assertIn("speak the provided", response["instructions"])
+        self.assertEqual(response["output_modalities"], ["audio"])
 
     def test_personalities_have_distinct_style_and_voice_profiles(self):
         self.assertEqual(set(PERSONALITY_CONFIG), {"jarvis", "friday", "edith"})
