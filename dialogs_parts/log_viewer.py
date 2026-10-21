@@ -201,10 +201,25 @@ class LogViewerDialog(QDialog):
     # One bounded, read-only SSH worker gathers describe output (conditions,
     # image/config references, state and recent events) and metrics if
     # metrics-server is available. It never retrieves Kubernetes Secret data.
+    ns_arg = shlex.quote(self._ns)
+    pod_arg = shlex.quote(self._pod)
+    container_flag = (
+      f"-c {shlex.quote(str(self._container))} "
+      if self._container else ""
+    )
+    # The displayed stream already has either current or previous logs. Fetch
+    # the alternate stream once, bounded to 100 lines, rather than rereading
+    # the same stream unnecessarily.
+    alternate_previous_flag = "" if self.prev_chk.isChecked() else "--previous "
+    alternate_stream = "current" if self.prev_chk.isChecked() else "previous"
     inner = (
-      f"kubectl -n {shlex.quote(self._ns)} describe pod {shlex.quote(self._pod)} 2>&1; "
-      "printf '\\n--- kubectl top pod --containers ---\\n'; "
-      f"kubectl -n {shlex.quote(self._ns)} top pod {shlex.quote(self._pod)} --containers 2>&1"
+      f"printf '%s\\n' '--- kubectl describe pod ---'; "
+      f"kubectl -n {ns_arg} describe pod {pod_arg} 2>&1; "
+      f"printf '%s\\n' '--- {alternate_stream} container logs (tail 100) ---'; "
+      f"kubectl logs --tail=100 -n {ns_arg} {alternate_previous_flag}"
+      f"{container_flag}{pod_arg} 2>&1; "
+      "printf '%s\\n' '--- kubectl top pod --containers ---'; "
+      f"kubectl -n {ns_arg} top pod {pod_arg} --containers 2>&1"
     )
     worker = CommandWorker(self.ssh, f"bash -lc {shlex.quote(inner)}", timeout=25)
     worker.result.connect(self._on_resource_evidence)
