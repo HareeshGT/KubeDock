@@ -1338,10 +1338,15 @@ class _NarrationThread(QThread):
   def has_pending(self) -> bool:
     return not self._queue.empty()
 
-  def speak(self, text: str):
+  def speak(self, text: str, rate: int = None, volume: float = None, voice_id: str = None):
     clean = speech_friendly_text(text)
     if clean:
-      self._queue.put(clean)
+      self._queue.put({
+        "text": clean,
+        "rate": self._rate if rate is None else max(90, min(300, int(rate))),
+        "volume": self._volume if volume is None else max(0.0, min(1.0, float(volume))),
+        "voice_id": self._voice_id if voice_id is None else str(voice_id or ""),
+      })
 
   def interrupt(self):
     """Clear queued phrases and ask the active system voice to stop."""
@@ -1380,9 +1385,18 @@ class _NarrationThread(QThread):
         try: engine.setProperty("voice", self._voice_id)
         except Exception: pass
       while True:
-        text = self._queue.get()
-        if text is None:
+        item = self._queue.get()
+        if item is None:
           break
+        text = item["text"] if isinstance(item, dict) else str(item)
+        if isinstance(item, dict):
+          try: engine.setProperty("rate", item["rate"])
+          except Exception: pass
+          try: engine.setProperty("volume", item["volume"])
+          except Exception: pass
+          if item.get("voice_id"):
+            try: engine.setProperty("voice", item["voice_id"])
+            except Exception: pass
         with self._state_lock:
           self._is_speaking = True
         self.speaking_started.emit()
