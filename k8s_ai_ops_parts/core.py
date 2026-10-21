@@ -285,12 +285,13 @@ def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> 
   if key not in NEURAL_VOICE_PROFILES:
     key = "jarvis"
   profile = dict(NEURAL_VOICE_PROFILES[key])
-  factor = VOICE_PACE_FACTORS.get(str(pace or "natural").strip().lower(), 1.0)
+  pace_key = str(pace or "natural").strip().lower()
+  factor = VOICE_PACE_FACTORS.get(pace_key, 1.0)
   speed = max(0.7, min(1.3, round(profile["speed"] * factor, 2)))
   profile["speed"] = speed
-  if speed < 0.9:
+  if pace_key == "slow":
     pace_instruction = "Deliver at a deliberately unhurried pace with slightly longer pauses between clauses."
-  elif speed >= 1.08:
+  elif pace_key == "brisk":
     pace_instruction = "Deliver at a brisk, energetic pace while keeping every word clearly intelligible."
   else:
     pace_instruction = "Deliver at a natural conversational pace with clean, comfortable pauses."
