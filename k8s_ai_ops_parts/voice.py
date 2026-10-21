@@ -139,7 +139,7 @@ class K8sAIOpsVoiceMixin:
         worker.start()
 
     def _on_neural_audio_ready(self, wav_bytes: bytes):
-        if not self._neural_current_text or self._voice_engine != "openai" or self._neural_tts_failed or not self._voice_feedback_enabled:
+        if not self._neural_current_text or self._voice_engine != "openai" or self._neural_tts_failed:
             return
         try:
             with tempfile.NamedTemporaryFile(prefix="kubedock-ops-mind-", suffix=".wav", delete=False) as handle:
@@ -253,10 +253,16 @@ class K8sAIOpsVoiceMixin:
             self._narrator = None
         self._stop_neural_voice(clear_queue=True)
         self._write_info(f"\nAssistant personality changed to {PERSONALITY_CONFIG[key]['label']}.")
-        self.voice_hint_lbl.setText(
-            f"{PERSONALITY_CONFIG[key]['label']} · local system voice · "
-            "Voice input sends captured audio to Google Web Speech; KubeDock does not save raw audio."
-        )
+        if self._voice_engine == "openai":
+            self.voice_hint_lbl.setText(
+                f"{PERSONALITY_CONFIG[key]['label']} · neural OpenAI voice · "
+                "Voice input sends captured audio to Google Web Speech; KubeDock does not save raw recordings."
+            )
+        else:
+            self.voice_hint_lbl.setText(
+                f"{PERSONALITY_CONFIG[key]['label']} · local system voice · "
+                "Voice input sends captured audio to Google Web Speech; KubeDock does not save raw recordings."
+            )
 
     def _on_voice_combo_changed(self, index: int):
         voice_id = self.voice_combo.itemData(index) or ""
@@ -282,12 +288,15 @@ class K8sAIOpsVoiceMixin:
         if self._narrator is not None:
             self._narrator.stop()
             self._narrator = None
+        if self._voice_engine == "openai":
+            self._stop_neural_voice(clear_queue=True)
 
     def _on_voice_volume_changed(self, volume: int):
         self._voice_volume = max(0, min(100, int(volume)))
         save_voice_volume(self._voice_volume)
-        # Volume is read when the next narrator instance starts to avoid
-        # touching an engine while its background thread is speaking.
+        if self._neural_audio_player is not None and self._neural_playback_active:
+            self._neural_audio_player.setVolume(self._voice_volume)
+        # The local engine reads volume before starting its next phrase.
         if self._narrator is not None and not self._narrator.is_speaking and not self._narrator.has_pending:
             self._narrator.stop()
             self._narrator = None
