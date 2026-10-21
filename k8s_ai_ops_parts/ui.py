@@ -54,6 +54,8 @@ class K8sAIOpsUIMixin:
         self._narrator = None
         self._personality = get_assistant_personality()
         self._voice_engine = get_voice_engine()
+        if self._voice_engine == "openai" and not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
+            self._voice_engine = "system"
         self._voice_feedback_available = bool(_TTS_AVAILABLE or (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE and ai_assist.get_api_key('openai')))
         self._voice_feedback_enabled = bool(self._voice_feedback_available and get_voice_feedback_enabled())
         self._voice_id = get_voice_id(self._personality) if _TTS_AVAILABLE else ''
