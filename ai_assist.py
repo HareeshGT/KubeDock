@@ -43,6 +43,7 @@ Google's `x-goog-api-key`, OpenAI's/DeepSeek's `Authorization: Bearer`).
 """
 
 import json
+import re
 import urllib.request
 import urllib.error
 
@@ -57,6 +58,62 @@ MAX_TOKENS = 4096
 # where the actual error/traceback lives, and 12k chars is comfortably
 # inside a small-model context window even after the system prompt.
 MAX_CONTEXT_CHARS = 12_000
+
+
+# Bound provider responses and keep captured infrastructure data safe before
+# it leaves the machine. These are deliberately dependency-free helpers.
+MAX_RESPONSE_BYTES = 1_048_576
+MAX_ERROR_BODY_BYTES = 65_536
+PROVIDER_TIMEOUT_SECONDS = 45
+
+_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?"
+    r"-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----",
+    re.IGNORECASE,
+)
+_SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"""(?im)(?P<prefix>(?:["']?[\w.-]*(?:password|passwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|credential|connection[_-]?string|database[_-]?url|auth[_-]?token|signature|sas[_-]?token)[\w.-]*["']?)\s*[:=]\s*)(?P<value>"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)"""
+)
+
+
+def _redact_sensitive_text(value: str, secrets=None) -> str:
+    """Redact recognizable credentials from text before any external AI call.
+
+    This is defense in depth, not a substitute for avoiding Secret reads.
+    It intentionally focuses on credential-shaped values and keeps nearby
+    labels/timestamps useful for diagnosing infrastructure failures.
+    """
+    text = str(value or "")
+    for secret in secrets or ():
+        secret = str(secret or "")
+        if len(secret) >= 8:
+            text = text.replace(secret, "[REDACTED]")
+    text = _PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", text)
+    text = re.sub(
+        r"(?im)(\bauthorization\s*[:=]\s*bearer\s+)[^\s,;\"']+",
+        r"\1[REDACTED]",
+        text,
+    )
+    text = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer [REDACTED]", text)
+    text = _SENSITIVE_ASSIGNMENT_RE.sub(
+        lambda match: match.group("prefix") + "[REDACTED]",
+        text,
+    )
+    text = re.sub(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", "[REDACTED AWS KEY]", text)
+    text = re.sub(
+        r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,})\b",
+        "[REDACTED SOURCE-CONTROL TOKEN]",
+        text,
+    )
+    text = re.sub(r"\bAIza[0-9A-Za-z_-]{30,}\b", "[REDACTED API KEY]", text)
+    text = re.sub(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b", "[REDACTED API KEY]", text)
+    text = re.sub(
+        r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
+        "[REDACTED JWT]",
+        text,
+    )
+    text = re.sub(r"(?i)(://[^:/\s]+:)[^@/\s]+(@)", r"\1[REDACTED]\2", text)
+    return text
 
 
 # ─── Provider registry ─────────────────────────────────────────
@@ -683,12 +740,28 @@ def _clip_evidence(text: str, limit: int = MAX_CONTEXT_CHARS) -> str:
     return _tail(text, limit)
 
 
-def _build_prompt(pod: str, namespace: str, container: str, log_text: str) -> str:
-    log_text = _tail(log_text)
+def _build_prompt(
+    pod: str, namespace: str, container: str, log_text: str,
+    resource_context: str = "",
+) -> str:
+    # Keep a useful amount of each evidence source without allowing either
+    # stream to evict the other. _clip_evidence preserves a header and tail.
+    log_text = _tail(_redact_sensitive_text(log_text), limit=8_000)
+    resource_context = _clip_evidence(
+        _redact_sensitive_text(resource_context), limit=4_000
+    )
 
-    where = f"pod `{pod}` in namespace `{namespace or '(unknown)'}`"
+    where = f"pod \`{pod}\` in namespace \`{namespace or '(unknown)'}\`"
     if container:
-        where += f" (container `{container}`)"
+        where += f" (container \`{container}\`)"
+
+    if resource_context:
+        resource_evidence = _wrap("resource_evidence", resource_context)
+    else:
+        resource_evidence = (
+            "Live Kubernetes status, readiness, configuration and events were "
+            "not collected for this diagnosis. Do not infer these facts."
+        )
 
     return (
         f"{_LOG_GUIDE}\n\n"
@@ -696,21 +769,19 @@ def _build_prompt(pod: str, namespace: str, container: str, log_text: str) -> st
         f"{_DIAGNOSIS_FORMAT}\n\n"
         f"{_LOG_OUTPUT}\n\n"
         f"Target: {where}.\n\n"
-        f"{_wrap('log', log_text)}\n\n"
-        f"Diagnose {where} using the three sections above."
+        f"Live resource status/configuration/events (when available):\n"
+        f"{resource_evidence}\n\n"
+        f"Container logs:\n{_wrap('log', log_text)}\n\n"
+        f"Diagnose {where} from the supplied evidence. Explicitly separate "
+        f"observed facts from hypotheses; never claim a check was performed "
+        f"when its evidence is absent."
     )
 
-
 def _build_command_prompt(command: str, exit_code, stderr_text: str, stdout_text: str = "") -> str:
-    """Same shape as _build_prompt() above, but for a failed shell command
-    (SSH terminal or `kubectl exec`) instead of a Kubernetes pod's logs.
-    stderr is the primary evidence when present; stdout is included too
-    since some commands only ever report the actual error on stdout, and
-    ExecDialog's own commands run with a shell-level `2>&1` that merges
-    everything into stdout before this ever sees it. The interactive pod
-    shell passes exit_code=None and a single merged stream."""
-    stderr_text = (stderr_text or "").strip()
-    stdout_text = (stdout_text or "").strip()
+    """Build a diagnosis prompt for a failed host/container command."""
+    command = _redact_sensitive_text((command or "").strip())
+    stderr_text = _redact_sensitive_text((stderr_text or "").strip())
+    stdout_text = _redact_sensitive_text((stdout_text or "").strip())
 
     if stderr_text and stdout_text:
         output = f"(stderr)\n{stderr_text}\n\n(stdout)\n{stdout_text}"
@@ -725,31 +796,28 @@ def _build_command_prompt(command: str, exit_code, stderr_text: str, stdout_text
         f"{_UNTRUSTED_DATA_RULE}\n{_SECRETS_RULE}\n\n"
         f"{_DIAGNOSIS_FORMAT}\n\n"
         f"{_COMMAND_OUTPUT}\n\n"
-        f"{_wrap('command', (command or '').strip() or '(unknown)')}\n\n"
+        f"{_wrap('command', command or '(unknown)')}\n\n"
         f"Exit code: {exit_str}\n\n"
         f"{_wrap('output', output)}\n\n"
         f"Diagnose this command using the three sections above."
     )
 
-
 def _build_followup_prompt(source_context: str, conversation: list, question: str) -> str:
-    """Prompt for a follow-up question in the diagnosis dialog. `conversation`
-    is the turns so far ({"role": "user"|"assistant", "content": str}),
-    excluding `question` itself; the first assistant turn is the original
-    diagnosis."""
-    evidence = _clip_evidence(source_context) or "(no raw evidence supplied)"
+    """Build a bounded follow-up prompt using redacted original evidence."""
+    evidence = _clip_evidence(
+        _redact_sensitive_text(source_context), limit=MAX_CONTEXT_CHARS
+    ) or "(no raw evidence supplied)"
 
     turns = []
-    # Bounded so a long session can't crowd out the evidence; the original
-    # diagnosis is the first turn and is dropped only in very long sessions.
-    for item in list(conversation or [])[-12:]:
+    for item in list(conversation or [])[-8:]:
         who = "engineer" if item.get("role") == "user" else "you (earlier answer)"
-        content = str(item.get("content", "")).strip()
-        if len(content) > 4000:
-            content = content[:4000].rstrip() + " …(shortened)"
+        content = _redact_sensitive_text(str(item.get("content", "")).strip())
+        if len(content) > 2_000:
+            content = content[:2_000].rstrip() + " …(shortened)"
         if content:
             turns.append(f"[{who}]\n{content}")
     history = "\n\n".join(turns) or "(no earlier turns)"
+    safe_question = _redact_sensitive_text((question or "").strip())
 
     return (
         f"{_FOLLOWUP_GUIDE}\n\n"
@@ -757,75 +825,91 @@ def _build_followup_prompt(source_context: str, conversation: list, question: st
         f"{_FOLLOWUP_FORMAT}\n\n"
         f"{_wrap('evidence', evidence)}\n\n"
         f"{_wrap('conversation', history)}\n\n"
-        f"{_wrap('question', (question or '').strip())}\n\n"
+        f"{_wrap('question', safe_question)}\n\n"
         f"Answer the engineer's question now."
     )
 
-
 # ─── Shared provider call ────────────────────────────────────────
 def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
-    """Sends `prompt` to the given provider/model and returns (text, None)
-    on success or (None, error_message) on failure. Shared by every
-    *ExplainWorker so the HTTP/parsing/truncation handling — which has
-    nothing to do with what the prompt is about — lives in exactly one
-    place."""
+    """Send bounded, redacted prompt data to the explicitly selected provider."""
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return None, f"Unknown AI provider: {provider_id!r}"
     if not api_key:
         return None, f"No {provider['label']} API key set. Add one in Settings → 🤖 AI."
 
-    model = model or provider["default_model"]
+    model = (model or "").strip() or provider["default_model"]
+    if len(model) > 128 or not re.fullmatch(r"[A-Za-z0-9._:/-]+", model):
+        return None, "Invalid model name. Choose a valid model in Settings → 🤖 AI."
+
+    # Central enforcement covers every provider and all prompt builders,
+    # including future call sites. Never silently switch providers.
+    prompt = _redact_sensitive_text(prompt, secrets=(api_key,))
     url, headers, body = provider["build_request"](prompt, api_key, model)
     req = urllib.request.Request(url, data=body, method="POST", headers=headers)
 
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        with urllib.request.urlopen(req, timeout=PROVIDER_TIMEOUT_SECONDS) as resp:
+            raw_bytes = resp.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw_bytes) > MAX_RESPONSE_BYTES:
+            return None, "The AI provider response exceeded the size limit and was discarded."
+        try:
+            data = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None, "The AI provider returned a malformed response."
     except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", errors="replace")
+        raw = e.read(MAX_ERROR_BODY_BYTES).decode("utf-8", errors="replace")
         try:
             detail = json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             detail = raw
-        msg = provider["parse_error"](detail, e.code)
+        try:
+            msg = provider["parse_error"](detail, e.code)
+        except Exception:
+            msg = None
         if not msg:
-            msg = raw.strip() or e.reason or str(e)
-        return None, f"API error ({e.code}): {msg}"
-    except urllib.error.URLError as e:
-        return None, f"Network error: {e.reason}"
+            msg = raw.strip() or e.reason or f"HTTP {e.code}"
+        msg = _redact_sensitive_text(msg, secrets=(api_key,))
+        if e.code == 429:
+            return None, f"Rate limited by the selected AI provider (HTTP 429): {msg}"
+        if e.code in (401, 403):
+            return None, f"AI provider authentication/access error (HTTP {e.code}): {msg}"
+        return None, f"AI provider request failed (HTTP {e.code}): {msg}"
+    except (TimeoutError, urllib.error.URLError) as e:
+        reason = getattr(e, "reason", e)
+        reason = _redact_sensitive_text(str(reason), secrets=(api_key,))
+        if "timed out" in reason.lower() or isinstance(e, TimeoutError):
+            return None, "AI provider request timed out. Check connectivity and try again."
+        return None, f"Network error contacting the selected AI provider: {reason}"
     except Exception as e:
-        return None, f"Unexpected error: {e}"
+        safe_error = _redact_sensitive_text(str(e), secrets=(api_key,))
+        return None, f"AI provider request failed: {safe_error or type(e).__name__}"
 
     try:
         text = provider["parse_response"](data)
     except Exception:
         text = ""
 
-    truncated = False
     try:
-        truncated = provider["was_truncated"](data)
+        truncated = bool(provider["was_truncated"](data))
     except Exception:
-        pass
+        truncated = False
 
+    text = _redact_sensitive_text(text, secrets=(api_key,)).strip()
     if not text:
         if truncated:
             return None, (
-                "The model used its whole token budget on internal "
-                "reasoning and never got to an answer. Try a lower-"
-                "reasoning model (e.g. a Flash/mini/Luna variant) in "
-                "Settings → 🤖 AI, or a shorter excerpt."
+                "The model used its whole token budget without producing a visible answer. "
+                "Try a shorter evidence excerpt or a lower-reasoning model in Settings → 🤖 AI."
             )
-        return None, "Empty response from the API."
+        return None, "The selected AI provider returned no usable text."
 
     if truncated:
         text += (
             "\n\n*(⚠ Response was cut off by the model's token limit — "
             "the diagnosis above may be incomplete.)*"
         )
-
     return text, None
-
 
 # ─── Background workers ──────────────────────────────────────────
 
