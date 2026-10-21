@@ -144,7 +144,7 @@ fi
 # If no branch is supplied, the script retrieves the available
 # remote branches from GitHub and lets the user select one.
 
-SELECTED_BRANCH="${1:-}"
+SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-}}"
 
 echo
 echo "=========================================="
