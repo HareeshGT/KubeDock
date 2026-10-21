@@ -1581,8 +1581,8 @@ class _Qwen3TTSWorker(QThread):
   The only network access is the first-time public model download from the
   configured Hugging Face cache. No API key or paid inference endpoint is used.
   """
-  audio_ready = pyqtSignal(bytes)
-  error = pyqtSignal(str)
+  audio_ready = pyqtSignal(bytes, int)
+  error = pyqtSignal(str, int)
   status = pyqtSignal(str)
 
   def __init__(self, parent=None):
@@ -1592,15 +1592,21 @@ class _Qwen3TTSWorker(QThread):
     self._model = None
     self._model_id = ""
     self._model_lock = threading.Lock()
+    self._job_sequence = 0
+    self._job_lock = threading.Lock()
     self.finished.connect(self.deleteLater)
 
   @property
   def is_generating(self) -> bool:
     return not self._requests.empty() or self.isRunning() and bool(self._model_id)
 
-  def enqueue(self, text: str, personality: str, pace: str, model_key: str):
+  def enqueue(self, text: str, personality: str, pace: str, model_key: str) -> int:
+    with self._job_lock:
+      self._job_sequence += 1
+      job_id = self._job_sequence
     if not self._shutdown.is_set():
-      self._requests.put((str(text or ""), str(personality or "jarvis"), str(pace or "natural"), str(model_key or "voice_design")))
+      self._requests.put((job_id, str(text or ""), str(personality or "jarvis"), str(pace or "natural"), str(model_key or "voice_design")))
+    return job_id
 
   def clear_pending(self):
     while True:
@@ -1712,17 +1718,17 @@ class _Qwen3TTSWorker(QThread):
       job = self._requests.get()
       if job is None or self._shutdown.is_set():
         break
-      text, personality, pace, model_key = job
+      job_id, text, personality, pace, model_key = job
       if not text.strip():
         continue
       try:
         audio = self._generate(text, personality, pace, model_key)
         if not self._shutdown.is_set():
-          self.audio_ready.emit(audio)
+          self.audio_ready.emit(audio, job_id)
       except Exception as exc:
         if not self._shutdown.is_set():
           safe = re.sub(r"\\s+", " ", str(exc)).strip()[:700]
-          self.error.emit(safe or "Qwen3-TTS local synthesis failed.")
+          self.error.emit(safe or "Qwen3-TTS local synthesis failed.", job_id)
     self._model = None
     self._model_id = ""
     gc.collect()
