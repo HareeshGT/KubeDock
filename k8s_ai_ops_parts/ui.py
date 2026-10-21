@@ -83,6 +83,7 @@ class K8sAIOpsUIMixin:
         self._voice_conversation = []
         self._last_submitted_request = ""
         self._voice_error_occurred = False
+        self._voice_preview_pending = False
         self._continuous_restart_pending = False
         self._restart_voice_timer = QTimer(self)
         self._restart_voice_timer.setSingleShot(True)
@@ -127,8 +128,12 @@ class K8sAIOpsUIMixin:
         examples.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
         root.addWidget(examples)
         self.voice_hint_lbl = QLabel(
-            ('Neural voice: OpenAI Realtime · system voice fallback available. ' if self._voice_engine == 'openai' else 'Offline system voice enabled. ')
-            + 'Voice input uses Google Web Speech for transcription; raw microphone recordings are not saved by KubeDock.'
+            (
+                'Neural voice selected · OpenAI API usage may incur charges. '
+                if self._voice_engine == 'openai'
+                else 'Using the local system voice. For a more expressive cinematic assistant voice, select Neural · OpenAI and configure an OpenAI key under Settings → AI. '
+            )
+            + 'Microphone transcription uses Google Web Speech; raw recordings are not saved by KubeDock.'
         )
         self.voice_hint_lbl.setWordWrap(True)
         self.voice_hint_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 10px;")
@@ -176,8 +181,8 @@ class K8sAIOpsUIMixin:
         self.voice_combo.setToolTip("Which system voice reads Ops Mind's status narration aloud" if _TTS_AVAILABLE else 'Voice narration needs the pyttsx3 package (pip install pyttsx3)')
         self._populate_voice_combo()
         self.voice_combo.currentIndexChanged.connect(self._on_voice_combo_changed)
-        self.voice_test_btn = icon_button('')
-        self.voice_test_btn.setFixedSize(34, 34)
+        self.voice_test_btn = QPushButton("Preview")
+        self.voice_test_btn.setFixedSize(76, 34)
         self.voice_test_btn.setEnabled(self._voice_feedback_available)
         self.voice_test_btn.setToolTip('Preview the selected neural or offline voice')
         self.voice_test_btn.clicked.connect(self._preview_personality_voice)
@@ -204,7 +209,7 @@ class K8sAIOpsUIMixin:
         voice_settings_row.setSpacing(8)
         voice_settings_row.addWidget(QLabel("Engine"))
         self.voice_engine_combo = QComboBox()
-        self.voice_engine_combo.setFixedWidth(145)
+        self.voice_engine_combo.setFixedWidth(175)
         self.voice_engine_combo.addItem("Neural · OpenAI", "openai")
         self.voice_engine_combo.addItem("System · Offline", "system")
         engine_idx = self.voice_engine_combo.findData(self._voice_engine)
@@ -218,7 +223,7 @@ class K8sAIOpsUIMixin:
         voice_settings_row.addWidget(self.voice_engine_combo)
         voice_settings_row.addWidget(QLabel("Persona"))
         self.personality_combo = QComboBox()
-        self.personality_combo.setFixedWidth(150)
+        self.personality_combo.setFixedWidth(178)
         for key in ("jarvis", "friday", "edith"):
             self.personality_combo.addItem(PERSONALITY_CONFIG[key]["label"], key)
         idx = self.personality_combo.findData(self._personality)
@@ -227,12 +232,22 @@ class K8sAIOpsUIMixin:
         self.personality_combo.setToolTip("Choose Ops Mind's conversational style and voice profile")
         voice_settings_row.addWidget(self.personality_combo)
 
-        voice_settings_row.addWidget(QLabel("Voice"))
-        self.voice_combo.setFixedWidth(150)
-        self.voice_combo.setToolTip("System voice used when the offline voice engine is selected")
+        self.voice_combo_label = QLabel("Offline voice")
+        self.voice_combo_label.setToolTip("Choose the installed system voice when System · Offline is selected")
+        voice_settings_row.addWidget(self.voice_combo_label)
+        self.voice_combo.setFixedWidth(165)
+        self.voice_combo.setToolTip("System voice used only by the offline voice engine")
         self.voice_combo.setEnabled(self._voice_engine == "system" and _TTS_AVAILABLE)
+        self.voice_combo_label.setVisible(self._voice_engine == "system")
+        self.voice_combo.setVisible(self._voice_engine == "system")
         voice_settings_row.addWidget(self.voice_combo)
         voice_settings_row.addWidget(self.voice_test_btn)
+        voice_settings_row.addStretch()
+        root.addLayout(voice_settings_row)
+
+        # Conversation controls get their own row so the window never clips them.
+        voice_settings_row2 = QHBoxLayout()
+        voice_settings_row2.setSpacing(8)
 
         self.continuous_voice_btn = QPushButton("Hands-free")
         self.continuous_voice_btn.setCheckable(True)
@@ -240,15 +255,15 @@ class K8sAIOpsUIMixin:
         self.continuous_voice_btn.toggled.connect(self._on_continuous_voice_toggled)
         self.continuous_voice_btn.setToolTip("Keep the conversation open and submit each utterance after silence is detected")
         self.continuous_voice_btn.setEnabled(_VOICE_AVAILABLE)
-        voice_settings_row.addWidget(self.continuous_voice_btn)
+        voice_settings_row2.addWidget(self.continuous_voice_btn)
 
         self.interrupt_btn = QPushButton("Interrupt & Listen")
         self.interrupt_btn.setEnabled(_VOICE_AVAILABLE)
         self.interrupt_btn.clicked.connect(self._interrupt_and_listen)
         self.interrupt_btn.setToolTip("Stop the current spoken phrase and listen for a new instruction. Does not cancel an operation already running.")
-        voice_settings_row.addWidget(self.interrupt_btn)
+        voice_settings_row2.addWidget(self.interrupt_btn)
 
-        voice_settings_row.addWidget(QLabel("Silence"))
+        voice_settings_row2.addWidget(QLabel("Silence"))
         self.silence_combo = QComboBox()
         self.silence_combo.setFixedWidth(82)
         for seconds in VOICE_SILENCE_CHOICES:
@@ -258,9 +273,9 @@ class K8sAIOpsUIMixin:
         self.silence_combo.currentIndexChanged.connect(self._on_voice_silence_changed)
         self.silence_combo.setToolTip("Silence duration that ends a hands-free utterance")
         self.silence_combo.setEnabled(_VOICE_AVAILABLE)
-        voice_settings_row.addWidget(self.silence_combo)
+        voice_settings_row2.addWidget(self.silence_combo)
 
-        voice_settings_row.addWidget(QLabel("Pace"))
+        voice_settings_row2.addWidget(QLabel("Pace"))
         self.voice_pace_combo = QComboBox()
         self.voice_pace_combo.setFixedWidth(95)
         for pace, label in (("slow", "Slow"), ("natural", "Natural"), ("brisk", "Brisk")):
@@ -268,25 +283,25 @@ class K8sAIOpsUIMixin:
         pace_idx = self.voice_pace_combo.findData(self._voice_pace)
         self.voice_pace_combo.setCurrentIndex(pace_idx if pace_idx >= 0 else 1)
         self.voice_pace_combo.currentIndexChanged.connect(self._on_voice_pace_changed)
-        voice_settings_row.addWidget(self.voice_pace_combo)
+        voice_settings_row2.addWidget(self.voice_pace_combo)
 
-        voice_settings_row.addWidget(QLabel("Volume"))
+        voice_settings_row2.addWidget(QLabel("Volume"))
         self.voice_volume_slider = QSlider(Qt.Horizontal)
         self.voice_volume_slider.setRange(0, 100)
         self.voice_volume_slider.setValue(self._voice_volume)
         self.voice_volume_slider.setFixedWidth(75)
         self.voice_volume_slider.setToolTip("System voice volume")
         self.voice_volume_slider.valueChanged.connect(self._on_voice_volume_changed)
-        self.voice_volume_slider.setEnabled(_TTS_AVAILABLE)
-        voice_settings_row.addWidget(self.voice_volume_slider)
+        self.voice_volume_slider.setEnabled(self._voice_engine == "openai" or _TTS_AVAILABLE)
+        voice_settings_row2.addWidget(self.voice_volume_slider)
 
         self.voice_state_lbl = QLabel(self._voice_state_machine.state)
         self.voice_state_lbl.setMinimumWidth(85)
         self.voice_state_lbl.setStyleSheet(f"color: {T['ACCENT']}; font-size: 10px; font-weight: 700;")
         self.voice_state_lbl.setToolTip("Voice conversation state")
-        voice_settings_row.addWidget(self.voice_state_lbl)
-        voice_settings_row.addStretch()
-        root.addLayout(voice_settings_row)
+        voice_settings_row2.addWidget(self.voice_state_lbl)
+        voice_settings_row2.addStretch()
+        root.addLayout(voice_settings_row2)
 
         self.output = QTextBrowser()
         self.output.setOpenExternalLinks(False)

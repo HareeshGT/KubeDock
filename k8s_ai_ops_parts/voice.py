@@ -50,19 +50,24 @@ class K8sAIOpsVoiceMixin:
 
     def _on_voice_engine_changed(self, index: int):
         engine = str(self.voice_engine_combo.itemData(index) or "system").lower()
+        requested_engine = engine
+        missing_openai_key = False
         if engine == "openai":
             if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
-                QMessageBox.information(self, "Neural Voice Unavailable", "Install the updated KubeDock requirements to enable OpenAI Realtime neural voices.")
+                QMessageBox.information(self, "Neural Voice Unavailable", "Qt Multimedia audio playback is unavailable in this KubeDock build. Use a build that includes PyQt5.QtMultimedia or select System · Offline.")
                 engine = "system"
             elif not ai_assist.get_api_key("openai"):
-                QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Neural voice generation uses OpenAI API usage and may incur charges.")
+                QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Your preference for Neural · OpenAI will be kept so the app can use it after the key is configured. Neural speech may incur API usage charges.")
                 engine = "system"
+                missing_openai_key = True
         self._voice_engine = engine
-        save_voice_engine(engine)
+        save_voice_engine("openai" if requested_engine == "openai" and missing_openai_key else engine)
         self.voice_engine_combo.blockSignals(True)
         self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData(engine)))
         self.voice_engine_combo.blockSignals(False)
         self.voice_combo.setEnabled(engine == "system" and _TTS_AVAILABLE)
+        self.voice_combo_label.setVisible(engine == "system")
+        self.voice_combo.setVisible(engine == "system")
         self._neural_tts_failed = False
         self._stop_neural_voice(clear_queue=True)
         if self._narrator is not None:
@@ -70,13 +75,16 @@ class K8sAIOpsVoiceMixin:
             self._narrator = None
         if hasattr(self, "voice_hint_lbl"):
             if engine == "openai":
-                self.voice_hint_lbl.setText("Neural AI voice enabled. Audio is generated with OpenAI Realtime using your OpenAI API key; this is an original character-inspired voice, not a character/actor clone.")
+                self.voice_hint_lbl.setText("Neural TTS enabled · OpenAI gpt-4o-mini-tts. This is an original character-inspired voice direction, not an exact character/actor clone.")
             else:
                 self.voice_hint_lbl.setText("Offline system voice enabled. Voice input sends captured speech to Google Web Speech for transcription; KubeDock does not save raw recordings.")
         if engine == "openai":
             self._write_info("\nNeural voice enabled. OpenAI receives the text that Ops Mind speaks; audio is temporarily written to a WAV file for playback, then removed.")
         else:
-            self._write_info("\nOffline system voice enabled. Speech synthesis runs locally.")
+            if missing_openai_key:
+                self._write_info("\nOffline voice is active because an OpenAI API key is not configured. The Neural · OpenAI preference is saved; add an OpenAI key under Settings → AI, then restart KubeDock or select Neural again.")
+            else:
+                self._write_info("\nOffline system voice enabled. Speech synthesis runs locally.")
 
     def _stop_neural_voice(self, clear_queue: bool = True):
         if clear_queue:
@@ -205,14 +213,16 @@ class K8sAIOpsVoiceMixin:
             except Exception: pass
         self._neural_playback_active = False
         self._cleanup_neural_temp_file()
-        self._write_info("\nNeural voice failed; switching to the offline system voice for this session: " + str(message or "unknown error")[:300])
-        if self._voice_engine == "openai":
-            self._voice_engine = "system"
-            save_voice_engine("system")
-            self.voice_engine_combo.blockSignals(True)
-            self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData("system")))
-            self.voice_engine_combo.blockSignals(False)
-            self.voice_combo.setEnabled(_TTS_AVAILABLE)
+        self._write_info(
+            "\nNeural voice failed; this utterance is falling back to the local system voice. "
+            "The Neural · OpenAI selection has been kept so you can retry after checking the OpenAI API key, model access, or network. "
+            + str(message or "unknown error")[:300]
+        )
+        if hasattr(self, "voice_hint_lbl"):
+            self.voice_hint_lbl.setText(
+                "Neural voice request failed; using system voice for this session. "
+                "Neural selection is preserved—check Settings → AI and use Preview to retry."
+            )
         if text:
             self._speak_system(text)
         self._neural_current_text = ""
@@ -344,18 +354,38 @@ class K8sAIOpsVoiceMixin:
             return
         self._speak_system(styled_text)
     def _preview_personality_voice(self):
-        if self._continuous_voice_enabled or self._voice_recording or self._voice_worker is not None:
-            self._write_info("\n Pause hands-free listening before previewing the assistant voice.")
+        if self._busy:
+            self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
             return
+        worker = self._voice_worker
+        if worker is not None:
+            if not self._continuous_voice_enabled:
+                self._write_info("\n Stop the current push-to-talk capture before previewing the assistant voice.")
+                return
+            # Hands-free capture is paused, not disabled or forgotten. The
+            # selected voice previews as soon as the microphone worker exits;
+            # normal narration completion will resume hands-free listening.
+            self._voice_preview_pending = True
+            self._voice_error_occurred = False
+            self._restart_voice_timer.stop()
+            self._continuous_restart_pending = False
+            worker.cancel()
+            self._write_info("\n Pausing hands-free capture to preview the selected assistant voice…")
+            return
+        self._restart_voice_timer.stop()
+        self._play_personality_voice_preview()
+
+    def _play_personality_voice_preview(self):
         if self._busy:
             self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
             return
         if self._narrator is not None:
             self._narrator.interrupt()
         self._stop_neural_voice(clear_queue=True)
+        if self._voice_engine == "openai":
+            self._neural_tts_failed = False
         preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
         self._speak(preview, force=True)
-
     def _on_narration_phrase_finished(self):
         if self._continuous_voice_enabled and not self._busy:
             self._continuous_restart_pending = True
@@ -517,6 +547,11 @@ class K8sAIOpsVoiceMixin:
             self.mic_level_bar.setValue(0)
         if hasattr(self, "mic_level_label"):
             self.mic_level_label.setText("Mic")
+        if self._voice_preview_pending:
+            self._voice_preview_pending = False
+            self._set_voice_state("IDLE")
+            QTimer.singleShot(180, self._play_personality_voice_preview)
+            return
         if self._busy:
             self._set_voice_state("THINKING")
         elif self._voice_error_occurred:

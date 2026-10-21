@@ -70,11 +70,11 @@ A quick review of the merged code found that resource evidence was tail-truncate
 
 ## Neural JARVIS / FRIDAY / EDITH-inspired voice profiles (2026-10-22)
 
-- [x] Added an optional OpenAI Realtime audio backend using gpt-realtime-2.1-mini. It uses built-in Cedar, Coral, and Sage voices with separate delivery instructions for the three original character-inspired profiles.
+- [x] Added an optional OpenAI expressive text-to-speech backend using gpt-4o-mini-tts at POST /v1/audio/speech. It uses built-in Cedar, Coral, and Sage voices, explicit speed control, and separate delivery instructions for the three original character-inspired profiles.
 - [x] Added a Neural · OpenAI / System · Offline engine selector. Neural output reuses the OpenAI API key saved under Settings → AI; the offline pyttsx3 engine remains available as a fallback.
 - [x] Applied persona-specific tone, delivery, pace and phrasing to spoken status updates and voice previews. The profiles are inspired by cinematic AI assistants, not direct copies of any actor or exact copyrighted character voice.
-- [x] Realtime TTS runs in a background QThread. PCM output is bounded in memory, converted to WAV, played through Qt Multimedia, and written to a temporary file with restrictive permissions that is deleted after playback.
-- [x] Added fallback to the local system voice if the Realtime connection, API, or playback fails; added mocked WebSocket/WAV unit coverage that requires neither real API credentials nor audio hardware.
+- [x] Neural TTS runs in a background QThread. The WAV response is bounded in memory, played through Qt Multimedia, and written to a temporary file with restrictive permissions that is deleted after playback.
+- [x] Added fallback to the local system voice if the HTTP API or playback fails; transient failures do not permanently change the selected engine. Tests mock the HTTP response and WAV payload, requiring neither real API credentials nor audio hardware.
 - [x] Documented neural voice transport and the offline fallback in requirements.txt.
 
 ### Neural voice setup and costs
@@ -82,3 +82,14 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - OpenAI receives the text to be spoken, and neural audio generation can incur API usage charges. No additional voice-specific API key is required. The microphone transcription path is unchanged and still sends captured speech to Google Web Speech.
 - If neural dependencies are missing or an OpenAI request fails, Ops Mind switches to the offline system voice. Voice quality varies by generated voice and provider delivery; the profiles are character-inspired, not exact voice clones.
 - GitHub Actions validation on Python 3.12: focused voice/security/ops tests **31 passed**; full suite **176 passed, 1 skipped**. Two pre-existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39667709768
+
+
+## Ops Mind voice layout and expressive TTS follow-up (2026-10-22)
+
+- [x] Split engine/persona/voice preview and turn-taking/pacing/volume controls into two rows to prevent horizontal clipping on normal window widths. Preview pauses active hands-free capture, plays the chosen voice, and automatically resumes listening after playback.
+- [x] Replaced the empty preview icon-only control with a labeled Preview button; the installed system voice selector is hidden when the neural engine is active.
+- [x] Replaced the WebSocket-based speech path with OpenAI's dedicated gpt-4o-mini-tts speech endpoint, which supports explicit vocal delivery instructions and speed. JARVIS-inspired delivery is more measured, resonant and contemporary British-English; FRIDAY is warm and lively; EDITH is composed and precise.
+- [x] Removed the unnecessary websocket-client dependency. Neural speech is delivered through Python's standard-library HTTP client in a worker thread with 30-second timeout, bounded WAV response size, validation and credential redaction.
+- [x] Changed automatic fallback handling so an API or audio failure does not save System · Offline as the permanent choice. The app uses offline speech for the affected session, preserves Neural · OpenAI as selected, and allows a retry from Preview.
+- [x] Added a one-time migration: older unmarked System · Offline values are treated as a previous automatic fallback when an OpenAI key is configured. Explicit offline selections saved by this build remain respected. If Neural · OpenAI is selected before a key is configured, KubeDock preserves that preference so it can be used once the key is added.
+- GitHub Actions validation on Python 3.12: focused voice/security/ops tests **31 passed**; full suite **176 passed, 1 skipped**. Two existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39671505352
