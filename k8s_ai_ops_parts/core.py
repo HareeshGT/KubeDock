@@ -332,7 +332,7 @@ def get_voice_id(personality: str = None) -> str:
     settings = load_settings()
     key = str(personality or get_assistant_personality()).lower()
     voices = settings.get(PERSONALITY_VOICES_SETTINGS_KEY, {})
-    if isinstance(voices, dict) and voices.get(key): return str(voices[key]).strip()
+    if isinstance(voices, dict) and key in voices: return str(voices[key] or "").strip()
     stored = settings.get(VOICE_ID_SETTINGS_KEY)
     return str(stored).strip() if stored else ""
   except Exception: return ""
