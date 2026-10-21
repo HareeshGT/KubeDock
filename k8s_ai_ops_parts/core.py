@@ -211,6 +211,75 @@ def personality_prompt_style(personality: str = None) -> str:
   key = str(personality or get_assistant_personality()).lower()
   return PERSONALITY_CONFIG.get(key, PERSONALITY_CONFIG["jarvis"])["prompt_style"]
 
+def personalize_local_response(text: str, personality: str = None) -> str:
+  """Use original, concise local responses that reflect the selected persona."""
+  key = str(personality or get_assistant_personality()).lower()
+  normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+  if normalized == "hello! tell me what you want to do in kubernetes.":
+    return {
+      "jarvis": "Good day. Ops Mind is ready. What shall I investigate?",
+      "friday": "Hey! I'm ready to help. What should we check?",
+      "edith": "Ops Mind online. State the Kubernetes target and desired outcome.",
+    }.get(key, text)
+  if normalized == "i'm doing well and ready to help with your kubernetes operations.":
+    return {
+      "jarvis": "Operating normally and ready to assist with your Kubernetes operations.",
+      "friday": "Doing great, thanks! Ready to work through your Kubernetes tasks with you.",
+      "edith": "Systems nominal. Ready for Kubernetes operations.",
+    }.get(key, text)
+  if normalized == "yes — i can hear you. your voice was captured and transcribed successfully.":
+    return {
+      "jarvis": "Confirmed. Your voice was captured and transcribed successfully.",
+      "friday": "Yep, I heard you clearly. Your voice was transcribed successfully.",
+      "edith": "Audio check passed. Voice capture and transcription succeeded.",
+    }.get(key, text)
+  return text
+
+
+def personalize_spoken_phrase(text: str, personality: str = None) -> str:
+  """Make routine spoken status updates match the selected assistant style."""
+  key = str(personality or get_assistant_personality()).lower()
+  value = str(text or "").strip()
+  exact = {
+    "Processing your request.": {
+      "jarvis": "Certainly. I'll take care of that.",
+      "friday": "On it. Let me check that for you.",
+      "edith": "Request received. Evaluating the operation.",
+    },
+    "Command build completed.": {
+      "jarvis": "The command is prepared and validated.",
+      "friday": "The command is ready to go.",
+      "edith": "Command validated.",
+    },
+    "I need more information to do that safely.": {
+      "jarvis": "I need one more detail before I can proceed safely.",
+      "friday": "Quick clarification before I do that safely.",
+      "edith": "Clarification required before execution.",
+    },
+    "Operation cancelled.": {
+      "jarvis": "Understood. No change was made.",
+      "friday": "No problem. I've cancelled it; nothing was changed.",
+      "edith": "Cancelled. No operation was executed.",
+    },
+  }
+  for source, variants in exact.items():
+    if value == source:
+      return variants.get(key, value)
+  match = re.fullmatch(r"(Scale up|Scale down|Scale|Restart|Delete|Get|Describe|Rollout status check) (completed|failed)\.", value, flags=re.I)
+  if match:
+    operation, outcome = match.group(1).lower(), match.group(2).lower()
+    if outcome == "failed":
+      return {
+        "jarvis": f"The {operation} did not succeed. I'll leave the state unconfirmed.",
+        "friday": f"That {operation} didn't go through, so I can't say it worked.",
+        "edith": f"Operation failed: {operation}. Result not confirmed.",
+      }.get(key, value)
+    return {
+      "jarvis": f"The {operation} is complete.",
+      "friday": f"All set — the {operation} is complete.",
+      "edith": f"Confirmed: {operation} completed.",
+    }.get(key, value)
+  return value
 def normalize_voice_transcript(text: str) -> str:
   """Normalize ASR variants so duplicate transcripts cannot repeat an operation."""
   return re.sub(r"[^a-z0-9._/-]+", " ", str(text or "").casefold()).strip()
