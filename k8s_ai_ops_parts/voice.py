@@ -1,3 +1,5 @@
+import os
+import tempfile
 import time
 from PyQt5.QtWidgets import (
     QDialog,
@@ -15,6 +17,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from .ui import _QT_MULTIMEDIA_AVAILABLE, QMediaContent
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QGraphicsBlurEffect
 
@@ -22,16 +25,18 @@ from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
-from .core import _NarrationThread, _TTS_AVAILABLE, _VOICE_AVAILABLE
+from .core import _NarrationThread, _OpenAINeuralTTSWorker, _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE
 
 
 class K8sAIOpsVoiceMixin:
     def _toggle_voice_feedback(self, checked: bool):
-        self._voice_feedback_enabled = bool(checked and _TTS_AVAILABLE)
+        self._voice_feedback_enabled = bool(checked and self._voice_feedback_available)
         save_voice_feedback_enabled(self._voice_feedback_enabled)
-        if not self._voice_feedback_enabled and self._narrator is not None:
-            self._narrator.stop()
-            self._narrator = None
+        if not self._voice_feedback_enabled:
+            if self._narrator is not None:
+                self._narrator.stop()
+                self._narrator = None
+            self._stop_neural_voice(clear_queue=True)
 
     def _populate_voice_combo(self):
         self.voice_combo.blockSignals(True)
@@ -42,6 +47,198 @@ class K8sAIOpsVoiceMixin:
         idx = self.voice_combo.findData(self._voice_id)
         self.voice_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.voice_combo.blockSignals(False)
+
+    def _on_voice_engine_changed(self, index: int):
+        engine = str(self.voice_engine_combo.itemData(index) or "system").lower()
+        if engine == "openai":
+            if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
+                QMessageBox.information(self, "Neural Voice Unavailable", "Install the updated KubeDock requirements to enable OpenAI Realtime neural voices.")
+                engine = "system"
+            elif not ai_assist.get_api_key("openai"):
+                QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Neural voice generation uses OpenAI API usage and may incur charges.")
+                engine = "system"
+        self._voice_engine = engine
+        save_voice_engine(engine)
+        self.voice_engine_combo.blockSignals(True)
+        self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData(engine)))
+        self.voice_engine_combo.blockSignals(False)
+        self.voice_combo.setEnabled(engine == "system" and _TTS_AVAILABLE)
+        self._neural_tts_failed = False
+        self._stop_neural_voice(clear_queue=True)
+        if self._narrator is not None:
+            self._narrator.stop()
+            self._narrator = None
+        if hasattr(self, "voice_hint_lbl"):
+            if engine == "openai":
+                self.voice_hint_lbl.setText("Neural AI voice enabled. Audio is generated with OpenAI Realtime using your OpenAI API key; this is an original character-inspired voice, not a character/actor clone.")
+            else:
+                self.voice_hint_lbl.setText("Offline system voice enabled. Voice input sends captured speech to Google Web Speech for transcription; KubeDock does not save raw recordings.")
+        if engine == "openai":
+            self._write_info("\nNeural voice enabled. OpenAI receives the text that Ops Mind speaks; audio is temporarily written to a WAV file for playback, then removed.")
+        else:
+            self._write_info("\nOffline system voice enabled. Speech synthesis runs locally.")
+
+    def _stop_neural_voice(self, clear_queue: bool = True):
+        if clear_queue:
+            self._neural_speech_queue.clear()
+        player = getattr(self, "_neural_audio_player", None)
+        if player is not None:
+            try: player.stop()
+            except Exception: pass
+            try: player.setMedia(QMediaContent())
+            except Exception: pass
+        self._neural_playback_active = False
+        self._cleanup_neural_temp_file()
+        worker = getattr(self, "_neural_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+        else:
+            self._neural_current_text = ""
+
+    def _cleanup_neural_temp_file(self):
+        path = getattr(self, "_neural_temp_file", None)
+        self._neural_temp_file = None
+        if path:
+            try: os.unlink(path)
+            except FileNotFoundError: pass
+            except OSError: pass
+
+    def _process_neural_speech_queue(self):
+        if self._voice_state_machine.state == "CLOSED":
+            return
+        if self._voice_engine != "openai" or self._neural_tts_failed:
+            while self._neural_speech_queue:
+                self._speak_system(self._neural_speech_queue.popleft())
+            return
+        worker = self._neural_worker
+        if worker is not None and worker.isRunning():
+            return
+        if self._neural_temp_file or self._neural_playback_active:
+            return
+        if not self._neural_speech_queue:
+            if self._continuous_voice_enabled and self._continuous_restart_pending and not self._busy:
+                self._continuous_restart_pending = False
+                self._schedule_continuous_voice(delay_ms=350)
+            elif self._voice_state_machine.state == "SPEAKING":
+                self._set_voice_state("IDLE")
+                self.status_lbl.setText("Ready")
+            return
+        api_key = ai_assist.get_api_key("openai")
+        if not api_key:
+            self._on_neural_tts_error("OpenAI API key is not configured.")
+            return
+        self._neural_current_text = self._neural_speech_queue.popleft()
+        worker = _OpenAINeuralTTSWorker(
+            api_key, self._neural_current_text, self._personality,
+            self._voice_pace, parent=self,
+        )
+        worker.audio_ready.connect(self._on_neural_audio_ready)
+        worker.error.connect(self._on_neural_tts_error)
+        worker.finished.connect(self._on_neural_worker_finished)
+        self._neural_worker = worker
+        track_worker(self._workers, worker)
+        worker.start()
+
+    def _on_neural_audio_ready(self, wav_bytes: bytes):
+        if self._voice_engine != "openai" or self._neural_tts_failed or not self._voice_feedback_enabled:
+            return
+        try:
+            with tempfile.NamedTemporaryFile(prefix="kubedock-ops-mind-", suffix=".wav", delete=False) as handle:
+                self._neural_temp_file = handle.name
+                handle.write(wav_bytes)
+            try: os.chmod(self._neural_temp_file, 0o600)
+            except OSError: pass
+            player = self._neural_audio_player
+            if player is None:
+                raise RuntimeError("Qt audio playback is unavailable.")
+            player.setVolume(self._voice_volume)
+            player.setMedia(QMediaContent(QUrl.fromLocalFile(self._neural_temp_file)))
+            self._neural_playback_active = True
+            player.play()
+        except Exception as exc:
+            self._on_neural_tts_error(str(exc))
+
+    def _on_neural_worker_finished(self):
+        self._neural_worker = None
+        if self._neural_tts_failed:
+            self._process_neural_speech_queue()
+        elif not self._neural_temp_file and not self._neural_playback_active:
+            self._process_neural_speech_queue()
+
+    def _on_neural_media_status_changed(self, status):
+        if status != self._neural_end_of_media_status:
+            return
+        player = self._neural_audio_player
+        if player is not None:
+            try: player.setMedia(QMediaContent())
+            except Exception: pass
+        self._neural_playback_active = False
+        self._neural_current_text = ""
+        self._cleanup_neural_temp_file()
+        if self._neural_speech_queue:
+            self._process_neural_speech_queue()
+            return
+        self._on_narration_phrase_finished()
+        self._on_narrator_idle()
+
+    def _on_neural_player_state_changed(self, state):
+        if state == self._neural_playing_state:
+            self._set_voice_state("SPEAKING")
+
+    def _on_neural_player_error(self, _error=None):
+        if self._neural_temp_file or self._neural_playback_active:
+            message = self._neural_audio_player.errorString() if self._neural_audio_player is not None else "Audio playback failed."
+            self._on_neural_tts_error(message or "Audio playback failed.")
+
+    def _on_neural_tts_error(self, message: str):
+        text = self._neural_current_text
+        if self._neural_tts_failed:
+            if text:
+                self._speak_system(text)
+                self._neural_current_text = ""
+            return
+        self._neural_tts_failed = True
+        player = self._neural_audio_player
+        if player is not None:
+            try: player.stop()
+            except Exception: pass
+            try: player.setMedia(QMediaContent())
+            except Exception: pass
+        self._neural_playback_active = False
+        self._cleanup_neural_temp_file()
+        self._write_info("\nNeural voice failed; switching to the offline system voice for this session: " + str(message or "unknown error")[:300])
+        if self._voice_engine == "openai":
+            self._voice_engine = "system"
+            save_voice_engine("system")
+            self.voice_engine_combo.blockSignals(True)
+            self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData("system")))
+            self.voice_engine_combo.blockSignals(False)
+            self.voice_combo.setEnabled(_TTS_AVAILABLE)
+        if text:
+            self._speak_system(text)
+        self._neural_current_text = ""
+        if self._neural_worker is None or not self._neural_worker.isRunning():
+            self._process_neural_speech_queue()
+
+    def _speak_system(self, text: str):
+        if not _TTS_AVAILABLE:
+            self._write_info("\nNo offline voice engine is installed; spoken output is unavailable.")
+            return
+        if self._narrator is None or not self._narrator.isRunning():
+            self._narrator = _NarrationThread(
+                voice_id=self._voice_id,
+                rate=self._narrator_rate(),
+                volume=self._voice_volume / 100.0,
+                parent=self,
+            )
+            self._narrator.speaking_started.connect(lambda: self._set_voice_state("SPEAKING"))
+            self._narrator.speaking_finished.connect(self._on_narration_phrase_finished)
+            self._narrator.idle.connect(self._on_narrator_idle)
+            self._narrator.start()
+        self._narrator.speak(
+            text, rate=self._narrator_rate(),
+            volume=self._voice_volume / 100.0, voice_id=self._voice_id,
+        )
 
     def _on_personality_changed(self, index: int):
         key = str(self.personality_combo.itemData(index) or "jarvis").lower()
@@ -123,28 +320,20 @@ class K8sAIOpsVoiceMixin:
         return int(base * factor)
 
     def _speak(self, text: str, force: bool = False):
-        """Queue concise, presentation-safe speech through local TTS."""
-        if (not self._voice_feedback_enabled and not force) or not _TTS_AVAILABLE:
+        """Speak concise text using the selected neural or offline engine."""
+        if not self._voice_feedback_enabled and not force:
             return
-        if self._narrator is None or not self._narrator.isRunning():
-            self._narrator = _NarrationThread(
-                voice_id=self._voice_id,
-                rate=self._narrator_rate(),
-                volume=self._voice_volume / 100.0,
-                parent=self,
-            )
-            self._narrator.speaking_started.connect(lambda: self._set_voice_state("SPEAKING"))
-            self._narrator.speaking_finished.connect(self._on_narration_phrase_finished)
-            self._narrator.idle.connect(self._on_narrator_idle)
-            self._narrator.start()
         styled_text = text if force else personalize_spoken_phrase(text, self._personality)
-        self._narrator.speak(
-            styled_text,
-            rate=self._narrator_rate(),
-            volume=self._voice_volume / 100.0,
-            voice_id=self._voice_id,
-        )
-
+        if self._voice_engine == "openai" and not self._neural_tts_failed:
+            if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
+                self._on_neural_tts_error("Neural voice dependencies are unavailable.")
+                if styled_text and self._voice_engine == "system":
+                    self._speak_system(styled_text)
+                return
+            self._neural_speech_queue.append(styled_text)
+            self._process_neural_speech_queue()
+            return
+        self._speak_system(styled_text)
     def _preview_personality_voice(self):
         if self._continuous_voice_enabled or self._voice_recording or self._voice_worker is not None:
             self._write_info("\n Pause hands-free listening before previewing the assistant voice.")
@@ -154,6 +343,7 @@ class K8sAIOpsVoiceMixin:
             return
         if self._narrator is not None:
             self._narrator.interrupt()
+        self._stop_neural_voice(clear_queue=True)
         preview = PERSONALITY_CONFIG.get(self._personality, PERSONALITY_CONFIG["jarvis"])["preview"]
         self._speak(preview, force=True)
 
@@ -425,6 +615,7 @@ class K8sAIOpsVoiceMixin:
         narrator = self._narrator
         if narrator is not None:
             narrator.interrupt()
+        self._stop_neural_voice(clear_queue=True)
         self._set_voice_state("INTERRUPTED")
         if self._busy:
             self._write_info("\n Speech stopped. The current Kubernetes operation will continue; your next request will be queued until it finishes.")
