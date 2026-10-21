@@ -355,17 +355,44 @@ if [[ "$OS" == "Darwin" ]]; then
     echo "$PYTHON_FORMULA already installed."
   fi
 
-  PYTHON="$(brew --prefix "$PYTHON_FORMULA")/bin/python3"
-
-  if [ ! -x "$PYTHON" ]; then
+  BREW_PREFIX="$(brew --prefix)"
+  FORMULA_PREFIX="$(brew --prefix "$PYTHON_FORMULA")"
+  PYTHON=""
+  if [[ "$PYTHON_MINOR" == "3.12" ]]; then
+    PYTHON_CANDIDATES=(
+      "$FORMULA_PREFIX/bin/python3.12"
+      "$BREW_PREFIX/bin/python3.12"
+      "$FORMULA_PREFIX/libexec/bin/python3.12"
+      "$FORMULA_PREFIX/bin/python3"
+      "$FORMULA_PREFIX/libexec/bin/python3"
+    )
+  else
+    PYTHON_CANDIDATES=(
+      "$FORMULA_PREFIX/bin/python3.14"
+      "$BREW_PREFIX/bin/python3.14"
+      "$FORMULA_PREFIX/libexec/bin/python3.14"
+      "$FORMULA_PREFIX/bin/python3"
+      "$FORMULA_PREFIX/libexec/bin/python3"
+    )
+  fi
+  for candidate in "${PYTHON_CANDIDATES[@]}"; do
+    if [ -x "$candidate" ] && "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (${PYTHON_MINOR/./, }) else 1)" >/dev/null 2>&1; then
+      PYTHON="$candidate"
+      break
+    fi
+  done
+  if [ -z "$PYTHON" ]; then
     echo
-    echo "ERROR: Homebrew $PYTHON_FORMULA was not found:"
-    echo "$PYTHON"
+    echo "ERROR: Could not find a working Python $PYTHON_MINOR executable for Homebrew $PYTHON_FORMULA."
+    echo "Tried:"
+    printf "  %s\n" "${PYTHON_CANDIDATES[@]}"
+    echo "Please run: brew reinstall $PYTHON_FORMULA"
     exit 1
   fi
 
-  # Make Homebrew tools available to child processes as well.
-  export PATH="$(brew --prefix "$PYTHON_FORMULA")/bin:$(brew --prefix)/bin:$PATH"
+  # Make Homebrew tools available to child processes as well. Homebrew may
+  # expose only the versioned executable (python3.12) on this machine.
+  export PATH="$FORMULA_PREFIX/bin:$FORMULA_PREFIX/libexec/bin:$BREW_PREFIX/bin:$PATH"
 
 elif [[ "$ENABLE_QWEN_TTS" == "1" ]] && [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
 
