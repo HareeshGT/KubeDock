@@ -276,7 +276,7 @@ def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> 
   profile["speed"] = speed
   if speed < 0.9:
     pace_instruction = "Deliver at a deliberately unhurried pace with slightly longer pauses between clauses."
-  elif speed > 1.08:
+  elif speed >= 1.08:
     pace_instruction = "Deliver at a brisk, energetic pace while keeping every word clearly intelligible."
   else:
     pace_instruction = "Deliver at a natural conversational pace with clean, comfortable pauses."
