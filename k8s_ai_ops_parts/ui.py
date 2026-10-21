@@ -190,6 +190,7 @@ class K8sAIOpsUIMixin:
         self.continuous_voice_btn.setChecked(self._continuous_voice_enabled)
         self.continuous_voice_btn.toggled.connect(self._on_continuous_voice_toggled)
         self.continuous_voice_btn.setToolTip("Keep the conversation open and submit each utterance after silence is detected")
+        self.continuous_voice_btn.setEnabled(_VOICE_AVAILABLE)
         voice_settings_row.addWidget(self.continuous_voice_btn)
 
         self.interrupt_btn = QPushButton("Interrupt & Listen")
