@@ -12,8 +12,9 @@ from PyQt5.QtWidgets import (
     QShortcut,
     QProgressBar,
     QComboBox,
+    QSlider,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QGraphicsBlurEffect
 
@@ -39,8 +40,20 @@ class K8sAIOpsUIMixin:
         self._voice_worker = None
         self._voice_recording = False
         self._narrator = None
+        self._personality = get_assistant_personality()
         self._voice_feedback_enabled = _TTS_AVAILABLE and get_voice_feedback_enabled()
-        self._voice_id = get_voice_id() if _TTS_AVAILABLE else ''
+        self._voice_id = get_voice_id(self._personality) if _TTS_AVAILABLE else ''
+        self._continuous_voice_enabled = bool(get_continuous_voice_enabled() and _VOICE_AVAILABLE)
+        self._voice_silence_seconds = get_voice_silence_seconds()
+        self._voice_pace = get_voice_pace()
+        self._voice_volume = get_voice_volume()
+        self._voice_state_machine = VoiceConversationStateMachine()
+        self._last_voice_transcript = ''
+        self._last_voice_timestamp = 0.0
+        self._continuous_restart_pending = False
+        self._restart_voice_timer = QTimer(self)
+        self._restart_voice_timer.setSingleShot(True)
+        self._restart_voice_timer.timeout.connect(self._maybe_resume_continuous_voice)
         self._busy = False
         self._history = _load_history()
         self._ai_access_allowed = False
@@ -80,9 +93,10 @@ class K8sAIOpsUIMixin:
         examples.setWordWrap(True)
         examples.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
         root.addWidget(examples)
-        self.voice_hint_lbl = QLabel('Voice: Google Web Speech (classic ASR, not an LLM) · Ctrl+Shift+Space to start/stop')
+        self.voice_hint_lbl = QLabel('Voice: Google Web Speech transcription · audio is sent to Google; KubeDock does not save raw recordings.')
         self.voice_hint_lbl.setWordWrap(True)
         self.voice_hint_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 10px;")
+        self.voice_hint_lbl.setToolTip('Voice input sends the captured utterance to Google Web Speech for transcription. KubeDock does not save raw audio recordings.')
         root.addWidget(self.voice_hint_lbl)
         self.request_input = QLineEdit()
         self.request_input.setPlaceholderText('Ask AI to perform a Kubernetes operation…')
@@ -126,13 +140,11 @@ class K8sAIOpsUIMixin:
         self.voice_combo.setToolTip("Which system voice reads Ops Mind's status narration aloud" if _TTS_AVAILABLE else 'Voice narration needs the pyttsx3 package (pip install pyttsx3)')
         self._populate_voice_combo()
         self.voice_combo.currentIndexChanged.connect(self._on_voice_combo_changed)
-        btn_row.addWidget(self.voice_combo)
         self.voice_test_btn = icon_button('')
         self.voice_test_btn.setFixedSize(34, 34)
         self.voice_test_btn.setEnabled(_TTS_AVAILABLE)
         self.voice_test_btn.setToolTip('Preview the selected voice')
         self.voice_test_btn.clicked.connect(lambda: self._speak("This is how I'll sound when Ops Mind narrates status updates."))
-        btn_row.addWidget(self.voice_test_btn)
         self.voice_shortcut = QShortcut(QKeySequence('Ctrl+Shift+Space'), self)
         self.voice_shortcut.activated.connect(self._toggle_voice_recording)
         clear_btn = QPushButton('Clear Output')
@@ -149,6 +161,81 @@ class K8sAIOpsUIMixin:
         btn_row.addWidget(self.audit_btn)
         btn_row.addStretch()
         root.addLayout(btn_row)
+
+        # Compact Ops Mind voice/personality controls, persisted through the
+        # existing SQLite-backed application settings.
+        voice_settings_row = QHBoxLayout()
+        voice_settings_row.setSpacing(8)
+        voice_settings_row.addWidget(QLabel("Persona"))
+        self.personality_combo = QComboBox()
+        self.personality_combo.setFixedWidth(150)
+        for key in ("jarvis", "friday", "edith"):
+            self.personality_combo.addItem(PERSONALITY_CONFIG[key]["label"], key)
+        idx = self.personality_combo.findData(self._personality)
+        self.personality_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.personality_combo.currentIndexChanged.connect(self._on_personality_changed)
+        self.personality_combo.setToolTip("Choose Ops Mind's conversational style and voice profile")
+        voice_settings_row.addWidget(self.personality_combo)
+
+        voice_settings_row.addWidget(QLabel("Voice"))
+        self.voice_combo.setFixedWidth(150)
+        self.voice_combo.setToolTip("System voice used for the selected personality")
+        voice_settings_row.addWidget(self.voice_combo)
+        voice_settings_row.addWidget(self.voice_test_btn)
+
+        self.continuous_voice_btn = QPushButton("Hands-free")
+        self.continuous_voice_btn.setCheckable(True)
+        self.continuous_voice_btn.setChecked(self._continuous_voice_enabled)
+        self.continuous_voice_btn.toggled.connect(self._on_continuous_voice_toggled)
+        self.continuous_voice_btn.setToolTip("Keep the conversation open and submit each utterance after silence is detected")
+        voice_settings_row.addWidget(self.continuous_voice_btn)
+
+        self.interrupt_btn = QPushButton("Interrupt & Listen")
+        self.interrupt_btn.setEnabled(_VOICE_AVAILABLE)
+        self.interrupt_btn.clicked.connect(self._interrupt_and_listen)
+        self.interrupt_btn.setToolTip("Stop the current spoken phrase and listen for a new instruction. Does not cancel an operation already running.")
+        voice_settings_row.addWidget(self.interrupt_btn)
+
+        voice_settings_row.addWidget(QLabel("Silence"))
+        self.silence_combo = QComboBox()
+        self.silence_combo.setFixedWidth(82)
+        for seconds in VOICE_SILENCE_CHOICES:
+            self.silence_combo.addItem(f"{seconds:.1f}s", seconds)
+        silence_idx = self.silence_combo.findData(self._voice_silence_seconds)
+        self.silence_combo.setCurrentIndex(silence_idx if silence_idx >= 0 else 1)
+        self.silence_combo.currentIndexChanged.connect(self._on_voice_silence_changed)
+        self.silence_combo.setToolTip("Silence duration that ends a hands-free utterance")
+        self.silence_combo.setEnabled(_VOICE_AVAILABLE)
+        voice_settings_row.addWidget(self.silence_combo)
+
+        voice_settings_row.addWidget(QLabel("Pace"))
+        self.voice_pace_combo = QComboBox()
+        self.voice_pace_combo.setFixedWidth(95)
+        for pace, label in (("slow", "Slow"), ("natural", "Natural"), ("brisk", "Brisk")):
+            self.voice_pace_combo.addItem(label, pace)
+        pace_idx = self.voice_pace_combo.findData(self._voice_pace)
+        self.voice_pace_combo.setCurrentIndex(pace_idx if pace_idx >= 0 else 1)
+        self.voice_pace_combo.currentIndexChanged.connect(self._on_voice_pace_changed)
+        voice_settings_row.addWidget(self.voice_pace_combo)
+
+        voice_settings_row.addWidget(QLabel("Volume"))
+        self.voice_volume_slider = QSlider(Qt.Horizontal)
+        self.voice_volume_slider.setRange(0, 100)
+        self.voice_volume_slider.setValue(self._voice_volume)
+        self.voice_volume_slider.setFixedWidth(75)
+        self.voice_volume_slider.setToolTip("System voice volume")
+        self.voice_volume_slider.valueChanged.connect(self._on_voice_volume_changed)
+        self.voice_volume_slider.setEnabled(_TTS_AVAILABLE)
+        voice_settings_row.addWidget(self.voice_volume_slider)
+
+        self.voice_state_lbl = QLabel(self._voice_state_machine.state)
+        self.voice_state_lbl.setMinimumWidth(85)
+        self.voice_state_lbl.setStyleSheet(f"color: {T['ACCENT']}; font-size: 10px; font-weight: 700;")
+        self.voice_state_lbl.setToolTip("Voice conversation state")
+        voice_settings_row.addWidget(self.voice_state_lbl)
+        voice_settings_row.addStretch()
+        root.addLayout(voice_settings_row)
+
         self.output = QTextBrowser()
         self.output.setOpenExternalLinks(False)
         self.output.setFont(monospace_font(11))
@@ -286,6 +373,8 @@ class K8sAIOpsUIMixin:
         else:
             apply_text_icon(self.run_btn, ' Run with AI', size=15)
             self.status_lbl.setText('Ready')
+            if hasattr(self, '_schedule_continuous_voice'):
+                self._schedule_continuous_voice()
 
     def _clear_output(self):
         if self._busy:
