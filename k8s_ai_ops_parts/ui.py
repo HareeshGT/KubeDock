@@ -51,6 +51,8 @@ class K8sAIOpsUIMixin:
         self._last_voice_transcript = ''
         self._last_voice_timestamp = 0.0
         self._queued_voice_request = None
+        self._voice_conversation = []
+        self._last_submitted_request = ""
         self._voice_error_occurred = False
         self._continuous_restart_pending = False
         self._restart_voice_timer = QTimer(self)
@@ -347,6 +349,19 @@ class K8sAIOpsUIMixin:
                 pass
         return ''
 
+    def _remember_conversation_turn(self, role: str, content: str):
+        """Keep a small, in-memory, redacted transcript for conversational follow-ups."""
+        role = "user" if role == "user" else "assistant"
+        text = ai_assist._redact_sensitive_text(str(content or "").strip())
+        if not text:
+            return
+        if len(text) > 1000:
+            text = text[:1000].rstrip() + "…"
+        turns = getattr(self, "_voice_conversation", [])
+        if turns and turns[-1].get("role") == role and turns[-1].get("content") == text:
+            return
+        turns.append({"role": role, "content": text})
+        self._voice_conversation = turns[-8:]
     def _update_history_label(self):
         count = len(self._history)
         self.history_lbl.setText(f"{count} saved operation{('s' if count != 1 else '')}")
