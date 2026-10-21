@@ -1,8 +1,11 @@
+import base64
+import io
 import json
 import queue
 import re
 import threading
 import time
+import wave
 from datetime import datetime
 import os
 import sys
@@ -48,6 +51,13 @@ try:
 except ImportError:
   pyttsx3 = None
   _TTS_AVAILABLE = False
+
+try:
+  import websocket
+  _NEURAL_TTS_AVAILABLE = True
+except ImportError:
+  websocket = None
+  _NEURAL_TTS_AVAILABLE = False
 
 GOOGLE_STT_LANGUAGE = "en-IN"
 VOICE_MAX_SECONDS = 90
@@ -118,10 +128,31 @@ CONTINUOUS_VOICE_SETTINGS_KEY = "k8s_ops_continuous_voice"
 VOICE_SILENCE_SETTINGS_KEY = "k8s_ops_voice_silence_seconds"
 VOICE_PACE_SETTINGS_KEY = "k8s_ops_voice_pace"
 VOICE_VOLUME_SETTINGS_KEY = "k8s_ops_voice_volume"
+VOICE_ENGINE_SETTINGS_KEY = "k8s_ops_voice_engine"
+OPENAI_REALTIME_TTS_MODEL = "gpt-realtime-2.1-mini"
+NEURAL_TTS_SAMPLE_RATE = 24000
+NEURAL_TTS_MAX_AUDIO_BYTES = 12 * 1024 * 1024
 PERSONALITY_CONFIG = {
   "jarvis": {"label": "JARVIS · Composed", "prompt_style": "Use calm, polished, concise wording in clarification/reason fields; be precise and subtly reassuring.", "rate": 165, "preview": "Systems are ready. I will provide precise findings and clearly identify operational risks."},
   "friday": {"label": "FRIDAY · Conversational", "prompt_style": "Use friendly, natural, collaborative wording in clarification/reason fields while remaining technically precise.", "rate": 182, "preview": "All right, I am ready. I will keep things clear, practical, and easy to follow."},
   "edith": {"label": "EDITH · Analytical", "prompt_style": "Use direct, structured, security-conscious wording in clarification/reason fields; prioritize impact and risk.", "rate": 174, "preview": "Mission systems ready. I will prioritize operational health, impact, and actionable findings."},
+}
+NEURAL_VOICE_PROFILES = {
+  "jarvis": {
+    "voice": "cedar",
+    "speed": 0.96,
+    "instructions": "Speak with an original, polished British-English cinematic AI-assistant delivery: low, warm resonance; crisp consonants; measured tempo; elegant short pauses; composed, discreet, quietly reassuring, with understated dry wit only when the text supports it. Keep vocal variation controlled and natural, never metallic or monotone. Do not imitate any specific actor or existing fictional character. Read only the provided text exactly; do not add words or commentary.",
+  },
+  "friday": {
+    "voice": "coral",
+    "speed": 1.04,
+    "instructions": "Speak in an original, confident, warm feminine-presenting assistant voice: bright and natural intonation, lightly playful energy, quick but clear phrasing, conversational warmth, and a subtle Irish lilt without exaggeration. Sound like a capable teammate under pressure, never cartoonish. Do not imitate any specific actor or existing fictional character. Read only the provided text exactly; do not add words or commentary.",
+  },
+  "edith": {
+    "voice": "sage",
+    "speed": 0.98,
+    "instructions": "Speak in an original, composed feminine-presenting digital-assistant voice: cool precision, clean articulation, controlled emotional variation, deliberate pacing, restrained authority, and a subtle futuristic edge. Sound analytical and confident rather than robotic. Do not imitate any specific actor or existing fictional character. Read only the provided text exactly; do not add words or commentary.",
+  },
 }
 VOICE_PACE_FACTORS = {"slow": 0.88, "natural": 1.0, "brisk": 1.12}
 VOICE_SILENCE_CHOICES = (0.7, 1.0, 1.4, 1.8)
@@ -207,6 +238,43 @@ def get_voice_volume() -> int:
 def save_voice_volume(volume: int):
   try: save_settings(**{VOICE_VOLUME_SETTINGS_KEY: max(0, min(100, int(volume)))})
   except Exception: pass
+
+
+def get_voice_engine() -> str:
+  """Return the selected neural or offline voice engine, defaulting safely."""
+  try:
+    selected = str(load_settings().get(VOICE_ENGINE_SETTINGS_KEY, "") or "").strip().lower()
+  except Exception:
+    selected = ""
+  try:
+    openai_key_available = bool(ai_assist.get_api_key("openai"))
+  except Exception:
+    openai_key_available = False
+  if selected == "openai" and openai_key_available:
+    return "openai"
+  if selected == "system":
+    return "system"
+  return "openai" if openai_key_available else "system"
+
+
+def save_voice_engine(engine: str):
+  value = str(engine or "system").strip().lower()
+  if value not in {"openai", "system"}:
+    value = "system"
+  try: save_settings(**{VOICE_ENGINE_SETTINGS_KEY: value})
+  except Exception: pass
+
+
+def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> dict:
+  """Return safe, deterministic TTS parameters for the selected persona."""
+  key = str(personality or get_assistant_personality()).strip().lower()
+  if key not in NEURAL_VOICE_PROFILES:
+    key = "jarvis"
+  profile = dict(NEURAL_VOICE_PROFILES[key])
+  factor = VOICE_PACE_FACTORS.get(str(pace or "natural").strip().lower(), 1.0)
+  profile["speed"] = max(0.7, min(1.3, round(profile["speed"] * factor, 2)))
+  profile["instructions"] = str(profile["instructions"])
+  return profile
 
 def personality_prompt_style(personality: str = None) -> str:
   key = str(personality or get_assistant_personality()).lower()
@@ -1405,6 +1473,155 @@ class K8sGoogleSpeechWorker(QThread):
     except Exception as exc:
       self.error.emit(f"Voice input failed: {exc}")
 
+
+class _OpenAINeuralTTSWorker(QThread):
+  """Generate a single spoken phrase with OpenAI Realtime audio in a worker thread.
+
+  Audio is requested from the Realtime WebSocket (not the deprecated Speech API),
+  buffered only in memory, wrapped as a WAV stream, and handed to the UI player.
+  """
+  audio_ready = pyqtSignal(bytes)
+  error = pyqtSignal(str)
+
+  def __init__(self, api_key: str, text: str, personality: str, pace: str = "natural", parent=None):
+    super().__init__(parent)
+    self._api_key = str(api_key or "").strip()
+    self._text = speech_friendly_text(text, limit=500)
+    self._personality = personality
+    self._pace = pace
+    self._cancelled = threading.Event()
+    self._socket_lock = threading.Lock()
+    self._socket = None
+    self.finished.connect(self.deleteLater)
+
+  def cancel(self):
+    self._cancelled.set()
+    with self._socket_lock:
+      ws = self._socket
+    if ws is not None:
+      try: ws.close()
+      except Exception: pass
+
+  @staticmethod
+  def _event_error(event: dict) -> str:
+    detail = event.get("error") if isinstance(event, dict) else None
+    if isinstance(detail, dict):
+      return str(detail.get("message") or detail.get("code") or "Realtime voice request failed")[:500]
+    return str(detail or "Realtime voice request failed")[:500]
+
+  def run(self):
+    if not _NEURAL_TTS_AVAILABLE:
+      self.error.emit("Neural voice needs websocket-client. Install the updated KubeDock requirements.")
+      return
+    if not self._api_key:
+      self.error.emit("Add an OpenAI API key in Settings → AI to use neural voices.")
+      return
+    if not self._text:
+      return
+    ws = None
+    try:
+      profile = get_neural_voice_profile(self._personality, self._pace)
+      url = f"wss://api.openai.com/v1/realtime?model={OPENAI_REALTIME_TTS_MODEL}"
+      ws = websocket.create_connection(
+        url,
+        header=[f"Authorization: Bearer {self._api_key}"],
+        timeout=12,
+        enable_multithread=True,
+      )
+      ws.settimeout(1.0)
+      with self._socket_lock:
+        self._socket = ws
+      ws.send(json.dumps({
+        "type": "session.update",
+        "session": {
+          "type": "realtime",
+          "model": OPENAI_REALTIME_TTS_MODEL,
+          "output_modalities": ["audio"],
+          "instructions": profile["instructions"],
+          "audio": {
+            "output": {
+              "format": {"type": "audio/pcm", "rate": NEURAL_TTS_SAMPLE_RATE},
+              "voice": profile["voice"],
+            },
+          },
+        },
+      }))
+      session_deadline = time.monotonic() + 15
+      configured = False
+      while not self._cancelled.is_set() and time.monotonic() < session_deadline:
+        try:
+          event = json.loads(ws.recv())
+        except websocket.WebSocketTimeoutException:
+          continue
+        if event.get("type") == "error":
+          raise RuntimeError(self._event_error(event))
+        if event.get("type") == "session.updated":
+          configured = True
+          break
+      if self._cancelled.is_set():
+        return
+      if not configured:
+        raise TimeoutError("OpenAI Realtime voice session did not finish initializing.")
+      ws.send(json.dumps({
+        "type": "conversation.item.create",
+        "item": {
+          "type": "message",
+          "role": "user",
+          "content": [{"type": "input_text", "text": self._text}],
+        },
+      }))
+      ws.send(json.dumps({
+        "type": "response.create",
+        "response": {"output_modalities": ["audio"]},
+      }))
+      pcm = bytearray()
+      response_deadline = time.monotonic() + 35
+      completed = False
+      while not self._cancelled.is_set() and time.monotonic() < response_deadline:
+        try:
+          event = json.loads(ws.recv())
+        except websocket.WebSocketTimeoutException:
+          continue
+        event_type = event.get("type")
+        if event_type == "error":
+          raise RuntimeError(self._event_error(event))
+        if event_type == "response.output_audio.delta":
+          chunk = base64.b64decode(event.get("delta", ""), validate=True)
+          pcm.extend(chunk)
+          if len(pcm) > NEURAL_TTS_MAX_AUDIO_BYTES:
+            raise ValueError("Neural voice audio exceeded the 12 MiB safety limit.")
+        elif event_type == "response.done":
+          response = event.get("response") or {}
+          status = response.get("status", "completed")
+          if status != "completed":
+            details = response.get("status_details") or {}
+            raise RuntimeError(str((details.get("error") or {}).get("message") or f"Voice response status: {status}")[:500])
+          completed = True
+          break
+      if self._cancelled.is_set():
+        return
+      if not completed:
+        raise TimeoutError("OpenAI Realtime voice generation timed out.")
+      if not pcm:
+        raise RuntimeError("OpenAI Realtime returned no audio data.")
+      audio_buffer = io.BytesIO()
+      with wave.open(audio_buffer, "wb") as audio_file:
+        audio_file.setnchannels(1)
+        audio_file.setsampwidth(2)
+        audio_file.setframerate(NEURAL_TTS_SAMPLE_RATE)
+        audio_file.writeframes(bytes(pcm))
+      if not self._cancelled.is_set():
+        self.audio_ready.emit(audio_buffer.getvalue())
+    except Exception as exc:
+      if not self._cancelled.is_set():
+        message = ai_assist._redact_sensitive_text(str(exc), secrets=[self._api_key])
+        self.error.emit(message[:700] or "Neural voice generation failed.")
+    finally:
+      with self._socket_lock:
+        self._socket = None
+      if ws is not None:
+        try: ws.close()
+        except Exception: pass
 
 class _NarrationThread(QThread):
   """Single-engine local TTS worker with queue draining and best-effort interrupt."""
