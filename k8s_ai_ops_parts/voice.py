@@ -213,22 +213,32 @@ class K8sAIOpsVoiceMixin:
             except Exception: pass
         self._neural_playback_active = False
         self._cleanup_neural_temp_file()
-        self._write_info(
-            "\nNeural voice failed; this utterance is falling back to the local system voice. "
-            "The Neural · OpenAI selection has been kept so you can retry after checking the OpenAI API key, model access, or network. "
-            + str(message or "unknown error")[:300]
-        )
-        if hasattr(self, "voice_hint_lbl"):
-            self.voice_hint_lbl.setText(
-                "Neural voice request failed; using system voice for this session. "
-                "Neural selection is preserved—check Settings → AI and use Preview to retry."
+        detail = str(message or "unknown error")[:500]
+        quota_exhausted = "api credits are exhausted" in detail.lower() or "insufficient_quota" in detail.lower() or "no credits remaining" in detail.lower()
+        if quota_exhausted:
+            notice = (
+                "Neural voice is paused because your OpenAI API credits are exhausted. "
+                "This reply is falling back to your local system voice. Add credits at "
+                "https://platform.openai.com/settings/organization/billing/ and click Preview after billing is active. "
+                "KubeDock will not retry neural speech automatically during this session.\n"
             )
+            hint = "Neural voice paused · OpenAI API credits exhausted. Add credits, then click Preview to retry."
+        else:
+            notice = (
+                "Neural voice failed; this utterance is falling back to the local system voice. "
+                "Your Neural · OpenAI selection is preserved so you can retry after checking API access or network. "
+                + detail + "\n"
+            )
+            hint = "Neural voice unavailable for this session; using local system voice. Check Settings → AI, then use Preview to retry."
+        self._write_info("\n" + notice)
+        if hasattr(self, "voice_hint_lbl"):
+            self.voice_hint_lbl.setText(hint)
+            self.voice_hint_lbl.setToolTip(notice.strip())
         if text:
             self._speak_system(text)
         self._neural_current_text = ""
         if self._neural_worker is None or not self._neural_worker.isRunning():
             self._process_neural_speech_queue()
-
     def _speak_system(self, text: str):
         if not _TTS_AVAILABLE:
             self._write_info("\nNo offline voice engine is installed; spoken output is unavailable.")
