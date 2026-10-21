@@ -144,7 +144,7 @@ fi
 # If no branch is supplied, the script retrieves the available
 # remote branches from GitHub and lets the user select one.
 
-SELECTED_BRANCH="${1:-}"
+SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-}}"
 
 echo
 echo "=========================================="
@@ -241,6 +241,35 @@ echo " $SELECTED_BRANCH"
 echo
 
 # --------------------------------------------------
+# Optional local Qwen3-TTS bundle
+# --------------------------------------------------
+
+# Keep the default build lightweight. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt
+# into the large local PyTorch/Qwen runtime; the voice model weights download
+# on first use and are intentionally not embedded into the app bundle.
+ENABLE_QWEN_TTS="${KUBEDOCK_ENABLE_QWEN_TTS:-}"
+case "$ENABLE_QWEN_TTS" in
+  1|y|Y|yes|YES|Yes|true|TRUE|True|on|ON|On) ENABLE_QWEN_TTS=1 ;;
+  0|n|N|no|NO|No|false|FALSE|False|off|OFF|Off) ENABLE_QWEN_TTS=0 ;;
+  *)
+    if [ -t 0 ]; then
+      printf "Include local Qwen3-TTS voice support? This adds several GB to the app build [y/N]: "
+      read -r QWEN_ANSWER
+      case "$QWEN_ANSWER" in y|Y|yes|YES|Yes) ENABLE_QWEN_TTS=1 ;; *) ENABLE_QWEN_TTS=0 ;; esac
+    else
+      ENABLE_QWEN_TTS=0
+      echo "Non-interactive install: skipping optional Qwen3-TTS bundle. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to enable it."
+    fi
+    ;;
+esac
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  echo "Qwen3-TTS bundle: ENABLED (Python 3.12 required; model weights download on first launch)."
+else
+  echo "Qwen3-TTS bundle: disabled (small default build)."
+fi
+echo
+
+# --------------------------------------------------
 # Clone / Update Repository
 # --------------------------------------------------
 
@@ -308,27 +337,60 @@ if [[ "$OS" == "Darwin" ]]; then
 
   echo "Homebrew: $(brew --version | head -n 1)"
 
-  # Always use Homebrew Python 3.14.
-  if ! brew list --formula python@3.14 >/dev/null 2>&1; then
+  # Python 3.14 remains the default build runtime; the Qwen ML stack is
+  # built with Python 3.12, the upstream-recommended environment.
+  if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+    PYTHON_MINOR="3.12"
+  else
+    PYTHON_MINOR="3.14"
+  fi
+  PYTHON_FORMULA="python@$PYTHON_MINOR"
+
+  if ! brew list --formula "$PYTHON_FORMULA" >/dev/null 2>&1; then
     echo
-    echo "Installing Python 3.14..."
-    brew install python@3.14
+    echo "Installing Homebrew $PYTHON_FORMULA..."
+    brew install "$PYTHON_FORMULA"
   else
     echo
-    echo "Python 3.14 already installed."
+    echo "$PYTHON_FORMULA already installed."
   fi
 
-  PYTHON="$(brew --prefix python@3.14)/bin/python3"
+  PYTHON="$(brew --prefix "$PYTHON_FORMULA")/bin/python3"
 
   if [ ! -x "$PYTHON" ]; then
     echo
-    echo "ERROR: Homebrew Python 3.14 was not found:"
+    echo "ERROR: Homebrew $PYTHON_FORMULA was not found:"
     echo "$PYTHON"
     exit 1
   fi
 
   # Make Homebrew tools available to child processes as well.
-  export PATH="$(brew --prefix python@3.14)/bin:$(brew --prefix)/bin:$PATH"
+  export PATH="$(brew --prefix "$PYTHON_FORMULA")/bin:$(brew --prefix)/bin:$PATH"
+
+elif [[ "$ENABLE_QWEN_TTS" == "1" ]] && [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+
+  # On Windows/MSYS use the Python Launcher to select exactly Python 3.12.
+  if command -v py >/dev/null 2>&1; then
+    WINDOWS_PYTHON="$(py -3.12 -c "import sys; print(sys.executable)" 2>/dev/null || true)"
+    if [ -n "$WINDOWS_PYTHON" ]; then
+      if command -v cygpath >/dev/null 2>&1; then
+        PYTHON="$(cygpath -u "$WINDOWS_PYTHON")"
+      else
+        PYTHON="$WINDOWS_PYTHON"
+      fi
+    fi
+  fi
+  if [ -z "${PYTHON:-}" ] && command -v python3.12 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3.12)"
+  fi
+  if [ -z "${PYTHON:-}" ]; then
+    echo "ERROR: Qwen3-TTS packaging requires 64-bit Python 3.12. Install it and rerun."
+    exit 1
+  fi
+
+elif [[ "$ENABLE_QWEN_TTS" == "1" ]] && command -v python3.12 >/dev/null 2>&1; then
+
+  PYTHON="$(command -v python3.12)"
 
 elif command -v python3 >/dev/null 2>&1; then
 
@@ -350,6 +412,13 @@ echo
 echo "Using Python:"
 echo "$PYTHON"
 "$PYTHON" --version
+PYTHON_MINOR="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "$ENABLE_QWEN_TTS" == "1" && "$PYTHON_MINOR" != "3.12" ]]; then
+  echo
+  echo "ERROR: Qwen3-TTS packaging requires Python 3.12; selected $PYTHON_MINOR ($PYTHON)."
+  echo "Install Python 3.12 and rerun, or leave Qwen3-TTS disabled."
+  exit 1
+fi
 
 # --------------------------------------------------
 # Install Native Dependencies
@@ -523,6 +592,23 @@ if [ -f requirements.txt ]; then
       "$PYTHON" -m pip install -r requirements-voice.txt \
         || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
     fi
+  fi
+
+  # Optional local Qwen runtime. This is deliberately opt-in because PyTorch,
+  # Transformers and Qwen increase both install time and bundle size.
+  if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+    if [ ! -f requirements-qwen-tts.txt ]; then
+      echo "ERROR: this branch does not contain requirements-qwen-tts.txt."
+      exit 1
+    fi
+    echo
+    echo "Installing optional Qwen3-TTS runtime (Python 3.12; PyTorch/Transformers)..."
+    if [[ "$OS" == "Darwin" ]]; then
+      "$PYTHON" -m pip install --break-system-packages -r requirements-qwen-tts.txt
+    else
+      "$PYTHON" -m pip install -r requirements-qwen-tts.txt
+    fi
+    "$PYTHON" -c "import torch, qwen_tts; print('[OK] Qwen3-TTS runtime:', getattr(qwen_tts, '__version__', 'installed')); print('[OK] PyTorch:', torch.__version__)"
   fi
 
 else
@@ -812,6 +898,27 @@ else
   )
 fi
 
+# Collect dynamic Qwen/Torch modules only when the local TTS runtime is opted in.
+# This makes the onedir bundle much larger; downloaded model weights remain in the
+# Hugging Face cache and are not copied into the installer.
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  CMD=(
+    "${CMD[@]:0:${#CMD[@]}-1}"
+    --collect-all=qwen_tts
+    --collect-all=torch
+    --collect-all=torchaudio
+    --collect-all=transformers
+    --collect-all=accelerate
+    --collect-all=tokenizers
+    --collect-all=librosa
+    --collect-all=soundfile
+    --collect-all=onnxruntime
+    --collect-all=einops
+    --collect-all=sox
+    main.py
+  )
+fi
+
 "${CMD[@]}"
 
 # --------------------------------------------------
@@ -1032,4 +1139,9 @@ echo " [OK] Native FLAC support"
 echo " [OK] AI operation history"
 echo " [OK] Current Web App UI"
 echo " [OK] Embedded Web App static assets"
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  echo " [OK] Qwen3-TTS runtime bundled (weights download on first launch)"
+else
+  echo " [INFO] Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
+fi
 echo

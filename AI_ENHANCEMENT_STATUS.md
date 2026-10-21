@@ -123,3 +123,14 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - Speech generation is local after the model weights are downloaded. It does not call OpenAI's paid TTS endpoint. Microphone transcription is unchanged and still sends captured audio to Google Web Speech; this change only localizes speech synthesis.
 - If Qwen is not installed, the application remains usable and shows installation guidance. System speech remains available as a fallback. Core dependencies are not changed.
 - GitHub Actions on Python 3.12: focused voice/security/ops tests **38 passed, 1 skipped**; full suite **183 passed, 2 skipped**; 2 warnings. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39675318006. The real Qwen model was not downloaded or loaded in CI; model inference still needs verification on the target machine.
+
+
+## Optional Qwen3-TTS packaging support in installers (2026-10-22)
+
+- [x] Updated `installer/installer.sh` to offer an optional Qwen3-TTS build. `KUBEDOCK_ENABLE_QWEN_TTS=1` enables it for interactive or automated builds; non-interactive installs default to the lightweight build.
+- [x] An opted-in macOS build selects Homebrew Python 3.12; Linux and Git Bash/Windows shell builds require Python 3.12. This preserves the existing Python 3.14 default for standard macOS builds.
+- [x] Installs and import-verifies `requirements-qwen-tts.txt` only when selected, then uses PyInstaller collection flags for Qwen, PyTorch, Transformers, and their runtime dependencies. Model weights are downloaded on first launch and are not embedded in the bundle.
+- [x] Updated `installer/installer-win.py` with the same opt-in choice; Qwen builds select 64-bit Python 3.12 while normal Windows builds retain the existing Python 3.13 requirement.
+- [x] Updated `installer/build_pkg.sh` to ask whether to include local Qwen voice during macOS package installation, and fixed propagation of the GUI-selected branch through `KUBEDECK_BRANCH`.
+- [x] Core requirements remain unchanged. The optional local model stack adds install time and several GB to the app bundle; it is not installed for users who choose the standard build.
+- Validation on GitHub Actions/Python 3.12: `bash -n installer/installer.sh`, `bash -n installer/build_pkg.sh`, and `python -m py_compile installer/installer-win.py` passed; full regression suite **183 passed, 2 skipped** (2 warnings). Run: https://github.com/HareeshGT/KubeDock/actions/runs/39677687192. Qwen model weights/inference are not loaded in CI and still need validation on the target machine.

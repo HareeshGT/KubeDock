@@ -9,7 +9,7 @@ from pathlib import Path
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
 ICON = "KubeDock.ico"
-BUILD_ID = "WINDOWS-PYAUDIO-FIX-2026-09-20-R3"
+BUILD_ID = "WINDOWS-PYAUDIO-QWEN-OPTION-2026-10-22-R1"
 RECOMMENDED_PYTHON = "3.13"
 
 
@@ -55,6 +55,19 @@ def ensure_admin():
         relaunch_as_admin()
         raise SystemExit(0)
 
+def choose_qwen_tts() -> bool:
+    """Opt into the large local Qwen runtime via prompt or environment variable."""
+    value = os.environ.get("KUBEDOCK_ENABLE_QWEN_TTS", "").strip().lower()
+    if value in {"1", "y", "yes", "true", "on"}:
+        return True
+    if value in {"0", "n", "no", "false", "off"}:
+        return False
+    if not sys.stdin.isatty():
+        print("Non-interactive install: skipping optional Qwen3-TTS. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to include it.")
+        return False
+    answer = input("Include local Qwen3-TTS voice support? This adds several GB to the app build [y/N]: ").strip().lower()
+    return answer in {"y", "yes"}
+
 def run(cmd, cwd=None, check=True):
     print("\n>", " ".join(map(str, cmd)))
     return subprocess.run(cmd, cwd=cwd, check=check)
@@ -67,7 +80,7 @@ def python_version(python):
     ).strip()
 
 
-def find_python():
+def find_python(include_qwen: bool = False):
     """Find a real 64-bit CPython supported by the Windows PyAudio build.
 
     This intentionally DOES NOT accept Python 3.14. The project requirements can
@@ -79,10 +92,14 @@ def find_python():
     candidates = []
 
     if py_launcher:
-        # Explicit architecture suffix avoids accidentally selecting a 32-bit build.
-        candidates.extend([(py_launcher, "-3.13-64"), (py_launcher, "-3.12-64"), (py_launcher, "-3.11-64")])
-        # Fallback for launchers that do not accept the -64 suffix.
-        candidates.extend([(py_launcher, "-3.13"), (py_launcher, "-3.12"), (py_launcher, "-3.11")])
+        # Qwen model inference currently uses the conservative Python 3.12 environment.
+        if include_qwen:
+            candidates.extend([(py_launcher, "-3.12-64"), (py_launcher, "-3.12")])
+        else:
+            # Explicit architecture suffix avoids accidentally selecting a 32-bit build.
+            candidates.extend([(py_launcher, "-3.13-64"), (py_launcher, "-3.12-64"), (py_launcher, "-3.11-64")])
+            # Fallback for launchers that do not accept the -64 suffix.
+            candidates.extend([(py_launcher, "-3.13"), (py_launcher, "-3.12"), (py_launcher, "-3.11")])
 
     # VIRTUAL_ENV/PATH candidates are checked only AFTER exact launcher selections.
     # This prevents an activated Python 3.14 environment from being selected.
@@ -130,11 +147,16 @@ def find_python():
 
             print(f"Candidate Python: {p} | version={v} | bits={bits}")
 
-            if bits == "64" and v in {"3.13", "3.12", "3.11"}:
+            if bits == "64" and ((include_qwen and v == "3.12") or (not include_qwen and v in {"3.13", "3.12", "3.11"})):
                 return p
         except Exception:
             continue
 
+    if include_qwen:
+        raise RuntimeError(
+            "Qwen3-TTS packaging requires an installed 64-bit Python 3.12. "
+            "Install Python 3.12 and verify it with 'py --list', or rerun without Qwen support."
+        )
     raise RuntimeError(
         "SUPPORTED PYTHON NOT FOUND. KubeDock Windows installation requires "
         "64-bit Python 3.13 (preferred), 3.12, or 3.11. Python 3.14 is intentionally "
@@ -182,7 +204,7 @@ def choose_branch(branches):
         print("Invalid selection.")
 
 
-def install_requirements(python, repo):
+def install_requirements(python, repo, include_qwen: bool = False):
     req = Path(repo) / "requirements.txt"
     if not req.exists():
         raise RuntimeError(f"requirements.txt not found: {req}")
@@ -220,14 +242,26 @@ def install_requirements(python, repo):
     print("\nInstalling PyAudio as a binary wheel only...")
     run([python, "-m", "pip", "install", "--only-binary=:all:", "PyAudio==0.2.14"])
 
+    if include_qwen:
+        qwen_req = Path(repo) / "requirements-qwen-tts.txt"
+        if not qwen_req.is_file():
+            raise RuntimeError("The selected branch does not include requirements-qwen-tts.txt.")
+        print("\nInstalling optional local Qwen3-TTS runtime. This can download several GB of Python packages.")
+        run([python, "-m", "pip", "install", "-r", str(qwen_req)])
+        # Fail before PyInstaller if the Qwen package or the pinned Transformers
+        # compatibility stack cannot actually import in this Python environment.
+        run([python, "-c", "import torch; from qwen_tts import Qwen3TTSModel; print('[OK] Qwen3-TTS import; PyTorch', torch.__version__)"])
 
-def verify(python):
+
+def verify(python, include_qwen: bool = False):
     code = (
         "import importlib; "
         "mods=['PyQt5','paramiko','speech_recognition','pyaudio','PyInstaller']; "
         "[print('[OK]', m) or importlib.import_module(m) for m in mods]"
     )
     run([python, "-c", code])
+    if include_qwen:
+        run([python, "-c", "import torch; from qwen_tts import Qwen3TTSModel; print('[OK] Qwen3-TTS runtime; PyTorch', torch.__version__)"])
 
 
 def sync_webapp(repo):
@@ -254,7 +288,7 @@ def sync_webapp(repo):
     print("[OK] Web UI fallback synchronized")
 
 
-def build(python, repo):
+def build(python, repo, include_qwen: bool = False):
     shutil.rmtree(Path(repo) / "build", ignore_errors=True)
     shutil.rmtree(Path(repo) / "dist" / APP, ignore_errors=True)
     (Path(repo) / f"{APP}.spec").unlink(missing_ok=True)
@@ -282,6 +316,21 @@ def build(python, repo):
         "webapp/static;webapp/static",
         "main.py",
     ]
+
+    if include_qwen:
+        cmd[-1:-1] = [
+            "--collect-all=qwen_tts",
+            "--collect-all=torch",
+            "--collect-all=torchaudio",
+            "--collect-all=transformers",
+            "--collect-all=accelerate",
+            "--collect-all=tokenizers",
+            "--collect-all=librosa",
+            "--collect-all=soundfile",
+            "--collect-all=onnxruntime",
+            "--collect-all=einops",
+            "--collect-all=sox",
+        ]
 
     icon = Path(repo) / ICON
     if icon.exists():
@@ -409,12 +458,19 @@ def main():
         raise RuntimeError("This installer is Windows-only. Do not run it inside WSL.")
 
     ensure_admin()
+    include_qwen = choose_qwen_tts()
 
-    python = find_python()
+    python = find_python(include_qwen=include_qwen)
     selected = python_version(python)
     print("\nFINAL PYTHON SELECTED:", python)
     print("FINAL PYTHON VERSION:", selected)
-    if selected != RECOMMENDED_PYTHON:
+    expected_python = "3.12" if include_qwen else RECOMMENDED_PYTHON
+    if selected != expected_python:
+        if include_qwen:
+            raise RuntimeError(
+                f"The Qwen-enabled installer selected Python {selected}. Local Qwen3-TTS builds require 64-bit Python 3.12. "
+                "Install/use Python 3.12 or rerun without Qwen support."
+            )
         raise RuntimeError(
             f"The installer selected Python {selected}. This Windows installer requires "
             "Python 3.13 to guarantee the PyAudio 0.2.14 wheel. Please install/use 64-bit Python 3.13."
@@ -429,10 +485,10 @@ def main():
 
     try:
         run(["git", "clone", "--branch", branch, "--single-branch", REPO, str(repo)])
-        install_requirements(python, repo)
-        verify(python)
+        install_requirements(python, repo, include_qwen=include_qwen)
+        verify(python, include_qwen=include_qwen)
         sync_webapp(repo)
-        output = build(python, repo)
+        output = build(python, repo, include_qwen=include_qwen)
 
         destination = install_application(output)
 
@@ -441,6 +497,9 @@ def main():
         print("==========================================")
         print("Installed to:", destination)
         print("Executable:", destination / "KubeDock.exe")
+        print("Qwen3-TTS local voice included:", "YES" if include_qwen else "NO (default lightweight build)")
+        if include_qwen:
+            print("Note: Qwen model weights download on first launch; model weights are not embedded in the installer.")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
