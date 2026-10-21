@@ -137,8 +137,9 @@ class K8sAIOpsVoiceMixin:
             self._narrator.speaking_finished.connect(self._on_narration_phrase_finished)
             self._narrator.idle.connect(self._on_narrator_idle)
             self._narrator.start()
+        styled_text = text if force else personalize_spoken_phrase(text, self._personality)
         self._narrator.speak(
-            text,
+            styled_text,
             rate=self._narrator_rate(),
             volume=self._voice_volume / 100.0,
             voice_id=self._voice_id,
