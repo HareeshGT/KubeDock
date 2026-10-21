@@ -136,7 +136,12 @@ class K8sAIOpsVoiceMixin:
             self._narrator.speaking_finished.connect(self._on_narration_phrase_finished)
             self._narrator.idle.connect(self._on_narrator_idle)
             self._narrator.start()
-        self._narrator.speak(text)
+        self._narrator.speak(
+            text,
+            rate=self._narrator_rate(),
+            volume=self._voice_volume / 100.0,
+            voice_id=self._voice_id,
+        )
 
     def _preview_personality_voice(self):
         if self._busy:
@@ -193,6 +198,7 @@ class K8sAIOpsVoiceMixin:
             return
         self._voice_error_occurred = False
         self._voice_recording = True
+        self.voice_btn.setEnabled(True)
         self._set_voice_state("LISTENING")
         self.voice_btn.setText("⏹ Stop Voice")
         self.voice_btn.setToolTip("Stop capture and transcribe this utterance. Ctrl+Shift+Space")
@@ -402,6 +408,8 @@ class K8sAIOpsVoiceMixin:
         self.request_input.setText(request)
         self._set_voice_state("THINKING")
         self._submit()
+        if not self._busy:
+            self._schedule_continuous_voice()
     def _interrupt_and_listen(self):
         if not _VOICE_AVAILABLE:
             QMessageBox.information(self, "Voice Input Unavailable", "Install PyAudio and SpeechRecognition to use voice input.")
