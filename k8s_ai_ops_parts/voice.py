@@ -1,3 +1,4 @@
+import time
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
