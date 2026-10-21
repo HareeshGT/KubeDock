@@ -9,7 +9,7 @@ from pathlib import Path
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
 ICON = "KubeDock.ico"
-BUILD_ID = "WINDOWS-PYAUDIO-FIX-2026-09-20-R3"
+BUILD_ID = "WINDOWS-PYAUDIO-QWEN-OPTION-2026-10-22-R1"
 RECOMMENDED_PYTHON = "3.13"
 
 
@@ -54,6 +54,19 @@ def ensure_admin():
         print("Requesting Windows UAC elevation...\n")
         relaunch_as_admin()
         raise SystemExit(0)
+
+def choose_qwen_tts() -> bool:
+    """Opt into the large local Qwen runtime via prompt or environment variable."""
+    value = os.environ.get("KUBEDOCK_ENABLE_QWEN_TTS", "").strip().lower()
+    if value in {"1", "y", "yes", "true", "on"}:
+        return True
+    if value in {"0", "n", "no", "false", "off"}:
+        return False
+    if not sys.stdin.isatty():
+        print("Non-interactive install: skipping optional Qwen3-TTS. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to include it.")
+        return False
+    answer = input("Include local Qwen3-TTS voice support? This adds several GB to the app build [y/N]: ").strip().lower()
+    return answer in {"y", "yes"}
 
 def run(cmd, cwd=None, check=True):
     print("\n>", " ".join(map(str, cmd)))
@@ -445,12 +458,19 @@ def main():
         raise RuntimeError("This installer is Windows-only. Do not run it inside WSL.")
 
     ensure_admin()
+    include_qwen = choose_qwen_tts()
 
-    python = find_python()
+    python = find_python(include_qwen=include_qwen)
     selected = python_version(python)
     print("\nFINAL PYTHON SELECTED:", python)
     print("FINAL PYTHON VERSION:", selected)
-    if selected != RECOMMENDED_PYTHON:
+    expected_python = "3.12" if include_qwen else RECOMMENDED_PYTHON
+    if selected != expected_python:
+        if include_qwen:
+            raise RuntimeError(
+                f"The Qwen-enabled installer selected Python {selected}. Local Qwen3-TTS builds require 64-bit Python 3.12. "
+                "Install/use Python 3.12 or rerun without Qwen support."
+            )
         raise RuntimeError(
             f"The installer selected Python {selected}. This Windows installer requires "
             "Python 3.13 to guarantee the PyAudio 0.2.14 wheel. Please install/use 64-bit Python 3.13."
@@ -465,10 +485,10 @@ def main():
 
     try:
         run(["git", "clone", "--branch", branch, "--single-branch", REPO, str(repo)])
-        install_requirements(python, repo)
-        verify(python)
+        install_requirements(python, repo, include_qwen=include_qwen)
+        verify(python, include_qwen=include_qwen)
         sync_webapp(repo)
-        output = build(python, repo)
+        output = build(python, repo, include_qwen=include_qwen)
 
         destination = install_application(output)
 
@@ -477,6 +497,9 @@ def main():
         print("==========================================")
         print("Installed to:", destination)
         print("Executable:", destination / "KubeDock.exe")
+        print("Qwen3-TTS local voice included:", "YES" if include_qwen else "NO (default lightweight build)")
+        if include_qwen:
+            print("Note: Qwen model weights download on first launch; model weights are not embedded in the installer.")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
