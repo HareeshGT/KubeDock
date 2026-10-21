@@ -294,7 +294,7 @@ def get_neural_voice_profile(personality: str = None, pace: str = "natural") -> 
   elif pace_key == "brisk":
     pace_instruction = "Deliver at a brisk, energetic pace while keeping every word clearly intelligible."
   else:
-    pace_instruction = "Deliver at a natural conversational pace with clean, comfortable pauses."
+    pace_instruction = "Keep this persona’s default speaking pace, use natural pauses, and maintain clear articulation."
   profile["instructions"] = str(profile["instructions"]) + " " + pace_instruction
   return profile
 
