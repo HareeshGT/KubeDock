@@ -1,4 +1,6 @@
+import io
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import ai_assist
@@ -39,6 +41,50 @@ class AIContextSecurityTests(unittest.TestCase):
         self.assertNotIn("super-secret-password", prompt)
         self.assertNotIn("abcdefghijklmnopqrstuvwxyz123456", prompt)
         self.assertNotIn("super-secret-token", prompt)
+
+    def test_provider_retries_transient_server_error_once(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size=-1):
+                return b'{"choices":[{"message":{"content":"Recovered"},"finish_reason":"stop"}]}'
+
+        transient = urllib.error.HTTPError(
+            "https://api.mistral.ai/v1/chat/completions",
+            503, "Service Unavailable", {}, io.BytesIO(b'{"error":{"message":"temporary"}}'),
+        )
+        with patch("ai_assist.time.sleep") as sleep, patch(
+            "ai_assist.urllib.request.urlopen",
+            side_effect=[transient, Response()],
+        ) as opened:
+            result, error = ai_assist._call_provider(
+                "mistral", "test-api-key-123456789", "mistral-small-latest",
+                "simple test prompt",
+            )
+        self.assertEqual(result, "Recovered")
+        self.assertIsNone(error)
+        self.assertEqual(opened.call_count, 2)
+        sleep.assert_called_once_with(0.25)
+
+    def test_provider_does_not_retry_rate_limit(self):
+        rate_limited = urllib.error.HTTPError(
+            "https://api.mistral.ai/v1/chat/completions",
+            429, "Too Many Requests", {}, io.BytesIO(b'{"error":{"message":"slow down"}}'),
+        )
+        with patch(
+            "ai_assist.urllib.request.urlopen", side_effect=rate_limited
+        ) as opened:
+            result, error = ai_assist._call_provider(
+                "mistral", "test-api-key-123456789", "mistral-small-latest",
+                "simple test prompt",
+            )
+        self.assertIsNone(result)
+        self.assertIn("Rate limited", error)
+        opened.assert_called_once()
 
     def test_provider_response_body_is_bounded(self):
         class OversizedResponse:
