@@ -275,6 +275,7 @@ class LogViewerDialog(QDialog):
 
   def _on_explain_finished(self):
     self._ai_worker = None
+    self._pending_ai_explain = None
     self.explain_btn.setEnabled(True)
     self.explain_btn.setText(" Analyze with AI")
 
