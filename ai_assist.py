@@ -757,9 +757,9 @@ def _build_prompt(
         _redact_sensitive_text(resource_context), limit=4_000
     )
 
-    where = f"pod \`{pod}\` in namespace \`{namespace or '(unknown)'}\`"
+    where = f"pod `{pod}` in namespace `{namespace or '(unknown)'}`"
     if container:
-        where += f" (container \`{container}\`)"
+        where += f" (container `{container}`)"
 
     if resource_context:
         resource_evidence = _wrap("resource_evidence", resource_context)
