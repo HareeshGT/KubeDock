@@ -137,13 +137,14 @@ class K8sAIOpsUIMixin:
         examples.setWordWrap(True)
         examples.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
         root.addWidget(examples)
+        initial_voice_hint = {
+            "openai": "OpenAI neural voice selected · API usage may incur charges. ",
+            "qwen": "Qwen3-TTS local voice selected · no per-utterance API fee; first use downloads model weights. ",
+            "system": "Using the local system voice. ",
+        }.get(self._voice_engine, "Using the local system voice. ")
         self.voice_hint_lbl = QLabel(
-            (
-                'Neural voice selected · OpenAI API usage may incur charges. '
-                if self._voice_engine == 'openai'
-                else 'Using the local system voice. For a more expressive cinematic assistant voice, select Neural · OpenAI and configure an OpenAI key under Settings → AI. '
-            )
-            + 'Microphone transcription uses Google Web Speech; raw recordings are not saved by KubeDock.'
+            initial_voice_hint
+            + "Microphone transcription uses Google Web Speech; raw recordings are not saved by KubeDock."
         )
         self.voice_hint_lbl.setWordWrap(True)
         self.voice_hint_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 10px;")
@@ -221,16 +222,32 @@ class K8sAIOpsUIMixin:
         self.voice_engine_combo = QComboBox()
         self.voice_engine_combo.setFixedWidth(175)
         self.voice_engine_combo.addItem("Neural · OpenAI", "openai")
+        self.voice_engine_combo.addItem("Qwen3-TTS · Local", "qwen")
         self.voice_engine_combo.addItem("System · Offline", "system")
         engine_idx = self.voice_engine_combo.findData(self._voice_engine)
         self.voice_engine_combo.setCurrentIndex(engine_idx if engine_idx >= 0 else 1)
-        self.voice_engine_combo.setToolTip("Neural voice uses your OpenAI API key and may incur API usage charges. System voice works locally.")
+        self.voice_engine_combo.setToolTip("OpenAI: paid neural TTS. Qwen3-TTS: locally generated speech with no per-use API fee (optional model download). System: offline OS voice.")
         if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
             item = self.voice_engine_combo.model().item(0)
             if item is not None:
                 item.setEnabled(False)
         self.voice_engine_combo.currentIndexChanged.connect(self._on_voice_engine_changed)
         voice_settings_row.addWidget(self.voice_engine_combo)
+
+        self.qwen_model_combo = QComboBox()
+        self.qwen_model_combo.setFixedWidth(190)
+        self.qwen_model_combo.addItem("Voice Design · 1.7B", "voice_design")
+        self.qwen_model_combo.addItem("Lower memory · 0.6B", "custom_voice")
+        qwen_idx = self.qwen_model_combo.findData(self._qwen_tts_model)
+        self.qwen_model_combo.setCurrentIndex(qwen_idx if qwen_idx >= 0 else 0)
+        self.qwen_model_combo.setToolTip(
+            "1.7B provides custom voice design for each persona and uses more memory. "
+            "0.6B is lighter and uses preset speaker timbres. Model weights download on first use."
+        )
+        self.qwen_model_combo.currentIndexChanged.connect(self._on_qwen_model_changed)
+        self.qwen_model_combo.setVisible(self._voice_engine == "qwen")
+        voice_settings_row.addWidget(self.qwen_model_combo)
+
         voice_settings_row.addWidget(QLabel("Persona"))
         self.personality_combo = QComboBox()
         self.personality_combo.setFixedWidth(178)
@@ -300,7 +317,7 @@ class K8sAIOpsUIMixin:
         self.voice_volume_slider.setRange(0, 100)
         self.voice_volume_slider.setValue(self._voice_volume)
         self.voice_volume_slider.setFixedWidth(75)
-        self.voice_volume_slider.setToolTip("System voice volume")
+        self.voice_volume_slider.setToolTip("Speech playback volume")
         self.voice_volume_slider.valueChanged.connect(self._on_voice_volume_changed)
         self.voice_volume_slider.setEnabled(self._voice_engine == "openai" or _TTS_AVAILABLE)
         voice_settings_row2.addWidget(self.voice_volume_slider)
