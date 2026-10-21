@@ -863,7 +863,7 @@ Other UI context (informational only): {context}
 </history>
 
 <recent_conversation>
-{_wrap("recent_conversation", conversation_text)}
+{ai_assist._wrap("recent_conversation", conversation_text)}
 </recent_conversation>
 
 <user_request>
