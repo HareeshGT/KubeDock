@@ -60,6 +60,7 @@ ALLOWED_ACTIONS = {
   "get",
   "describe",
   "rollout_status",
+  "logs",
 }
 
 ALLOWED_RESOURCES = {
@@ -752,7 +753,7 @@ OUTPUT FORMAT
 
 ACTIONS AND RESOURCES
 Use lowercase, singular values from these lists exactly.
-action: scale | restart | delete | get | describe | rollout_status
+action: scale | restart | delete | get | describe | rollout_status | logs
 resource: deployment | statefulset | daemonset | pod | service | ingress | configmap | secret | job | cronjob | hpa | pvc | pv
 
 Which resources each action accepts:
@@ -760,11 +761,14 @@ Which resources each action accepts:
 - restart: deployment, statefulset, daemonset
 - delete: pod, deployment, statefulset, daemonset, service, ingress, configmap, secret, job, cronjob, hpa, pvc (NOT pv)
 - get, describe: any listed resource
+- logs: pod only
 - rollout_status: deployment, statefulset, daemonset
+- logs: pod only; requires an explicit namespace or one unambiguous target resolved from conversation/history
 
 If the request needs a combination not listed above, return unsupported with a short, helpful reason. For example, for "restart pod web" say that pods cannot be restarted directly and suggest restarting the owning deployment or deleting the pod.
 - Requests to inspect the live environment of a running container (for example, "show the actual environment variables inside pod X") are not supported by this operation set. Return unsupported and explain that `get pod` shows Kubernetes pod configuration, not necessarily the process environment inside the running container. Do not pretend a ConfigMap/Secret value or pod spec proves what a running process currently sees.
-- Do not convert requests to inspect logs, execute commands inside containers, or read live process state into an unrelated `get` operation. Return unsupported with a brief explanation.
+- Logs are a supported, bounded read-only pod operation. Use action `logs` for current/previous logs and never convert it into an unrelated `get`.
+- Requests to execute commands inside containers or read live process state are unsupported; do not misrepresent logs as a live process environment.
 
 Normalize aliases to the exact resource value:
 deploy/deployments -> deployment; sts -> statefulset; ds -> daemonset; po/pods -> pod; svc/services -> service; ing -> ingress; cm -> configmap; secrets -> secret; cj -> cronjob; autoscaler/horizontalpodautoscaler -> hpa; persistent volume claim -> pvc; persistent volume -> pv.
@@ -827,6 +831,10 @@ Relative scale up by 2 (use a negative delta to scale down):
 {{"action":"scale","resource":"deployment","name":"my-app","namespace":"test-ns","mode":"relative","delta":2}}
 Restart:
 {{"action":"restart","resource":"deployment","name":"my-app","namespace":"test-ns"}}
+Current pod logs:
+{{"action":"logs","resource":"pod","name":"my-app-123","namespace":"test-ns","previous":false}}
+Previous container logs:
+{{"action":"logs","resource":"pod","name":"my-app-123","namespace":"test-ns","previous":true}}
 Read with no namespace given (searches all namespaces):
 {{"action":"get","resource":"deployment","name":"my-app","namespace":""}}
 Describe:
@@ -1615,6 +1623,20 @@ def validate_action(data: dict):
       "replicas": replicas,
     }
 
+  if action == "logs":
+    if resource != "pod":
+      raise ValueError("Container logs can only be read from a pod.")
+    if not namespace:
+      raise ValueError("A namespace is required to retrieve pod logs.")
+    previous_raw = data.get("previous", False)
+    previous = previous_raw is True or str(previous_raw).strip().lower() in {"true", "yes", "1"}
+    result["previous"] = previous
+    container = str(data.get("container", "") or "").strip()
+    if container:
+      if not re.fullmatch(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?", container, flags=re.IGNORECASE):
+        raise ValueError(f"Invalid container name returned by AI: {container}")
+      result["container"] = container
+
   if action == "restart" and resource not in RESTART_RESOURCES:
     raise ValueError(f"Cannot restart Kubernetes resource type: {resource}")
 
@@ -1866,6 +1888,9 @@ def operation_description(action: dict) -> str:
       f'Check rollout status of {resource} "{name}" '
       f'in namespace "{namespace or "all namespaces"}"'
     )
+  if operation == "logs":
+    stream = "previous container" if action.get("previous") else "current container"
+    return f'Retrieve bounded logs from pod "{name}" in namespace "{namespace}" ({stream})'
   return f"{operation} {resource}/{name}"
 
 
@@ -1910,6 +1935,8 @@ def _spoken_start_phrase(action: dict) -> str:
     return f"Describing {resource} {name}."
   if operation == "rollout_status":
     return f"Checking rollout status of {resource} {name}."
+  if operation == "logs":
+    return f"Retrieving {'previous' if action.get('previous') else 'current'} logs for pod {name}."
   return f"Running {operation} on {resource} {name}."
 
 
@@ -1931,6 +1958,8 @@ def _spoken_done_phrase(action: dict, success: bool) -> str:
     verb = "Describe"
   elif operation == "rollout_status":
     verb = "Rollout status check"
+  elif operation == "logs":
+    verb = "Log retrieval"
   else:
     verb = "Operation"
   return f"{verb} completed." if success else f"{verb} failed."
