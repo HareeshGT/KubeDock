@@ -151,7 +151,7 @@ class K8sAIOpsOperationsMixin:
             self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
             if followup.get('clarify'):
                 self._write_info('\n' + followup['clarify'])
-                self._speak('I need more information to do that.')
+                self._speak(action.get('reason') or 'I need more information to do that.')
                 self.request_input.setFocus()
                 return
             self._write_info('\n' + followup['note'])
@@ -197,7 +197,7 @@ class K8sAIOpsOperationsMixin:
             return
         if action['kind'] == 'unsupported':
             self._write_error('\n' + action['reason'])
-            self._speak("That operation isn't supported.")
+            self._speak(action.get('reason') or "That operation isn't supported.")
             return
         if action.get('action') == 'get' and (action.get('key') or action.get('keys')) and (not action.get('namespace')):
             reason = f"Please specify the Kubernetes namespace to read keys from this {action.get('resource')}."
