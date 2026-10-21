@@ -141,7 +141,7 @@ NEURAL_VOICE_PROFILES = {
   "friday": {
     "voice": "coral",
     "speed": 1.02,
-    "instructions": "Use an original, warm, feminine-presenting assistant voice with lively but controlled intonation and a natural, confident conversational cadence. Be agile, direct, friendly, lightly playful, and reassuring without sounding bubbly or childish. A very subtle Irish-English lilt is acceptable, but keep pronunciation clear and understated. This is an original voice direction, not an imitation of a particular actor or fictional character. Speak the supplied text verbatim without adding commentary.",
+    "instructions": "Use an original, warm, feminine-presenting assistant voice with lively but controlled intonation and a natural, confident conversational cadence. Be agile, direct, friendly, lightly playful, and reassuring without sounding bubbly or childish. Use a very subtle Irish lilt, but keep pronunciation clear and understated. This is an original voice direction, not an imitation of a particular actor or fictional character. Speak the supplied text verbatim without adding commentary.",
   },
   "edith": {
     "voice": "sage",
