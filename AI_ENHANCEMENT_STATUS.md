@@ -141,4 +141,4 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - [x] Fixed macOS Qwen-enabled setup when Homebrew installs Python 3.12 with a versioned `python3.12` executable rather than the unversioned `python3` path.
 - [x] Resolve the Homebrew formula prefix and check versioned/unversioned executables in the formula bin, Homebrew bin, and libexec bin directories; verify the selected interpreter is exactly Python 3.12 or 3.14 as configured before proceeding.
 - [x] Keep Python 3.14 as the default lightweight macOS build and use Python 3.12 only for opt-in Qwen builds.
-- Validation for this patch: shell syntax and the existing regression suite will be recorded after CI.
+- Validation on GitHub Actions/Python 3.12: `bash -n installer/installer.sh`, `bash -n installer/build_pkg.sh`, and `python -m py_compile installer/installer-win.py` passed; versioned Python 3.12 candidate-resolution check passed; full suite **183 passed, 2 skipped, 2 warnings**. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39681782972.
