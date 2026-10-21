@@ -25,7 +25,7 @@ from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
-from .core import _NarrationThread, _OpenAINeuralTTSWorker, _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE
+from .core import _NarrationThread, _OpenAINeuralTTSWorker, _Qwen3TTSWorker, _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE, _QWEN_TTS_AVAILABLE
 
 
 class K8sAIOpsVoiceMixin:
@@ -49,43 +49,54 @@ class K8sAIOpsVoiceMixin:
         self.voice_combo.blockSignals(False)
 
     def _on_voice_engine_changed(self, index: int):
-        engine = str(self.voice_engine_combo.itemData(index) or "system").lower()
-        requested_engine = engine
-        missing_openai_key = False
+        requested = str(self.voice_engine_combo.itemData(index) or "system").lower()
+        engine = requested
+        preserve_openai_choice = False
         if engine == "openai":
             if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
-                QMessageBox.information(self, "Neural Voice Unavailable", "Qt Multimedia audio playback is unavailable in this KubeDock build. Use a build that includes PyQt5.QtMultimedia or select System · Offline.")
+                QMessageBox.information(self, "OpenAI Voice Unavailable", "Qt audio playback is unavailable in this KubeDock build. Select Qwen3-TTS · Local or System · Offline instead.")
                 engine = "system"
             elif not ai_assist.get_api_key("openai"):
-                QMessageBox.information(self, "OpenAI API Key Required", "Add your OpenAI API key in Settings → AI. Your preference for Neural · OpenAI will be kept so the app can use it after the key is configured. Neural speech may incur API usage charges.")
+                QMessageBox.information(self, "OpenAI API Key Required", "Neural voice uses paid OpenAI API credits. Add a key under Settings → AI, or choose Qwen3-TTS · Local for local synthesis without per-use API charges.")
                 engine = "system"
-                missing_openai_key = True
+                preserve_openai_choice = True
+        elif engine == "qwen" and not _QT_MULTIMEDIA_AVAILABLE:
+            QMessageBox.information(self, "Qwen3-TTS Playback Unavailable", "This KubeDock build does not include Qt Multimedia audio playback.")
+            engine = "system"
         self._voice_engine = engine
-        save_voice_engine("openai" if requested_engine == "openai" and missing_openai_key else engine)
+        save_voice_engine("openai" if preserve_openai_choice else engine)
         self.voice_engine_combo.blockSignals(True)
         self.voice_engine_combo.setCurrentIndex(max(0, self.voice_engine_combo.findData(engine)))
         self.voice_engine_combo.blockSignals(False)
+        qwen_selected = engine == "qwen"
+        self.qwen_model_combo.setVisible(qwen_selected)
         self.voice_combo.setEnabled(engine == "system" and _TTS_AVAILABLE)
         self.voice_combo_label.setVisible(engine == "system")
         self.voice_combo.setVisible(engine == "system")
         self._neural_tts_failed = False
+        self._qwen_tts_failed = bool(qwen_selected and not _QWEN_TTS_AVAILABLE)
         self._stop_neural_voice(clear_queue=True)
         if self._narrator is not None:
             self._narrator.stop()
             self._narrator = None
-        if hasattr(self, "voice_hint_lbl"):
-            if engine == "openai":
-                self.voice_hint_lbl.setText("Neural TTS enabled · OpenAI gpt-4o-mini-tts. This is an original character-inspired voice direction, not an exact character/actor clone.")
-            else:
-                self.voice_hint_lbl.setText("Offline system voice enabled. Voice input sends captured speech to Google Web Speech for transcription; KubeDock does not save raw recordings.")
         if engine == "openai":
-            self._write_info("\nNeural voice enabled. OpenAI receives the text that Ops Mind speaks; audio is temporarily written to a WAV file for playback, then removed.")
-        else:
-            if missing_openai_key:
-                self._write_info("\nOffline voice is active because an OpenAI API key is not configured. The Neural · OpenAI preference is saved; add an OpenAI key under Settings → AI, then restart KubeDock or select Neural again.")
+            hint = "OpenAI neural voice selected · API usage may incur charges. This is a character-inspired voice direction, not a voice clone."
+            notice = "OpenAI neural voice enabled. Text spoken by Ops Mind is sent to OpenAI; generated audio is temporarily written to a restricted WAV file and deleted after playback."
+        elif engine == "qwen":
+            if not _QWEN_TTS_AVAILABLE:
+                hint = "Qwen3-TTS selected, but the local model package is not installed. Install requirements-qwen-tts.txt in KubeDock's Python environment, then restart."
+                notice = "Qwen3-TTS was selected, but its optional local runtime is missing. Install the optional Qwen dependencies and restart KubeDock. No OpenAI speech API requests will be made."
             else:
-                self._write_info("\nOffline system voice enabled. Speech synthesis runs locally.")
-
+                hint = "Qwen3-TTS local voice selected · no per-utterance API fee. The first use downloads model weights; speech generation runs locally."
+                notice = "Qwen3-TTS local speech enabled. First use downloads public model weights; later synthesis runs locally. No OpenAI TTS API calls are made."
+        else:
+            hint = "Offline system voice enabled. Speech synthesis runs locally."
+            notice = "Offline system voice enabled. Speech synthesis runs locally."
+        self.voice_hint_lbl.setText(hint)
+        self.voice_hint_lbl.setToolTip(notice)
+        self._write_info("\n" + notice)
+        if engine == "qwen" and not _QWEN_TTS_AVAILABLE:
+            self._write_info("\nInstall command: python -m pip install -r requirements-qwen-tts.txt (use the Python environment that launches KubeDock).")
     def _stop_neural_voice(self, clear_queue: bool = True):
         if clear_queue:
             self._neural_speech_queue.clear()
