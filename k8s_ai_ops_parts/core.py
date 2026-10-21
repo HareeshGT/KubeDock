@@ -328,6 +328,22 @@ def get_qwen_tts_model_config(model_key: str = None) -> dict:
   }
 
 
+def get_qwen_tts_install_guidance() -> str:
+  """Explain the correct Qwen setup for source runs versus PyInstaller apps."""
+  if getattr(sys, "frozen", False):
+    return (
+      "This installed KubeDock build was packaged without the Qwen3-TTS runtime. "
+      "Rebuild/reinstall KubeDock and choose 'Include Qwen3-TTS' when prompted "
+      "during installation. For a shell build, set KUBEDOCK_ENABLE_QWEN_TTS=1 "
+      "before running installer/installer.sh. The app cannot add missing Torch/Qwen "
+      "modules with pip after it has been frozen. Model weights download on first use."
+    )
+  return (
+    "Qwen3-TTS is not installed in this Python environment. From the KubeDock "
+    "repository root, run 'python -m pip install -r requirements-qwen-tts.txt' "
+    "with the same Python interpreter that launches the app, then restart KubeDock."
+  )
+
 def get_qwen_voice_profile(personality: str = None, pace: str = "natural") -> dict:
   """Original persona directions for local Qwen voice design."""
   key = str(personality or get_assistant_personality()).strip().lower()
