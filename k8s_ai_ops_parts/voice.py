@@ -146,6 +146,9 @@ class K8sAIOpsVoiceMixin:
         )
 
     def _preview_personality_voice(self):
+        if self._continuous_voice_enabled or self._voice_recording or self._voice_worker is not None:
+            self._write_info("\n Pause hands-free listening before previewing the assistant voice.")
+            return
         if self._busy:
             self._write_info("\n Wait until the current Kubernetes operation finishes before previewing a voice.")
             return
