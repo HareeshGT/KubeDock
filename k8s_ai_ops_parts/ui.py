@@ -14,15 +14,27 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QSlider,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+import os
+import tempfile
+from collections import deque
+
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QGraphicsBlurEffect
+
+try:
+    from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer
+    _QT_MULTIMEDIA_AVAILABLE = True
+except Exception:
+    QMediaContent = None
+    QMediaPlayer = None
+    _QT_MULTIMEDIA_AVAILABLE = False
 
 from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
-from .core import _TTS_AVAILABLE, _VOICE_AVAILABLE
+from .core import _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE
 
 
 class K8sAIOpsUIMixin:
@@ -41,12 +53,29 @@ class K8sAIOpsUIMixin:
         self._voice_recording = False
         self._narrator = None
         self._personality = get_assistant_personality()
-        self._voice_feedback_enabled = _TTS_AVAILABLE and get_voice_feedback_enabled()
+        self._voice_engine = get_voice_engine()
+        if self._voice_engine == "openai" and not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
+            self._voice_engine = "system"
+        self._voice_feedback_available = bool(_TTS_AVAILABLE or (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE and ai_assist.get_api_key('openai')))
+        self._voice_feedback_enabled = bool(self._voice_feedback_available and get_voice_feedback_enabled())
         self._voice_id = get_voice_id(self._personality) if _TTS_AVAILABLE else ''
         self._continuous_voice_enabled = bool(get_continuous_voice_enabled() and _VOICE_AVAILABLE)
         self._voice_silence_seconds = get_voice_silence_seconds()
         self._voice_pace = get_voice_pace()
         self._voice_volume = get_voice_volume()
+        self._neural_speech_queue = deque()
+        self._neural_worker = None
+        self._neural_current_text = ''
+        self._neural_temp_file = None
+        self._neural_tts_failed = False
+        self._neural_playback_active = False
+        self._neural_audio_player = QMediaPlayer(self) if _QT_MULTIMEDIA_AVAILABLE else None
+        self._neural_end_of_media_status = QMediaPlayer.EndOfMedia if _QT_MULTIMEDIA_AVAILABLE else None
+        self._neural_playing_state = QMediaPlayer.PlayingState if _QT_MULTIMEDIA_AVAILABLE else None
+        if self._neural_audio_player is not None:
+            self._neural_audio_player.mediaStatusChanged.connect(self._on_neural_media_status_changed)
+            self._neural_audio_player.stateChanged.connect(self._on_neural_player_state_changed)
+            self._neural_audio_player.error.connect(self._on_neural_player_error)
         self._voice_state_machine = VoiceConversationStateMachine()
         self._last_voice_transcript = ''
         self._last_voice_timestamp = 0.0
@@ -97,7 +126,10 @@ class K8sAIOpsUIMixin:
         examples.setWordWrap(True)
         examples.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
         root.addWidget(examples)
-        self.voice_hint_lbl = QLabel('Voice: Google Web Speech transcription · audio is sent to Google; KubeDock does not save raw recordings.')
+        self.voice_hint_lbl = QLabel(
+            ('Neural voice: OpenAI Realtime · system voice fallback available. ' if self._voice_engine == 'openai' else 'Offline system voice enabled. ')
+            + 'Voice input uses Google Web Speech for transcription; raw microphone recordings are not saved by KubeDock.'
+        )
         self.voice_hint_lbl.setWordWrap(True)
         self.voice_hint_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 10px;")
         self.voice_hint_lbl.setToolTip('Voice input sends the captured utterance to Google Web Speech for transcription. KubeDock does not save raw audio recordings.')
@@ -133,8 +165,8 @@ class K8sAIOpsUIMixin:
         self.speaker_btn.setFixedHeight(34)
         self.speaker_btn.setCheckable(True)
         self.speaker_btn.setChecked(self._voice_feedback_enabled)
-        self.speaker_btn.setEnabled(_TTS_AVAILABLE)
-        self.speaker_btn.setToolTip("Speak Ops Mind's step-by-step status aloud as it works" if _TTS_AVAILABLE else 'Voice narration needs the pyttsx3 package (pip install pyttsx3)')
+        self.speaker_btn.setEnabled(self._voice_feedback_available)
+        self.speaker_btn.setToolTip("Enable the selected AI-generated neural voice or the offline system voice" if self._voice_feedback_available else 'Install websocket-client and add an OpenAI API key, or install pyttsx3 for offline voice narration.')
         self.speaker_btn.toggled.connect(self._toggle_voice_feedback)
         btn_row.addWidget(self.speaker_btn)
         self.voice_combo = QComboBox()
@@ -146,8 +178,8 @@ class K8sAIOpsUIMixin:
         self.voice_combo.currentIndexChanged.connect(self._on_voice_combo_changed)
         self.voice_test_btn = icon_button('')
         self.voice_test_btn.setFixedSize(34, 34)
-        self.voice_test_btn.setEnabled(_TTS_AVAILABLE)
-        self.voice_test_btn.setToolTip('Preview the selected voice')
+        self.voice_test_btn.setEnabled(self._voice_feedback_available)
+        self.voice_test_btn.setToolTip('Preview the selected neural or offline voice')
         self.voice_test_btn.clicked.connect(self._preview_personality_voice)
         self.voice_shortcut = QShortcut(QKeySequence('Ctrl+Shift+Space'), self)
         self.voice_shortcut.activated.connect(self._toggle_voice_recording)
@@ -170,6 +202,20 @@ class K8sAIOpsUIMixin:
         # existing SQLite-backed application settings.
         voice_settings_row = QHBoxLayout()
         voice_settings_row.setSpacing(8)
+        voice_settings_row.addWidget(QLabel("Engine"))
+        self.voice_engine_combo = QComboBox()
+        self.voice_engine_combo.setFixedWidth(145)
+        self.voice_engine_combo.addItem("Neural · OpenAI", "openai")
+        self.voice_engine_combo.addItem("System · Offline", "system")
+        engine_idx = self.voice_engine_combo.findData(self._voice_engine)
+        self.voice_engine_combo.setCurrentIndex(engine_idx if engine_idx >= 0 else 1)
+        self.voice_engine_combo.setToolTip("Neural voice uses your OpenAI API key and may incur API usage charges. System voice works locally.")
+        if not (_NEURAL_TTS_AVAILABLE and _QT_MULTIMEDIA_AVAILABLE):
+            item = self.voice_engine_combo.model().item(0)
+            if item is not None:
+                item.setEnabled(False)
+        self.voice_engine_combo.currentIndexChanged.connect(self._on_voice_engine_changed)
+        voice_settings_row.addWidget(self.voice_engine_combo)
         voice_settings_row.addWidget(QLabel("Persona"))
         self.personality_combo = QComboBox()
         self.personality_combo.setFixedWidth(150)
@@ -183,7 +229,8 @@ class K8sAIOpsUIMixin:
 
         voice_settings_row.addWidget(QLabel("Voice"))
         self.voice_combo.setFixedWidth(150)
-        self.voice_combo.setToolTip("System voice used for the selected personality")
+        self.voice_combo.setToolTip("System voice used when the offline voice engine is selected")
+        self.voice_combo.setEnabled(self._voice_engine == "system" and _TTS_AVAILABLE)
         voice_settings_row.addWidget(self.voice_combo)
         voice_settings_row.addWidget(self.voice_test_btn)
 

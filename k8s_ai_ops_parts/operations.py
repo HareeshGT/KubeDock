@@ -667,6 +667,9 @@ class K8sAIOpsOperationsMixin:
     def closeEvent(self, event):
         if getattr(self, "_restart_voice_timer", None) is not None:
             self._restart_voice_timer.stop()
+        if hasattr(self, "_stop_neural_voice"):
+            try: self._stop_neural_voice(clear_queue=True)
+            except Exception: pass
         if getattr(self, "_voice_state_machine", None) is not None:
             self._voice_state_machine.state = "CLOSED"
         if self._voice_worker is not None:

@@ -66,3 +66,19 @@ A quick review of the merged code found that resource evidence was tail-truncate
 ### Voice regression tests
 - Added tests/test_ops_mind_voice.py for voice-state transitions, VAD thresholds, duplicate transcript prevention, TTS sanitization, personality profiles/responses, bounded conversational context, and safe log command construction.
 - GitHub Actions validation on Python 3.12: focused voice/security/ops tests **27 passed**; full suite **172 passed, 1 skipped**. Two pre-existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39654258687
+
+
+## Neural JARVIS / FRIDAY / EDITH-inspired voice profiles (2026-10-22)
+
+- [x] Added an optional OpenAI Realtime audio backend using gpt-realtime-2.1-mini. It uses built-in Cedar, Coral, and Sage voices with separate delivery instructions for the three original character-inspired profiles.
+- [x] Added a Neural · OpenAI / System · Offline engine selector. Neural output reuses the OpenAI API key saved under Settings → AI; the offline pyttsx3 engine remains available as a fallback.
+- [x] Applied persona-specific tone, delivery, pace and phrasing to spoken status updates and voice previews. The profiles are inspired by cinematic AI assistants, not direct copies of any actor or exact copyrighted character voice.
+- [x] Realtime TTS runs in a background QThread. PCM output is bounded in memory, converted to WAV, played through Qt Multimedia, and written to a temporary file with restrictive permissions that is deleted after playback.
+- [x] Added fallback to the local system voice if the Realtime connection, API, or playback fails; added mocked WebSocket/WAV unit coverage that requires neither real API credentials nor audio hardware.
+- [x] Documented neural voice transport and the offline fallback in requirements.txt.
+
+### Neural voice setup and costs
+- Select Neural · OpenAI in Ops Mind, choose JARVIS, FRIDAY, or EDITH, then use the preview button. The OpenAI key must be present under Settings → AI.
+- OpenAI receives the text to be spoken, and neural audio generation can incur API usage charges. No additional voice-specific API key is required. The microphone transcription path is unchanged and still sends captured speech to Google Web Speech.
+- If neural dependencies are missing or an OpenAI request fails, Ops Mind switches to the offline system voice. Voice quality varies by generated voice and provider delivery; the profiles are character-inspired, not exact voice clones.
+- GitHub Actions validation on Python 3.12: focused voice/security/ops tests **31 passed**; full suite **176 passed, 1 skipped**. Two pre-existing SpeechRecognition deprecation warnings (`aifc`, `audioop`) remain. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39667709768

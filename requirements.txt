@@ -19,10 +19,12 @@ uvicorn[standard]>=0.29
 python-dotenv>=1.0
 keyring>=25.0
 pydantic>=2.0
+websocket-client>=1.8.0  # OpenAI Realtime neural voice transport
 
 # ── Ops Mind spoken status narration (k8s_ai_ops.py) ──
-# Offline, on-device text-to-speech — NOT a cloud/AI voice API. pyobjc is
-# only needed on macOS, where pyttsx3 speaks through NSSpeechSynthesizer.
+# websocket-client powers optional OpenAI Realtime neural voice output; the
+# app reuses the OpenAI key stored in Settings → AI. pyttsx3 remains the
+# offline/on-device fallback and uses NSSpeechSynthesizer on macOS.
 pyttsx3>=2.90
 pyobjc; sys_platform == "darwin"
 
