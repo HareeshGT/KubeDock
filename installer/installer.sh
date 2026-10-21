@@ -248,14 +248,14 @@ echo
 # into the large local PyTorch/Qwen runtime; the voice model weights download
 # on first use and are intentionally not embedded into the app bundle.
 ENABLE_QWEN_TTS="${KUBEDOCK_ENABLE_QWEN_TTS:-}"
-case "${ENABLE_QWEN_TTS,,}" in
-  1|y|yes|true|on) ENABLE_QWEN_TTS=1 ;;
-  0|n|no|false|off) ENABLE_QWEN_TTS=0 ;;
+case "$ENABLE_QWEN_TTS" in
+  1|y|Y|yes|YES|Yes|true|TRUE|True|on|ON|On) ENABLE_QWEN_TTS=1 ;;
+  0|n|N|no|NO|No|false|FALSE|False|off|OFF|Off) ENABLE_QWEN_TTS=0 ;;
   *)
     if [ -t 0 ]; then
       printf "Include local Qwen3-TTS voice support? This adds several GB to the app build [y/N]: "
       read -r QWEN_ANSWER
-      case "${QWEN_ANSWER,,}" in y|yes) ENABLE_QWEN_TTS=1 ;; *) ENABLE_QWEN_TTS=0 ;; esac
+      case "$QWEN_ANSWER" in y|Y|yes|YES|Yes) ENABLE_QWEN_TTS=1 ;; *) ENABLE_QWEN_TTS=0 ;; esac
     else
       ENABLE_QWEN_TTS=0
       echo "Non-interactive install: skipping optional Qwen3-TTS bundle. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to enable it."
