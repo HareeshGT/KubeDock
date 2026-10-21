@@ -126,7 +126,10 @@ class K8sAIOpsUIMixin:
         examples.setWordWrap(True)
         examples.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
         root.addWidget(examples)
-        self.voice_hint_lbl = QLabel('Voice: Google Web Speech transcription · audio is sent to Google; KubeDock does not save raw recordings.')
+        self.voice_hint_lbl = QLabel(
+            ('Neural voice: OpenAI Realtime · system voice fallback available. ' if self._voice_engine == 'openai' else 'Offline system voice enabled. ')
+            + 'Voice input uses Google Web Speech for transcription; raw microphone recordings are not saved by KubeDock.'
+        )
         self.voice_hint_lbl.setWordWrap(True)
         self.voice_hint_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 10px;")
         self.voice_hint_lbl.setToolTip('Voice input sends the captured utterance to Google Web Speech for transcription. KubeDock does not save raw audio recordings.')
