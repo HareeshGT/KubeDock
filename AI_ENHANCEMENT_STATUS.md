@@ -134,3 +134,11 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - [x] Updated `installer/build_pkg.sh` to ask whether to include local Qwen voice during macOS package installation, and fixed propagation of the GUI-selected branch through `KUBEDECK_BRANCH`.
 - [x] Core requirements remain unchanged. The optional local model stack adds install time and several GB to the app bundle; it is not installed for users who choose the standard build.
 - Validation on GitHub Actions/Python 3.12: `bash -n installer/installer.sh`, `bash -n installer/build_pkg.sh`, and `python -m py_compile installer/installer-win.py` passed; full regression suite **183 passed, 2 skipped** (2 warnings). Run: https://github.com/HareeshGT/KubeDock/actions/runs/39677687192. Qwen model weights/inference are not loaded in CI and still need validation on the target machine.
+
+
+## Qwen installer Homebrew Python path fix (2026-10-22)
+
+- [x] Fixed macOS Qwen-enabled setup when Homebrew installs Python 3.12 with a versioned `python3.12` executable rather than the unversioned `python3` path.
+- [x] Resolve the Homebrew formula prefix and check versioned/unversioned executables in the formula bin, Homebrew bin, and libexec bin directories; verify the selected interpreter is exactly Python 3.12 or 3.14 as configured before proceeding.
+- [x] Keep Python 3.14 as the default lightweight macOS build and use Python 3.12 only for opt-in Qwen builds.
+- Validation on GitHub Actions/Python 3.12: `bash -n installer/installer.sh`, `bash -n installer/build_pkg.sh`, and `python -m py_compile installer/installer-win.py` passed; versioned Python 3.12 candidate-resolution check passed; full suite **183 passed, 2 skipped, 2 warnings**. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39681782972.
