@@ -411,9 +411,44 @@ class K8sAIOpsOperationsMixin:
         track_worker(self._workers, worker)
         worker.start()
 
+    def _record_operation_conversation(self, action: dict, status: str, output: str = ""):
+        """Keep a short, redacted outcome for follow-ups, not raw logs or secret values."""
+        resource = str(action.get('resource') or '')
+        verb = str(action.get('action') or 'operation')
+        target = f"{resource}/{action.get('name') or '(unknown)'}"
+        namespace = str(action.get('namespace') or 'all namespaces')
+        if resource in {'secret', 'configmap'}:
+            evidence = "Resource values omitted from conversational memory for safety."
+        else:
+            evidence = ai_assist._redact_sensitive_text(str(output or '').strip())[-700:]
+        summary = f"Result: {verb} {target} in namespace {namespace} — {status}."
+        if evidence:
+            summary += f" Evidence excerpt (untrusted output): {evidence}"
+        self._remember_conversation_turn('assistant', summary)
+
     def _on_operation_result(self, action: dict, command: str, output: str, err: str, exit_code: int):
         output = (output or '').strip()
         error_text = (err or '').strip()
+        if action.get('action') == 'logs':
+            target = f"pod {action.get('name')} in namespace {action.get('namespace')}"
+            if exit_code != 0 or error_text:
+                detail = ai_assist._redact_sensitive_text(error_text or output or f"kubectl exited with code {exit_code}")[-700:]
+                self._remember_operation(action, command, 'failed', 'Log retrieval failed; raw output omitted from persistent history.')
+                self._record_operation_conversation(action, 'failed', detail)
+                self._write_error(f'\n Could not retrieve logs for {target}:\n{detail}')
+                self._speak(_spoken_done_phrase(action, success=False))
+                return
+            shown = output[-12000:]
+            if len(output) > len(shown):
+                shown = '[…earlier log lines omitted…]\n' + shown
+            safe_context = ai_assist._redact_sensitive_text(output)[-700:]
+            self.output.append(f"""<br><span style=\"color:{T['TEXT_DIM']}\">kubectl logs:</span><br><span style=\"color:{T['TEXT_PRIMARY']}\">{self._escape_html(shown).replace(chr(10), '<br>')}</span>""")
+            self._remember_operation(action, command, 'success', 'Logs retrieved; raw application output omitted from persistent history.')
+            self._record_operation_conversation(action, 'succeeded', safe_context)
+            self._write_success('\n Log retrieval completed. Raw logs are shown above and are not saved to persistent Ops Mind history.')
+            self._speak(_spoken_done_phrase(action, success=True))
+            self.operation_finished.emit()
+            return
         if action.get('action') == 'get' and action.get('keys'):
             requested = list(action['keys'])
             found, missing = ({}, [])
@@ -438,11 +473,13 @@ class K8sAIOpsOperationsMixin:
                 summary = (summary + '; ' if summary else '') + 'missing: ' + ', '.join(missing)
             if found:
                 self._remember_operation(action, command, 'success', summary)
+                self._record_operation_conversation(action, 'succeeded', summary)
                 self._write_success('\n Kubernetes operation completed successfully.')
                 self._speak(_spoken_done_phrase(action, success=True))
                 self.operation_finished.emit()
             else:
                 self._remember_operation(action, command, 'failed', summary)
+                self._record_operation_conversation(action, 'failed', summary)
                 self._speak(_spoken_done_phrase(action, success=False))
             return
         combined_lower = (output + ' ' + error_text).lower()
@@ -450,6 +487,7 @@ class K8sAIOpsOperationsMixin:
         if action.get('action') == 'get' and action.get('key') and (not resource_missing) and (exit_code != 0 or (not error_text and (not output))):
             message = 'Key not found. in resource. Check the key name and try again.'
             self._remember_operation(action, command, 'failed', message)
+            self._record_operation_conversation(action, 'failed', message)
             self._write_error(f'\n {message}')
             self._speak(_spoken_done_phrase(action, success=False))
             return
@@ -462,6 +500,7 @@ class K8sAIOpsOperationsMixin:
         if exit_code != 0 or error_text:
             combined = error_text or output or 'kubectl returned a non-zero exit code.'
             self._remember_operation(action, command, 'failed', combined)
+            self._record_operation_conversation(action, 'failed', combined)
             hint = _kubectl_failure_hint(combined)
             details = f'\n Kubernetes operation failed (exit code {exit_code}):\n{combined}'
             if hint:
@@ -473,6 +512,7 @@ class K8sAIOpsOperationsMixin:
             self._start_mutation_verification(action, command)
             return
         self._remember_operation(action, command, 'success', output)
+        self._record_operation_conversation(action, 'succeeded', output)
         self._write_success('\n Kubernetes operation completed successfully.')
         self._speak(_spoken_done_phrase(action, success=True))
         self.operation_finished.emit()
@@ -520,6 +560,7 @@ class K8sAIOpsOperationsMixin:
                 f"{(output or '').strip()}\nVerification: {detail}".strip(),
             )
             self._write_success(f'\n Kubernetes operation completed and verified: {detail}.')
+            self._record_operation_conversation(action, 'verified', detail)
             self._speak(_spoken_done_phrase(action, success=True))
             self.operation_finished.emit()
         else:
@@ -531,6 +572,7 @@ class K8sAIOpsOperationsMixin:
                 '\n The initial kubectl command returned success, but the resulting state was '
                 f'not verified: {detail}. Check the target resource before retrying.'
             )
+            self._record_operation_conversation(action, 'unverified', detail)
             self._speak(_spoken_done_phrase(action, success=False))
         self._set_busy(False)
 
