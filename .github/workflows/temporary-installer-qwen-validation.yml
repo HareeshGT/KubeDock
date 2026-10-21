@@ -22,6 +22,7 @@ jobs:
       - name: Validate installer syntax
         run: |
           bash -n installer/installer.sh
+          bash -n installer/build_pkg.sh
           python -m py_compile installer/installer-win.py
           echo "Shell and Windows Python installer syntax passed."
       - name: Install core requirements
