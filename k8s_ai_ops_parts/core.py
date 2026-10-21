@@ -786,6 +786,7 @@ NAMESPACE
 - Otherwise return an empty "namespace" value. Never silently assume the selected namespace.
 - get, describe and rollout_status with an empty namespace: the application searches all namespaces. This is correct and needs no clarification, except for key lookups (see KEYS).
 - scale, restart and delete with no namespace: first try to resolve the namespace from history as described under REFERENCES. If that is not possible, return clarification_required, because the target must be unambiguous.
+- logs requires a namespace. If omitted, resolve only an unambiguous target from recent successful history; otherwise ask which namespace.
 - "in all namespaces" on a read means an empty namespace.
 
 CHOOSING A READ ACTION
@@ -1740,6 +1741,11 @@ def build_kubectl_command(action: dict) -> str:
   if operation == "delete":
     # Destructive operations use the exact validated resource name.
     return f"{base} delete {resource} -- {shlex.quote(name)}"
+  if operation == "logs":
+    previous_flag = "--previous " if action.get("previous") else ""
+    container = str(action.get("container") or "").strip()
+    container_flag = f"-c {shlex.quote(container)} " if container else ""
+    return f"{base} logs --tail=100 {previous_flag}{container_flag}{shlex.quote(name)}"
   if operation == "get":
     keys = action.get("keys")
     if (keys or action.get("key")) and resource in KEY_VALUE_RESOURCES and not namespace:
