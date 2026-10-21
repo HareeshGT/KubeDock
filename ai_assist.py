@@ -44,6 +44,7 @@ Google's `x-goog-api-key`, OpenAI's/DeepSeek's `Authorization: Bearer`).
 
 import json
 import re
+import time
 import urllib.request
 import urllib.error
 
@@ -866,43 +867,58 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
     url, headers, body = provider["build_request"](prompt, api_key, model)
     req = urllib.request.Request(url, data=body, method="POST", headers=headers)
 
-    try:
-        with urllib.request.urlopen(req, timeout=PROVIDER_TIMEOUT_SECONDS) as resp:
-            raw_bytes = resp.read(MAX_RESPONSE_BYTES + 1)
-        if len(raw_bytes) > MAX_RESPONSE_BYTES:
-            return None, "The AI provider response exceeded the size limit and was discarded."
+    # Retry once only for transient server errors and connection failures.
+    # Do not retry 429/auth/model errors or read timeouts: the provider may
+    # already have processed a timed-out POST, so repeating can double-bill.
+    raw_bytes = None
+    for attempt in range(2):
         try:
-            data = json.loads(raw_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return None, "The AI provider returned a malformed response."
-    except urllib.error.HTTPError as e:
-        raw = e.read(MAX_ERROR_BODY_BYTES).decode("utf-8", errors="replace")
-        try:
-            detail = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            detail = raw
-        try:
-            msg = provider["parse_error"](detail, e.code)
-        except Exception:
-            msg = None
-        if not msg:
-            msg = raw.strip() or e.reason or f"HTTP {e.code}"
-        msg = _redact_sensitive_text(msg, secrets=(api_key,))
-        if e.code == 429:
-            return None, f"Rate limited by the selected AI provider (HTTP 429): {msg}"
-        if e.code in (401, 403):
-            return None, f"AI provider authentication/access error (HTTP {e.code}): {msg}"
-        return None, f"AI provider request failed (HTTP {e.code}): {msg}"
-    except (TimeoutError, urllib.error.URLError) as e:
-        reason = getattr(e, "reason", e)
-        reason = _redact_sensitive_text(str(reason), secrets=(api_key,))
-        if "timed out" in reason.lower() or isinstance(e, TimeoutError):
-            return None, "AI provider request timed out. Check connectivity and try again."
-        return None, f"Network error contacting the selected AI provider: {reason}"
-    except Exception as e:
-        safe_error = _redact_sensitive_text(str(e), secrets=(api_key,))
-        return None, f"AI provider request failed: {safe_error or type(e).__name__}"
+            with urllib.request.urlopen(req, timeout=PROVIDER_TIMEOUT_SECONDS) as resp:
+                raw_bytes = resp.read(MAX_RESPONSE_BYTES + 1)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in {500, 502, 503, 504} and attempt == 0:
+                time.sleep(0.25)
+                continue
+            raw = e.read(MAX_ERROR_BODY_BYTES).decode("utf-8", errors="replace")
+            try:
+                detail = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                detail = raw
+            try:
+                msg = provider["parse_error"](detail, e.code)
+            except Exception:
+                msg = None
+            if not msg:
+                msg = raw.strip() or e.reason or f"HTTP {e.code}"
+            msg = _redact_sensitive_text(msg, secrets=(api_key,))
+            if e.code == 429:
+                return None, f"Rate limited by the selected AI provider (HTTP 429): {msg}"
+            if e.code in (401, 403):
+                return None, f"AI provider authentication/access error (HTTP {e.code}): {msg}"
+            return None, f"AI provider request failed (HTTP {e.code}): {msg}"
+        except (TimeoutError, urllib.error.URLError) as e:
+            reason = getattr(e, "reason", e)
+            safe_reason = _redact_sensitive_text(str(reason), secrets=(api_key,))
+            is_timeout = isinstance(e, TimeoutError) or "timed out" in safe_reason.lower()
+            if attempt == 0 and not is_timeout:
+                time.sleep(0.25)
+                continue
+            if is_timeout:
+                return None, "AI provider request timed out. The request was not retried to avoid duplicate processing."
+            return None, f"Network error contacting the selected AI provider: {safe_reason}"
+        except Exception as e:
+            safe_error = _redact_sensitive_text(str(e), secrets=(api_key,))
+            return None, f"AI provider request failed: {safe_error or type(e).__name__}"
 
+    if raw_bytes is None:
+        return None, "AI provider request failed after a bounded retry."
+    if len(raw_bytes) > MAX_RESPONSE_BYTES:
+        return None, "The AI provider response exceeded the size limit and was discarded."
+    try:
+        data = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, "The AI provider returned a malformed response."
     try:
         text = provider["parse_response"](data)
     except Exception:
