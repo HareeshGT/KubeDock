@@ -1,10 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# KubeDock installer: clones the selected branch, builds it with PyInstaller and
+# installs the result for the current OS (macOS, Linux, or Windows via Git Bash).
+#
+#   ./installer.sh [branch]
+#
+# Environment:
+#   KUBEDECK_BRANCH            Branch to build (same as the positional argument).
+#   KUBEDOCK_ENABLE_QWEN_TTS   1/0: include (or skip) the local Qwen3-TTS runtime.
+#   KUBEDOCK_KEEP_BUILD        1: keep the temporary build directory (debugging).
+#   KUBEDECK_PKG_MODE          Set by the macOS .pkg wrapper (installer/build_pkg.sh).
+
 REPO="https://github.com/HareeshGT/KubeDock.git"
-DIR="VM-Visualizer"
 
 OS="$(uname -s)"
+
+# Never block on a Git credential prompt (CI, cloud-init, curl | bash).
+export GIT_TERMINAL_PROMPT=0
+
+# pip: skip the PyPI self-update check (one extra network round trip per call)
+# and never prompt.
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_INPUT=1
+
+# Homebrew: an implicit `brew update` before every install can take minutes and
+# post-install cleanup is wasted work for a build machine. brew_install() below
+# falls back to an explicit update if a formula is not found in the local index.
+if [[ "$OS" == "Darwin" ]]; then
+  export HOMEBREW_NO_AUTO_UPDATE=1
+  export HOMEBREW_NO_INSTALL_CLEANUP=1
+  export HOMEBREW_NO_ENV_HINTS=1
+fi
 
 echo "Detected OS: $OS"
 
@@ -79,10 +106,17 @@ if [[ "$OS" == "Darwin" && "$KUBEDECK_PKG_MODE" == "1" && "$(id -u)" = "0" ]]; t
   fi
 
   # Wrapper keeps every existing `brew ...` call in this installer
-  # unchanged while ensuring Homebrew itself never runs as root.
+  # unchanged while ensuring Homebrew itself never runs as root. `su -`
+  # starts a clean login environment, so the HOMEBREW_* switches exported at
+  # the top of this script are forwarded explicitly.
   brew() {
     local command_line="$KUBEDECK_BREW_BIN"
-    local arg quoted
+    local arg quoted name
+    for name in HOMEBREW_NO_AUTO_UPDATE HOMEBREW_NO_INSTALL_CLEANUP HOMEBREW_NO_ENV_HINTS; do
+      if [ -n "${!name:-}" ]; then
+        command_line="$name=${!name} $command_line"
+      fi
+    done
     for arg in "$@"; do
       printf -v quoted '%q' "$arg"
       command_line+=" $quoted"
@@ -161,11 +195,20 @@ fi
 echo "Fetching available branches from GitHub..."
 echo
 
+# A single network round trip returns both the branch list and the default
+# branch (HEAD's symref). The `ref:` line is excluded from the branch list.
+REMOTE_REFS="$(git ls-remote --symref "$REPO" HEAD 'refs/heads/*' 2>/dev/null || true)"
+
 BRANCH_LIST="$(
-  git ls-remote --heads "$REPO" 2>/dev/null |
-  sed 's#^[^[:space:]]*[[:space:]]*refs/heads/##' |
+  printf '%s\n' "$REMOTE_REFS" |
+  awk '$1 != "ref:" && $2 ~ /^refs\/heads\// { sub("^refs/heads/", "", $2); print $2 }' |
   grep -v '/$' |
-  sort
+  sort || true
+)"
+
+DEFAULT_BRANCH="$(
+  printf '%s\n' "$REMOTE_REFS" |
+  awk '$1 == "ref:" { sub("^refs/heads/", "", $2); print $2 }'
 )"
 
 if [ -z "$BRANCH_LIST" ]; then
@@ -193,11 +236,6 @@ elif [ ! -t 0 ]; then
   # back to the repository's default branch.
   echo "No TTY detected and no branch given — defaulting to the default branch."
 
-  DEFAULT_BRANCH="$(
-    git ls-remote --symref "$REPO" HEAD 2>/dev/null |
-    awk '/^ref:/ {sub("refs/heads/", "", $2); print $2}'
-  )"
-
   if [ -n "$DEFAULT_BRANCH" ] && printf '%s\n' "$BRANCH_LIST" | grep -Fxq "$DEFAULT_BRANCH"; then
     SELECTED_BRANCH="$DEFAULT_BRANCH"
   elif printf '%s\n' "$BRANCH_LIST" | grep -Fxq "main"; then
@@ -208,9 +246,10 @@ elif [ ! -t 0 ]; then
 else
   # Build a numbered branch list.
   BRANCH_COUNT=0
+  BRANCHES=()
   while IFS= read -r BRANCH; do
     BRANCH_COUNT=$((BRANCH_COUNT + 1))
-    BRANCHES[$BRANCH_COUNT]="$BRANCH"
+    BRANCHES[BRANCH_COUNT]="$BRANCH"
   done <<< "$BRANCH_LIST"
 
   echo "Available branches:"
@@ -270,45 +309,43 @@ fi
 echo
 
 # --------------------------------------------------
-# Clone / Update Repository
+# Clone Repository (shallow, into a throw-away directory)
 # --------------------------------------------------
 
-if [ -d "$DIR/.git" ]; then
-  echo "Repository already exists. Updating..."
-  cd "$DIR"
+# Everything is built in a private temporary directory that is removed on exit
+# (success or failure): a failed run no longer leaves a multi-GB tree behind,
+# and an unrelated directory in the current folder is never reset or deleted.
+# Set KUBEDOCK_KEEP_BUILD=1 to keep it for debugging.
+_tmp_base="${TMPDIR:-/tmp}"
+BUILD_ROOT="$(mktemp -d "${_tmp_base%/}/kubedock-build.XXXXXX")"
+DIR="$BUILD_ROOT/src"
 
-  git fetch --prune origin
-
-  # Make sure the selected branch exists locally.
-  if git show-ref --verify --quiet "refs/remotes/origin/$SELECTED_BRANCH"; then
-    git checkout -B "$SELECTED_BRANCH" "origin/$SELECTED_BRANCH"
+cleanup() {
+  local rc=$?
+  cd / 2>/dev/null || true
+  if [ "${KUBEDOCK_KEEP_BUILD:-0}" = "1" ]; then
+    echo "Build directory kept: $BUILD_ROOT" >&2
   else
-    echo "ERROR: Remote branch origin/$SELECTED_BRANCH was not found."
-    exit 1
+    rm -rf "$BUILD_ROOT"
+    if [ "$rc" -ne 0 ]; then
+      echo "Install failed (exit $rc). Re-run with KUBEDOCK_KEEP_BUILD=1 to keep the build directory." >&2
+    fi
   fi
+}
+trap cleanup EXIT
 
-  git reset --hard "origin/$SELECTED_BRANCH"
+# Only the tip of the selected branch is needed to build.
+echo "Cloning KubeDock branch '$SELECTED_BRANCH' (shallow)..."
+git clone --depth 1 --branch "$SELECTED_BRANCH" --single-branch "$REPO" "$DIR"
+cd "$DIR"
 
-  echo
-  echo "Git branch:"
-  git branch --show-current
+echo
+echo "Git branch:"
+git branch --show-current
 
-  echo
-  echo "Git commit:"
-  git log -1 --oneline
-else
-  echo "Cloning KubeDock branch '$SELECTED_BRANCH'..."
-  git clone --branch "$SELECTED_BRANCH" --single-branch "$REPO" "$DIR"
-  cd "$DIR"
-
-  echo
-  echo "Git branch:"
-  git branch --show-current
-
-  echo
-  echo "Git commit:"
-  git log -1 --oneline
-fi
+echo
+echo "Git commit:"
+git log -1 --oneline
 
 echo
 echo "=========================================="
@@ -337,6 +374,30 @@ if [[ "$OS" == "Darwin" ]]; then
 
   echo "Homebrew: $(brew --version | head -n 1)"
 
+  # Reuse the prefix already resolved in .pkg mode; otherwise ask Homebrew once
+  # (every brew call is a separate, slow process, and a `su` hop in .pkg mode).
+  BREW_PREFIX="${KUBEDECK_BREW_PREFIX:-$(brew --prefix)}"
+
+  # `brew install`, retrying once after an explicit `brew update` if the local
+  # formula index is stale (implicit auto-update is disabled above for speed).
+  brew_install() {
+    if ! brew install "$@"; then
+      echo
+      echo "brew install failed; updating Homebrew and retrying once..."
+      brew update
+      brew install "$@"
+    fi
+  }
+
+  # One `brew list` for all checks instead of one process per formula.
+  INSTALLED_FORMULAE="$(brew list --formula -1 2>/dev/null || true)"
+  formula_installed() {
+    case $'\n'"$INSTALLED_FORMULAE"$'\n' in
+      *$'\n'"$1"$'\n'*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
   # Python 3.14 remains the default build runtime; the Qwen ML stack is
   # built with Python 3.12, the upstream-recommended environment.
   if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
@@ -346,16 +407,29 @@ if [[ "$OS" == "Darwin" ]]; then
   fi
   PYTHON_FORMULA="python@$PYTHON_MINOR"
 
-  if ! brew list --formula "$PYTHON_FORMULA" >/dev/null 2>&1; then
+  # Python plus the native libraries needed later, installed in ONE brew call:
+  #   portaudio -> PyAudio
+  #   ffmpeg    -> media playback fallback. QtMultimedia cannot decode every MKV
+  #                codec on every macOS backend, so KubeDock converts unsupported
+  #                remote video to a broadly-compatible H.264/AAC MP4.
+  #   flac      -> SpeechRecognition. Without it, SpeechRecognition can fall back
+  #                to its bundled flac-mac executable, which can be Intel-only on
+  #                Apple Silicon.
+  FORMULAE_TO_INSTALL=()
+  for formula in "$PYTHON_FORMULA" portaudio ffmpeg flac; do
+    if formula_installed "$formula"; then
+      echo "$formula already installed."
+    else
+      FORMULAE_TO_INSTALL+=("$formula")
+    fi
+  done
+
+  if [ "${#FORMULAE_TO_INSTALL[@]}" -gt 0 ]; then
     echo
-    echo "Installing Homebrew $PYTHON_FORMULA..."
-    brew install "$PYTHON_FORMULA"
-  else
-    echo
-    echo "$PYTHON_FORMULA already installed."
+    echo "Installing Homebrew packages: ${FORMULAE_TO_INSTALL[*]}"
+    brew_install "${FORMULAE_TO_INSTALL[@]}"
   fi
 
-  BREW_PREFIX="$(brew --prefix)"
   FORMULA_PREFIX="$(brew --prefix "$PYTHON_FORMULA")"
   PYTHON=""
   if [[ "$PYTHON_MINOR" == "3.12" ]]; then
@@ -454,45 +528,15 @@ fi
 if [[ "$OS" == "Darwin" ]]; then
 
   echo
-  echo "Installing macOS native dependencies..."
+  echo "macOS native dependencies (PortAudio, FFmpeg, FLAC): handled by the Homebrew step above."
 
-  # PyAudio -> PortAudio
-  if ! brew list --formula portaudio >/dev/null 2>&1; then
-    echo "Installing PortAudio..."
-    brew install portaudio
-  else
-    echo "PortAudio already installed."
-  fi
-
-  # Media playback fallback -> FFmpeg
-  # QtMultimedia cannot decode every MKV codec on every macOS backend.
-  # KubeDock uses FFmpeg to convert unsupported remote video to a
-  # broadly-compatible H.264/AAC MP4 when direct playback fails.
-  if ! brew list --formula ffmpeg >/dev/null 2>&1; then
-    echo "Installing FFmpeg..."
-    brew install ffmpeg
-  else
-    echo "FFmpeg already installed."
-  fi
-
-  # SpeechRecognition -> FLAC
-  #
-  # This is especially important on Apple Silicon.
-  # SpeechRecognition can otherwise fall back to its bundled flac-mac
-  # executable, which can be Intel-only.
-  if ! brew list --formula flac >/dev/null 2>&1; then
-    echo "Installing FLAC..."
-    brew install flac
-  else
-    echo "FLAC already installed."
-  fi
-
-  export PATH="$(brew --prefix)/bin:$PATH"
+  export PATH="$BREW_PREFIX/bin:$PATH"
 
   # Help PyAudio find Homebrew PortAudio headers/libraries.
-  export CPPFLAGS="${CPPFLAGS:-} -I$(brew --prefix portaudio)/include"
-  export LDFLAGS="${LDFLAGS:-} -L$(brew --prefix portaudio)/lib"
-  export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}:$(brew --prefix portaudio)/lib/pkgconfig"
+  PORTAUDIO_PREFIX="$(brew --prefix portaudio)"
+  export CPPFLAGS="${CPPFLAGS:-} -I$PORTAUDIO_PREFIX/include"
+  export LDFLAGS="${LDFLAGS:-} -L$PORTAUDIO_PREFIX/lib"
+  export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}:$PORTAUDIO_PREFIX/lib/pkgconfig"
 
 elif [[ "$OS" == "Linux" ]]; then
 
@@ -504,67 +548,73 @@ elif [[ "$OS" == "Linux" ]]; then
   # Fedora/RHEL/Amazon Linux 2023, older RHEL/Amazon Linux 2, Arch,
   # openSUSE, and Alpine — i.e. whatever base image the "instance"
   # happens to be running, not just one distro family.
-  if command -v apt-get >/dev/null 2>&1; then
+  #
+  # Only what is actually missing gets installed, so a re-run on a prepared
+  # machine does no package-manager work at all (no `apt-get update`, no sudo
+  # prompt). Presence is checked by what the build needs - the flac and ffmpeg
+  # executables and the PortAudio header - rather than by package name, which
+  # differs between distros (e.g. Fedora ships ffmpeg-free).
+  have_portaudio() {
+    { command -v pkg-config >/dev/null 2>&1 && pkg-config --exists portaudio-2.0; } ||
+      [ -f /usr/include/portaudio.h ] || [ -f /usr/local/include/portaudio.h ]
+  }
 
-    echo "Using apt-get..."
+  LINUX_PM=""
+  for pm in apt-get dnf yum pacman zypper apk; do
+    if command -v "$pm" >/dev/null 2>&1; then
+      LINUX_PM="$pm"
+      break
+    fi
+  done
 
-    $SUDO apt-get update
-    $SUDO apt-get install -y \
-      portaudio19-dev \
-      libportaudiocpp0 \
-      flac \
-      ffmpeg
-
-  elif command -v dnf >/dev/null 2>&1; then
-
-    echo "Using dnf..."
-
-    $SUDO dnf install -y \
-      portaudio-devel \
-      flac \
-      ffmpeg
-
-  elif command -v yum >/dev/null 2>&1; then
-
-    echo "Using yum..."
-
-    $SUDO yum install -y \
-      portaudio-devel \
-      flac \
-      ffmpeg
-
-  elif command -v pacman >/dev/null 2>&1; then
-
-    echo "Using pacman..."
-
-    $SUDO pacman -Sy --noconfirm \
-      portaudio \
-      flac \
-      ffmpeg
-
-  elif command -v zypper >/dev/null 2>&1; then
-
-    echo "Using zypper..."
-
-    $SUDO zypper --non-interactive install \
-      portaudio-devel \
-      flac \
-      ffmpeg
-
-  elif command -v apk >/dev/null 2>&1; then
-
-    echo "Using apk..."
-
-    $SUDO apk add --no-cache \
-      portaudio-dev \
-      flac \
-      ffmpeg
-
-  else
+  if [ -z "$LINUX_PM" ]; then
 
     echo
     echo "WARNING: Could not determine Linux package manager."
     echo "Make sure PortAudio and FLAC are installed manually."
+
+  else
+
+    case "$LINUX_PM" in
+      apt-get)        PORTAUDIO_PKGS=(portaudio19-dev libportaudiocpp0) ;;
+      dnf|yum|zypper) PORTAUDIO_PKGS=(portaudio-devel) ;;
+      pacman)         PORTAUDIO_PKGS=(portaudio) ;;
+      apk)            PORTAUDIO_PKGS=(portaudio-dev) ;;
+    esac
+
+    LINUX_PKGS=()
+    have_portaudio || LINUX_PKGS+=("${PORTAUDIO_PKGS[@]}")
+    command -v flac >/dev/null 2>&1 || LINUX_PKGS+=(flac)
+    command -v ffmpeg >/dev/null 2>&1 || LINUX_PKGS+=(ffmpeg)
+
+    if [ "${#LINUX_PKGS[@]}" -eq 0 ]; then
+
+      echo "Native dependencies (PortAudio, FLAC, FFmpeg) already installed."
+
+    else
+
+      echo "Using $LINUX_PM to install: ${LINUX_PKGS[*]}"
+
+      case "$LINUX_PM" in
+        apt-get)
+          # Install first without refreshing the package lists; refresh only if
+          # that fails (fresh images have no lists, old lists can 404).
+          APT_ENV=(env DEBIAN_FRONTEND=noninteractive)
+          if ! $SUDO "${APT_ENV[@]}" apt-get install -y "${LINUX_PKGS[@]}"; then
+            echo
+            echo "Install failed; refreshing package lists and retrying once..."
+            $SUDO "${APT_ENV[@]}" apt-get update
+            $SUDO "${APT_ENV[@]}" apt-get install -y "${LINUX_PKGS[@]}"
+          fi
+          ;;
+        dnf)    $SUDO dnf install -y "${LINUX_PKGS[@]}" ;;
+        yum)    $SUDO yum install -y "${LINUX_PKGS[@]}" ;;
+        pacman) $SUDO pacman -Sy --noconfirm "${LINUX_PKGS[@]}" ;;
+        zypper) $SUDO zypper --non-interactive install "${LINUX_PKGS[@]}" ;;
+        apk)    $SUDO apk add --no-cache "${LINUX_PKGS[@]}" ;;
+      esac
+
+    fi
 
   fi
 
@@ -585,65 +635,59 @@ echo "Checking pip..."
 
 "$PYTHON" -m pip --version
 
+# Flags shared by every pip call below.
+#   --prefer-binary: take a ready-made wheel instead of compiling a newer sdist
+#                    (source builds are the slow, fragile path).
+PIP_ARGS=(--prefer-binary)
+
+# PEP 668: Homebrew Python and recent Debian/Ubuntu/Fedora mark their system
+# Python as "externally managed", which makes a plain `pip install` fail. Add
+# the override only when that marker exists and we are not inside a venv, so it
+# is never passed to a pip that does not know the flag. (Previously macOS always
+# passed it and Linux never did, so Linux failed on PEP 668 distributions.)
+if "$PYTHON" -c 'import os, sys, sysconfig; sys.exit(0 if sys.prefix == sys.base_prefix and os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) else 1)'; then
+  PIP_ARGS+=(--break-system-packages)
+fi
+
+pip_install() {
+  "$PYTHON" -m pip install "${PIP_ARGS[@]}" "$@"
+}
+
 # --------------------------------------------------
 # Install Python Requirements
 # --------------------------------------------------
 
-if [ -f requirements.txt ]; then
-
-  echo
-  echo "Installing Python requirements..."
-
-  if [[ "$OS" == "Darwin" ]]; then
-
-    "$PYTHON" -m pip install \
-      --break-system-packages \
-      -r requirements.txt
-
-  else
-
-    "$PYTHON" -m pip install \
-      -r requirements.txt
-
-  fi
-
-  # Optional voice input (PyAudio). Failure must not abort the install; the
-  # app runs without it and just disables microphone input.
-  if [ -f requirements-voice.txt ]; then
-    echo
-    echo "Installing optional voice-input requirements..."
-    if [[ "$OS" == "Darwin" ]]; then
-      "$PYTHON" -m pip install --break-system-packages -r requirements-voice.txt \
-        || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
-    else
-      "$PYTHON" -m pip install -r requirements-voice.txt \
-        || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
-    fi
-  fi
-
-  # Optional local Qwen runtime. This is deliberately opt-in because PyTorch,
-  # Transformers and Qwen increase both install time and bundle size.
-  if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
-    if [ ! -f requirements-qwen-tts.txt ]; then
-      echo "ERROR: this branch does not contain requirements-qwen-tts.txt."
-      exit 1
-    fi
-    echo
-    echo "Installing optional Qwen3-TTS runtime (Python 3.12; PyTorch/Transformers)..."
-    if [[ "$OS" == "Darwin" ]]; then
-      "$PYTHON" -m pip install --break-system-packages -r requirements-qwen-tts.txt
-    else
-      "$PYTHON" -m pip install -r requirements-qwen-tts.txt
-    fi
-    "$PYTHON" -c "import torch, qwen_tts; print('[OK] Qwen3-TTS runtime:', getattr(qwen_tts, '__version__', 'installed')); print('[OK] PyTorch:', torch.__version__)"
-  fi
-
-else
-
+if [ ! -f requirements.txt ]; then
   echo
   echo "ERROR: requirements.txt not found."
   exit 1
+fi
 
+echo
+echo "Installing Python requirements..."
+
+pip_install -r requirements.txt
+
+# Optional voice input (PyAudio). Failure must not abort the install; the
+# app runs without it and just disables microphone input.
+if [ -f requirements-voice.txt ]; then
+  echo
+  echo "Installing optional voice-input requirements..."
+  pip_install -r requirements-voice.txt \
+    || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
+fi
+
+# Optional local Qwen runtime. This is deliberately opt-in because PyTorch,
+# Transformers and Qwen increase both install time and bundle size.
+if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
+  if [ ! -f requirements-qwen-tts.txt ]; then
+    echo "ERROR: this branch does not contain requirements-qwen-tts.txt."
+    exit 1
+  fi
+  echo
+  echo "Installing optional Qwen3-TTS runtime (Python 3.12; PyTorch/Transformers)..."
+  pip_install -r requirements-qwen-tts.txt
+  "$PYTHON" -c "import torch, qwen_tts; print('[OK] Qwen3-TTS runtime:', getattr(qwen_tts, '__version__', 'installed')); print('[OK] PyTorch:', torch.__version__)"
 fi
 
 # --------------------------------------------------
@@ -662,8 +706,12 @@ required = [
   ("PyQt5", "PyQt5"),
   ("paramiko", "paramiko"),
   ("SpeechRecognition", "speech_recognition"),
-  ("PyAudio", "pyaudio"),
   ("PyInstaller", "PyInstaller"),
+]
+
+# Voice input is optional (see requirements-voice.txt): report it, never fail on it.
+optional = [
+  ("PyAudio", "pyaudio"),
 ]
 
 failed = []
@@ -677,6 +725,14 @@ for label, module in required:
     print(f"[ERROR] {label}: {exc}")
     failed.append(label)
 
+for label, module in optional:
+  try:
+    imported = __import__(module)
+    version = getattr(imported, "__version__", "installed")
+    print(f"[OK] {label}: {version}")
+  except Exception as exc:
+    print(f"[WARN] {label}: {exc} (voice input will be unavailable)")
+
 if failed:
   print()
   print("Missing/broken dependencies:")
@@ -685,8 +741,15 @@ if failed:
   sys.exit(1)
 
 print()
-print("All Python dependencies are available.")
+print("All required Python dependencies are available.")
 PY
+
+# Remember whether PyAudio is importable so the build and the final summary
+# reflect what is actually installed.
+HAVE_PYAUDIO=0
+if "$PYTHON" -c "import pyaudio" >/dev/null 2>&1; then
+  HAVE_PYAUDIO=1
+fi
 
 # --------------------------------------------------
 # Verify FLAC on macOS/Linux
@@ -708,29 +771,8 @@ if [[ "$OS" == "Darwin" || "$OS" == "Linux" ]]; then
 
 fi
 
-# --------------------------------------------------
-# Install PyInstaller
-# --------------------------------------------------
-
-if ! "$PYTHON" -c "import PyInstaller" >/dev/null 2>&1; then
-
-  echo
-  echo "Installing PyInstaller..."
-
-  if [[ "$OS" == "Darwin" ]]; then
-
-    "$PYTHON" -m pip install \
-      --break-system-packages \
-      "pyinstaller>=6.0"
-
-  else
-
-    "$PYTHON" -m pip install \
-      "pyinstaller>=6.0"
-
-  fi
-
-fi
+# (PyInstaller comes from requirements.txt and is verified above, so the former
+# separate "Install PyInstaller" step could never run and was removed.)
 
 # --------------------------------------------------
 # Prepare Web App Static Assets
@@ -740,7 +782,6 @@ echo
 echo "Preparing KubeDock Web UI assets..."
 
 WEBAPP_INDEX="webapp/static/index.html"
-WEBAPP_FALLBACK="webapp/static_content.py"
 
 if [ ! -f "$WEBAPP_INDEX" ]; then
   echo
@@ -780,7 +821,8 @@ PY
 # Select Icon
 # --------------------------------------------------
 
-ICON=""
+ICON=""          # passed to PyInstaller (macOS .icns / Windows .ico)
+DESKTOP_ICON=""  # copied next to the install for the Linux .desktop entry
 
 case "$OS" in
 
@@ -796,24 +838,18 @@ case "$OS" in
     fi
     ;;
 
+  Linux)
+    # PyInstaller does not use --icon on Linux, but the .desktop entry still
+    # needs an icon file (it used to point at one that was never installed).
+    if [ -f KubeDock.ico ]; then
+      DESKTOP_ICON="KubeDock.ico"
+    fi
+    ;;
+
 esac
 
-# --------------------------------------------------
-# Clean Previous Build
-# --------------------------------------------------
+# (There is no "clean previous build" step: every run builds in a fresh clone.)
 
-echo
-echo "Cleaning previous PyInstaller build..."
-
-rm -rf build
-rm -rf "dist/KubeDock.app"
-rm -rf "dist/KubeDock"
-
-# Remove stale spec so the generated build always reflects
-# the current project state.
-rm -f "KubeDock.spec"
-
-# --------------------------------------------------
 # --------------------------------------------------
 # Verify Refactored Python Packages
 # --------------------------------------------------
@@ -838,22 +874,29 @@ for package in "${REFACTORED_PACKAGES[@]}"; do
   echo "[OK] $package"
 done
 
+# --------------------------------------------------
 # Build
 # --------------------------------------------------
 
 echo
 echo "Building application..."
 
-CMD=(
-  "$PYTHON"
-  -m
-  PyInstaller
+# PyInstaller separates --add-data source and destination with ";" on Windows
+# and ":" everywhere else.
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+  DATA_SEP=";"
+else
+  DATA_SEP=":"
+fi
+
+# Flags are collected in one array and main.py is appended last (this replaces
+# four rounds of re-slicing a CMD array to splice flags in before main.py).
+PYI_ARGS=(
+  --noconfirm
   --windowed
   --onedir
   --name
   "KubeDock"
-  --osx-bundle-identifier
-  "com.hareeshgt.ec2manager"
 
   # Existing SSH/Paramiko support
   --hidden-import=paramiko
@@ -879,58 +922,36 @@ CMD=(
 
   # Voice input
   --hidden-import=speech_recognition
-  --hidden-import=pyaudio
 
-  main.py
+  # Bundle KubeDock SVG icons into the PyInstaller application.
+  "--add-data=assets${DATA_SEP}assets"
+
+  # Bundle the actual Web App HTML so the packaged application always uses
+  # the same UI as webapp/static/index.html in the selected GitHub branch.
+  "--add-data=webapp/static${DATA_SEP}webapp/static"
 )
+
+# A stable bundle identifier (also re-applied to Info.plist below). The flag is
+# macOS-only, so it is no longer passed on Linux/Windows.
+if [[ "$OS" == "Darwin" ]]; then
+  PYI_ARGS+=(--osx-bundle-identifier "com.hareeshgt.ec2manager")
+fi
+
+# PyAudio is optional; only declare it as a hidden import when it is installed.
+if [[ "$HAVE_PYAUDIO" == "1" ]]; then
+  PYI_ARGS+=(--hidden-import=pyaudio)
+fi
 
 # Add the icon if available.
 if [ -n "$ICON" ]; then
-  CMD=(
-    "${CMD[@]:0:${#CMD[@]}-1}"
-    "--icon=$ICON"
-    "main.py"
-  )
-fi
-
-# Bundle KubeDock SVG icons into the PyInstaller application.
-# PyInstaller uses ":" on macOS/Linux and ";" on Windows.
-if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
-  CMD=(
-    "${CMD[@]:0:${#CMD[@]}-1}"
-    "--add-data=assets;assets"
-    "main.py"
-  )
-else
-  CMD=(
-    "${CMD[@]:0:${#CMD[@]}-1}"
-    "--add-data=assets:assets"
-    "main.py"
-  )
-fi
-
-# Bundle the actual Web App HTML so the packaged application always uses
-# the same UI as webapp/static/index.html in the selected GitHub branch.
-if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
-  CMD=(
-    "${CMD[@]:0:${#CMD[@]}-1}"
-    "--add-data=webapp/static;webapp/static"
-    "main.py"
-  )
-else
-  CMD=(
-    "${CMD[@]:0:${#CMD[@]}-1}"
-    "--add-data=webapp/static:webapp/static"
-    "main.py"
-  )
+  PYI_ARGS+=("--icon=$ICON")
 fi
 
 # Collect dynamic Qwen/Torch modules only when the local TTS runtime is opted in.
 # This makes the onedir bundle much larger; downloaded model weights remain in the
 # Hugging Face cache and are not copied into the installer.
 if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
-  CMD=(
-    "${CMD[@]:0:${#CMD[@]}-1}"
+  PYI_ARGS+=(
     --collect-all=qwen_tts
     --collect-all=torch
     --collect-all=torchaudio
@@ -942,11 +963,10 @@ if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
     --collect-all=onnxruntime
     --collect-all=einops
     --collect-all=sox
-    main.py
   )
 fi
 
-"${CMD[@]}"
+"$PYTHON" -m PyInstaller "${PYI_ARGS[@]}" main.py
 
 # --------------------------------------------------
 # macOS privacy + Apple Silicon voice support
@@ -1005,10 +1025,10 @@ if [[ "$OS" == "Darwin" ]]; then
 
   echo "Application re-signed."
 
-  if [ -x "$(brew --prefix)/bin/flac" ]; then
+  if [ -x "$BREW_PREFIX/bin/flac" ]; then
     echo
     echo "Using native Homebrew FLAC:"
-    echo "$(brew --prefix)/bin/flac"
+    echo "$BREW_PREFIX/bin/flac"
   else
     echo
     echo "WARNING: Homebrew FLAC was not found."
@@ -1037,6 +1057,27 @@ fi
 # Install
 # --------------------------------------------------
 
+# Replace <target> with <staged> without ever leaving the machine with no
+# working install: the old copy is renamed aside first and restored if the final
+# rename fails. (Previously the old install was deleted BEFORE the new one was
+# copied, so a failed or interrupted copy left no application at all.)
+swap_install() {
+  local staged="$1" target="$2" backup="$2.old"
+
+  $SUDO rm -rf "$backup"
+  if [ -e "$target" ]; then
+    $SUDO mv "$target" "$backup"
+  fi
+  if ! $SUDO mv "$staged" "$target"; then
+    if [ -e "$backup" ]; then
+      $SUDO mv "$backup" "$target"
+    fi
+    echo "ERROR: could not move the new install into place: $target" >&2
+    return 1
+  fi
+  $SUDO rm -rf "$backup"
+}
+
 case "$OS" in
 
 Darwin)
@@ -1053,8 +1094,12 @@ Darwin)
     exit 1
   fi
 
-  $SUDO rm -rf "/Applications/KubeDock.app"
-  $SUDO cp -R "$APP_PATH" "/Applications/"
+  STAGED_APP="/Applications/KubeDock.app.new"
+  $SUDO rm -rf "$STAGED_APP"
+  # ditto is Apple's recommended way to copy an .app: it keeps bundle metadata
+  # and the code signature applied above intact.
+  $SUDO ditto "$APP_PATH" "$STAGED_APP"
+  swap_install "$STAGED_APP" "/Applications/KubeDock.app"
 
   echo
   echo "Installed:"
@@ -1073,17 +1118,29 @@ Linux)
     exit 1
   fi
 
-  $SUDO rm -rf "/opt/KubeDock"
-  $SUDO mkdir -p "/opt/KubeDock"
-  $SUDO cp -R "dist/KubeDock/." "/opt/KubeDock/"
+  # Build the new tree next to the old one, then swap (see swap_install).
+  STAGED_DIR="/opt/KubeDock.new"
+  $SUDO mkdir -p "/opt"
+  $SUDO rm -rf "$STAGED_DIR"
+  $SUDO cp -a "dist/KubeDock" "$STAGED_DIR"
+
+  # The icon goes into the staged tree so it is swapped in together with the app.
+  if [ -n "$DESKTOP_ICON" ] && [ -f "$DESKTOP_ICON" ]; then
+    $SUDO mkdir -p "$STAGED_DIR/icon" 2>/dev/null || true
+    $SUDO cp "$DESKTOP_ICON" "$STAGED_DIR/icon/KubeDock.ico" 2>/dev/null || true
+  fi
+
+  swap_install "$STAGED_DIR" "/opt/KubeDock"
 
   if [ -d "/usr/local/bin" ] || $SUDO mkdir -p "/usr/local/bin" 2>/dev/null; then
     $SUDO ln -sf "/opt/KubeDock/KubeDock" "/usr/local/bin/kubedeck" 2>/dev/null || true
   fi
 
-  if [ -n "$ICON" ] && [ -f "$ICON" ]; then
-    $SUDO mkdir -p "/opt/KubeDock/icon" 2>/dev/null || true
-    $SUDO cp "$ICON" "/opt/KubeDock/icon/KubeDock.ico" 2>/dev/null || true
+  # Only reference an icon file that really exists.
+  if [ -f "/opt/KubeDock/icon/KubeDock.ico" ]; then
+    DESKTOP_ICON_LINE="Icon=/opt/KubeDock/icon/KubeDock.ico"
+  else
+    DESKTOP_ICON_LINE="Icon=application-x-executable"
   fi
 
   if $SUDO mkdir -p "/usr/share/applications" 2>/dev/null; then
@@ -1094,7 +1151,7 @@ Type=Application
 Name=KubeDock
 Comment=Kubernetes / VM visualizer and manager
 Exec=/opt/KubeDock/KubeDock
-Icon=/opt/KubeDock/icon/KubeDock.ico
+$DESKTOP_ICON_LINE
 Terminal=false
 Categories=Development;Utility;
 EOF
@@ -1122,10 +1179,10 @@ MINGW*|MSYS*|CYGWIN*)
     exit 1
   fi
 
-  rm -rf "$INSTALL_DIR"
-  mkdir -p "$INSTALL_DIR"
-
-  cp -R "dist/KubeDock/." "$INSTALL_DIR/"
+  STAGED_DIR="$INSTALL_DIR.new"
+  rm -rf "$STAGED_DIR"
+  cp -R "dist/KubeDock" "$STAGED_DIR"
+  swap_install "$STAGED_DIR" "$INSTALL_DIR"
 
   echo
   echo "Installed to:"
@@ -1146,9 +1203,8 @@ esac
 # Cleanup
 # --------------------------------------------------
 
-cd ..
-
-rm -rf "$DIR"
+# The temporary build directory is removed by the EXIT trap (cleanup), on
+# success and on failure alike.
 
 echo
 echo "=========================================="
@@ -1161,7 +1217,11 @@ echo
 echo "Included:"
 echo " [OK] Kubernetes Ops Mind"
 echo " [OK] Google Web Speech voice input"
-echo " [OK] PyAudio microphone support"
+if [[ "$HAVE_PYAUDIO" == "1" ]]; then
+  echo " [OK] PyAudio microphone support"
+else
+  echo " [INFO] PyAudio not installed - microphone voice input is unavailable"
+fi
 echo " [OK] Native FLAC support"
 echo " [OK] AI operation history"
 echo " [OK] Current Web App UI"
