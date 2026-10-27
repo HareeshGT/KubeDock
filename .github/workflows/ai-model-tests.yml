@@ -24,6 +24,8 @@ jobs:
           python-version: "3.12"
       - name: Install minimal runtime dependency
         run: python -m pip install --upgrade pip PyQt5
+      - name: Compile changed Python modules
+        run: python -m py_compile ai_assist.py settings_dialog.py tests/test_ai_custom_models.py
       - name: Run AI regression tests
         env:
           QT_QPA_PLATFORM: offscreen
