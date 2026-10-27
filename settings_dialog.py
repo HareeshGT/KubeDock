@@ -17,6 +17,9 @@ from PyQt5.QtWidgets import (
     QFrame,
     QLineEdit,
     QApplication,
+    QListWidget,
+    QInputDialog,
+    QMessageBox,
 )
 from PyQt5.QtGui import QFont
 
@@ -166,6 +169,111 @@ class SwipeTabWidget(QTabWidget):
                 self._reset_swipe()
 
         return super().eventFilter(watched, event)
+
+
+
+class CustomModelManagerDialog(QDialog):
+    """Edit the selected provider's user-defined models without changing built-ins."""
+
+    def __init__(self, provider_id, models, parent=None):
+        super().__init__(parent)
+        self.provider_id = provider_id
+        self._models = [dict(item) for item in (models or [])]
+        self.setWindowTitle("Manage Custom AI Models")
+        self.resize(520, 360)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            f"Custom models for {ai_assist.PROVIDERS[provider_id]['label']}. "
+            "Display names are labels only; requests use the API model ID."
+        ))
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget, 1)
+
+        actions = QHBoxLayout()
+        self.add_btn = QPushButton("Add Model")
+        self.edit_btn = QPushButton("Edit")
+        self.delete_btn = QPushButton("Delete")
+        actions.addWidget(self.add_btn)
+        actions.addWidget(self.edit_btn)
+        actions.addWidget(self.delete_btn)
+        actions.addStretch()
+        layout.addLayout(actions)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.add_btn.clicked.connect(self._add_model)
+        self.edit_btn.clicked.connect(self._edit_model)
+        self.delete_btn.clicked.connect(self._delete_model)
+        self._refresh()
+
+    def model_records(self):
+        return [dict(item) for item in self._models]
+
+    def _refresh(self, selected_model_id=None):
+        self.list_widget.clear()
+        selected_row = -1
+        for row, item in enumerate(self._models):
+            self.list_widget.addItem(
+                f"{item['display_name']}  ·  {item['model_id']}"
+            )
+            if item["model_id"] == selected_model_id:
+                selected_row = row
+        if self.list_widget.count():
+            self.list_widget.setCurrentRow(selected_row if selected_row >= 0 else 0)
+        self.edit_btn.setEnabled(bool(self._models))
+        self.delete_btn.setEnabled(bool(self._models))
+
+    def _ask_model(self, existing=None):
+        name, ok = QInputDialog.getText(
+            self, "Custom Model", "Display name (for example, OpenAI 120B):",
+            text=(existing or {}).get("display_name", ""),
+        )
+        if not ok:
+            return None
+        model_id, ok = QInputDialog.getText(
+            self, "Custom Model", "Exact API model ID (sent unchanged to the provider):",
+            text=(existing or {}).get("model_id", ""),
+        )
+        if not ok:
+            return None
+        old_id = (existing or {}).get("model_id")
+        try:
+            return ai_assist.validate_custom_model(
+                self.provider_id, name, model_id, self._models,
+                exclude_model_id=old_id,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Custom Model", str(exc))
+            return None
+
+    def _add_model(self):
+        entry = self._ask_model()
+        if entry is None:
+            return
+        self._models.append(entry)
+        self._refresh(entry["model_id"])
+
+    def _edit_model(self):
+        row = self.list_widget.currentRow()
+        if row < 0 or row >= len(self._models):
+            return
+        previous = self._models[row]
+        entry = self._ask_model(previous)
+        if entry is None:
+            return
+        self._models[row] = entry
+        self._refresh(entry["model_id"])
+
+    def _delete_model(self):
+        row = self.list_widget.currentRow()
+        if row < 0 or row >= len(self._models):
+            return
+        self._models.pop(row)
+        self._refresh()
+
 
 
 class SettingsDialog(QDialog):
@@ -358,6 +466,10 @@ class SettingsDialog(QDialog):
         ai_settings = ai_assist.get_ai_settings()
         self._ai_keys = dict(ai_settings["api_keys"])
         self._ai_models = dict(ai_settings["models"])
+        self._ai_custom_models = {
+            pid: [dict(item) for item in records]
+            for pid, records in ai_settings.get("custom_models", {}).items()
+        }
         self._current_provider_id = None
 
         v.addSpacing(4)
@@ -371,6 +483,15 @@ class SettingsDialog(QDialog):
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         v.addWidget(self.model_combo)
+
+        model_actions = QHBoxLayout()
+        self.add_model_btn = QPushButton("Add Model")
+        self.manage_models_btn = QPushButton("Manage Models…")
+        self.test_model_btn = QPushButton("Test Model")
+        model_actions.addWidget(self.add_model_btn)
+        model_actions.addWidget(self.manage_models_btn)
+        model_actions.addWidget(self.test_model_btn)
+        v.addLayout(model_actions)
 
         v.addWidget(QLabel("API key"))
         row = QHBoxLayout()
@@ -386,33 +507,140 @@ class SettingsDialog(QDialog):
         v.addLayout(row)
 
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self.add_model_btn.clicked.connect(self._add_custom_model)
+        self.manage_models_btn.clicked.connect(self._manage_custom_models)
+        self.test_model_btn.clicked.connect(self._test_selected_model)
         idx = self.provider_combo.findData(ai_settings["provider"])
         self.provider_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        if self._current_provider_id is None:
+            self._on_provider_changed(self.provider_combo.currentIndex())
         v.addStretch()
         return w
 
-    def _on_provider_changed(self, _index):
-        if self._current_provider_id is not None:
-            self._ai_keys[self._current_provider_id] = self.api_key_edit.text()
-            self._ai_models[self._current_provider_id] = self.model_combo.currentText()
+    def _selected_model_id(self):
+        index = self.model_combo.currentIndex()
+        if (
+            index >= 0
+            and self.model_combo.currentText() == self.model_combo.itemText(index)
+        ):
+            value = self.model_combo.itemData(index)
+            if value is not None:
+                return str(value)
+        return self.model_combo.currentText().strip()
 
+    def _refresh_model_combo(self, preferred_model=None):
         pid = self.provider_combo.currentData()
         info = ai_assist.PROVIDERS[pid]
-        self._current_provider_id = pid
-
+        current_model = (
+            preferred_model
+            if preferred_model is not None
+            else self._ai_models.get(pid) or info["default_model"]
+        )
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        self.model_combo.addItems(info["model_samples"])
-        current_model = self._ai_models.get(pid) or info["default_model"]
-        model_idx = self.model_combo.findText(current_model)
+        for model_id in info["model_samples"]:
+            self.model_combo.addItem(f"Built-in · {model_id}", model_id)
+        for item in self._ai_custom_models.get(pid, []):
+            self.model_combo.addItem(
+                f"Custom · {item['display_name']} — {item['model_id']}",
+                item["model_id"],
+            )
+        model_idx = self.model_combo.findData(current_model)
         if model_idx >= 0:
             self.model_combo.setCurrentIndex(model_idx)
         else:
+            # Preserve legacy free-text model IDs that are not in suggestions.
             self.model_combo.setEditText(current_model)
         self.model_combo.blockSignals(False)
 
+    def _on_provider_changed(self, _index):
+        if self._current_provider_id is not None:
+            old_provider = self._current_provider_id
+            self._ai_keys[old_provider] = self.api_key_edit.text()
+            self._ai_models[old_provider] = self._selected_model_id()
+
+        pid = self.provider_combo.currentData()
+        if pid not in ai_assist.PROVIDERS:
+            return
+        info = ai_assist.PROVIDERS[pid]
+        self._current_provider_id = pid
+        self._refresh_model_combo()
         self.api_key_edit.setText(self._ai_keys.get(pid, ""))
         self.api_key_edit.setPlaceholderText(info["key_placeholder"])
+
+    def _add_custom_model(self):
+        pid = self.provider_combo.currentData()
+        name, ok = QInputDialog.getText(
+            self, "Add Custom AI Model", "Display name (label only):"
+        )
+        if not ok:
+            return
+        model_id, ok = QInputDialog.getText(
+            self, "Add Custom AI Model", "Exact API model ID:"
+        )
+        if not ok:
+            return
+        try:
+            entry = ai_assist.validate_custom_model(
+                pid, name, model_id, self._ai_custom_models.get(pid, [])
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Custom Model", str(exc))
+            return
+        self._ai_custom_models.setdefault(pid, []).append(entry)
+        self._refresh_model_combo(entry["model_id"])
+
+    def _manage_custom_models(self):
+        pid = self.provider_combo.currentData()
+        dialog = CustomModelManagerDialog(
+            pid, self._ai_custom_models.get(pid, []), self
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        before = {item["model_id"] for item in self._ai_custom_models.get(pid, [])}
+        records = dialog.model_records()
+        after = {item["model_id"] for item in records}
+        selected = self._selected_model_id()
+        self._ai_custom_models[pid] = records
+        if selected in before and selected not in after:
+            selected = ai_assist.PROVIDERS[pid]["default_model"]
+            self._ai_models[pid] = selected
+        self._refresh_model_combo(selected)
+
+    def _test_selected_model(self):
+        pid = self.provider_combo.currentData()
+        api_key = self.api_key_edit.text().strip()
+        model_id = self._selected_model_id()
+        if not api_key:
+            QMessageBox.information(
+                self, "API key required",
+                f"Add a {ai_assist.PROVIDERS[pid]['label']} API key before testing the model.",
+            )
+            return
+        if not ai_assist._is_valid_model_id(model_id):
+            QMessageBox.warning(
+                self, "Invalid model ID",
+                "Enter a valid exact API model ID or select a listed model.",
+            )
+            return
+        self.test_model_btn.setEnabled(False)
+        self.test_model_btn.setText("Testing…")
+        worker = ai_assist.AIModelTestWorker(pid, api_key, model_id, self)
+        self._model_test_worker = worker
+        worker.succeeded.connect(self._on_model_test_success)
+        worker.failed.connect(self._on_model_test_failure)
+        worker.finished.connect(self._on_model_test_finished)
+        worker.start()
+
+    def _on_model_test_success(self, message):
+        QMessageBox.information(self, "Model Test Succeeded", message)
+
+    def _on_model_test_failure(self, message):
+        QMessageBox.warning(self, "Model Test Failed", message)
+
+    def _on_model_test_finished(self):
+        self.test_model_btn.setEnabled(True)
+        self.test_model_btn.setText("Test Model")
 
     def _on_toggle_show_key(self, checked):
         self.api_key_edit.setEchoMode(
@@ -564,11 +792,12 @@ class SettingsDialog(QDialog):
             [p.strip() for p in self.protected_ns_edit.text().split(",")]
         )
         self._ai_keys[self._current_provider_id] = self.api_key_edit.text()
-        self._ai_models[self._current_provider_id] = self.model_combo.currentText()
+        self._ai_models[self._current_provider_id] = self._selected_model_id()
         ai_assist.save_ai_settings(
             self.provider_combo.currentData(),
             self._ai_keys,
             self._ai_models,
+            custom_models=self._ai_custom_models,
         )
         save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),
