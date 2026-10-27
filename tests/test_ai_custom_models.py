@@ -1,8 +1,11 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import ai_assist
+import db
 
 
 class CustomAIModelTests(unittest.TestCase):
@@ -117,6 +120,43 @@ class CustomAIModelTests(unittest.TestCase):
         )
         self.assertIsNone(result)
         self.assertIn("Invalid model ID syntax", error)
+
+
+
+
+
+class SQLiteAICustomModelPersistenceTests(unittest.TestCase):
+    def test_selected_custom_model_is_persisted_in_sqlite(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_dir = Path(temp_dir) / ".kubedock"
+            with (
+                patch("db.APP_DIR", app_dir),
+                patch("db.DB_PATH", app_dir / "kubedock.db"),
+                patch("db.LEGACY_SETTINGS_PATH", app_dir / "settings.json"),
+            ):
+                db.initialize()
+                custom = {
+                    "openai": [{
+                        "display_name": "OpenAI 120B",
+                        "model_id": "provider_model_120b",
+                    }]
+                }
+                ai_assist.save_ai_settings(
+                    "openai",
+                    {"openai": "openai-test-key"},
+                    {"openai": "provider_model_120b"},
+                    custom_models=custom,
+                )
+
+                # Reload from the SQLite settings table, as a fresh app startup does.
+                persisted = db.get_setting("ai")
+                self.assertEqual(
+                    persisted["custom_models"]["openai"][0]["model_id"],
+                    "provider_model_120b",
+                )
+                self.assertEqual(persisted["models"]["openai"], "provider_model_120b")
+                self.assertEqual(ai_assist.get_model("openai"), "provider_model_120b")
+                self.assertEqual(ai_assist.get_api_key("openai"), "openai-test-key")
 
 
 if __name__ == "__main__":
