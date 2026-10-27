@@ -1,0 +1,32 @@
+name: AI model regression tests
+
+on:
+  push:
+    paths:
+      - "ai_assist.py"
+      - "settings_dialog.py"
+      - "tests/test_ai*.py"
+      - ".github/workflows/ai-model-tests.yml"
+  pull_request:
+    paths:
+      - "ai_assist.py"
+      - "settings_dialog.py"
+      - "tests/test_ai*.py"
+  workflow_dispatch:
+
+jobs:
+  ai-model-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minimal runtime dependency
+        run: python -m pip install --upgrade pip PyQt5
+      - name: Compile changed Python modules
+        run: python -m py_compile ai_assist.py settings_dialog.py tests/test_ai_custom_models.py
+      - name: Run AI regression tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -p 'test_ai*.py' -v
