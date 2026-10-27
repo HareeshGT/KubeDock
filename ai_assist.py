@@ -521,29 +521,94 @@ DEFAULT_PROVIDER = "anthropic"
 
 
 # ─── Persisted settings ────────────────────────────────────────
-def get_ai_settings() -> dict:
-    """Returns {"provider": <id>, "api_keys": {<id>: <key>, ...},
-    "models": {<id>: <model>, ...}} — every provider id is guaranteed to
-    have an entry in "models" (falling back to that provider's
-    default_model), so callers never need to guard against a missing key."""
-    stored = load_settings().get("ai") or {}
+def _normalise_custom_models(value) -> dict:
+    """Return a stable provider -> [{display_name, model_id}] mapping."""
+    result = {pid: [] for pid in PROVIDERS}
+    if not isinstance(value, dict):
+        return result
+    for pid, records in value.items():
+        if pid not in PROVIDERS or not isinstance(records, list):
+            continue
+        seen = set(PROVIDERS[pid]["model_samples"])
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = str(record.get("display_name") or "").strip()
+            model_id = str(record.get("model_id") or "").strip()
+            if not name or len(name) > 100 or not _is_valid_model_id(model_id):
+                continue
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            result[pid].append({"display_name": name, "model_id": model_id})
+    return result
 
+
+def _is_valid_model_id(model_id: str) -> bool:
+    """Validate syntax only; model existence is verified by the provider API."""
+    return bool(
+        isinstance(model_id, str)
+        and len(model_id) <= 256
+        and re.fullmatch(r"[A-Za-z0-9._:/+-]+", model_id)
+    )
+
+
+def validate_custom_model(provider: str, display_name: str, model_id: str,
+                          existing_models=None, exclude_model_id=None) -> dict:
+    """Validate a custom model and return its canonical display-name/API-ID pair."""
+    if provider not in PROVIDERS:
+        raise ValueError("Choose one of the supported AI providers.")
+    name = str(display_name or "").strip()
+    model = str(model_id or "").strip()
+    if not name or len(name) > 100:
+        raise ValueError("Display name is required and must be 100 characters or fewer.")
+    if not _is_valid_model_id(model):
+        raise ValueError(
+            "Enter the exact API model ID (up to 256 characters; use letters, "
+            "numbers, dots, underscores, slashes, colons, plus signs, or hyphens)."
+        )
+    duplicate_ids = set(PROVIDERS[provider]["model_samples"])
+    for item in existing_models or []:
+        if not isinstance(item, dict):
+            continue
+        candidate = str(item.get("model_id") or "").strip()
+        if candidate and candidate != exclude_model_id:
+            duplicate_ids.add(candidate)
+    if model in duplicate_ids:
+        raise ValueError(f"Model ID {model!r} already exists for this provider.")
+    return {"display_name": name, "model_id": model}
+
+
+def get_ai_settings() -> dict:
+    """Read persisted provider settings, models, and custom model definitions.
+
+    The existing models mapping remains the selected API model ID for each
+    provider, preserving compatibility with older installations and call sites.
+    """
+    stored = load_settings().get("ai") or {}
     provider = stored.get("provider", DEFAULT_PROVIDER)
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
 
     api_keys = dict(stored.get("api_keys") or {})
-    # Migrate the pre-multi-provider layout (a single top-level "api_key",
+    # Migrate the pre-multi-provider layout (a single top-level api_key,
     # implicitly Anthropic) so upgrading doesn't drop an already-saved key.
     legacy_key = stored.get("api_key")
     if legacy_key and not api_keys.get("anthropic"):
         api_keys["anthropic"] = legacy_key
 
     stored_models = dict(stored.get("models") or {})
-    models = {pid: stored_models.get(pid) or info["default_model"]
-              for pid, info in PROVIDERS.items()}
-
-    return {"provider": provider, "api_keys": api_keys, "models": models}
+    models = {
+        pid: str(stored_models.get(pid) or info["default_model"]).strip()
+        for pid, info in PROVIDERS.items()
+    }
+    custom_models = _normalise_custom_models(stored.get("custom_models") or {})
+    return {
+        "provider": provider,
+        "api_keys": api_keys,
+        "models": models,
+        "custom_models": custom_models,
+    }
 
 
 def get_provider() -> str:
@@ -564,17 +629,85 @@ def get_model(provider: str = None) -> str:
     )["default_model"]
 
 
-def save_ai_settings(provider: str, api_keys: dict, models: dict):
+def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None):
+    """Save AI settings atomically while retaining current custom models by default."""
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
-    cleaned_keys = {pid: (key or "").strip() for pid, key in api_keys.items() if pid in PROVIDERS}
-    cleaned_models = {
-        pid: (model or "").strip() or PROVIDERS[pid]["default_model"]
-        for pid, model in models.items() if pid in PROVIDERS
+    cleaned_keys = {
+        pid: (key or "").strip()
+        for pid, key in (api_keys or {}).items()
+        if pid in PROVIDERS
     }
-    # save under "ai" only — this replaces the whole sub-dict (including
-    # any legacy "api_key" field), which is what finishes the migration.
-    save_settings(ai={"provider": provider, "api_keys": cleaned_keys, "models": cleaned_models})
+    cleaned_models = {
+        pid: (str(model or "").strip() or PROVIDERS[pid]["default_model"])
+        for pid, model in (models or {}).items()
+        if pid in PROVIDERS
+    }
+    if custom_models is None:
+        custom_models = (load_settings().get("ai") or {}).get("custom_models") or {}
+    cleaned_custom_models = _normalise_custom_models(custom_models)
+    # Replace only the AI sub-setting. API keys, selections and custom model
+    # definitions stay together inside SQLite app_settings.
+    save_settings(ai={
+        "provider": provider,
+        "api_keys": cleaned_keys,
+        "models": cleaned_models,
+        "custom_models": cleaned_custom_models,
+    })
+
+
+def save_custom_models(custom_models: dict) -> dict:
+    """Persist custom models without overwriting provider keys or selections."""
+    settings = load_settings().get("ai") or {}
+    cleaned = _normalise_custom_models(custom_models)
+    settings["custom_models"] = cleaned
+    save_settings(ai=settings)
+    return cleaned
+
+
+def add_custom_model(provider: str, display_name: str, model_id: str) -> dict:
+    """Add and persist one provider-specific model; duplicate IDs are rejected."""
+    if provider not in PROVIDERS:
+        raise ValueError("Choose one of the supported AI providers.")
+    current = get_ai_settings()["custom_models"]
+    entry = validate_custom_model(provider, display_name, model_id, current[provider])
+    current[provider].append(entry)
+    save_custom_models(current)
+    return dict(entry)
+
+
+def update_custom_model(provider: str, old_model_id: str,
+                        display_name: str, model_id: str) -> dict:
+    """Edit one custom model while keeping API model IDs unique per provider."""
+    if provider not in PROVIDERS:
+        raise ValueError("Choose one of the supported AI providers.")
+    current = get_ai_settings()["custom_models"]
+    index = next(
+        (i for i, item in enumerate(current[provider])
+         if item["model_id"] == old_model_id),
+        None,
+    )
+    if index is None:
+        raise ValueError(f"Custom model {old_model_id!r} was not found.")
+    entry = validate_custom_model(
+        provider, display_name, model_id, current[provider],
+        exclude_model_id=old_model_id,
+    )
+    current[provider][index] = entry
+    save_custom_models(current)
+    return dict(entry)
+
+
+def delete_custom_model(provider: str, model_id: str) -> None:
+    """Delete one custom model definition for the given provider."""
+    if provider not in PROVIDERS:
+        raise ValueError("Choose one of the supported AI providers.")
+    current = get_ai_settings()["custom_models"]
+    remaining = [item for item in current[provider] if item["model_id"] != model_id]
+    if len(remaining) == len(current[provider]):
+        raise ValueError(f"Custom model {model_id!r} was not found.")
+    current[provider] = remaining
+    save_custom_models(current)
 
 
 # ─── Prompt construction ───────────────────────────────────────
@@ -882,9 +1015,11 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
     if not api_key:
         return None, f"No {provider['label']} API key set. Add one in Settings → 🤖 AI."
 
-    model = (model or "").strip() or provider["default_model"]
-    if len(model) > 128 or not re.fullmatch(r"[A-Za-z0-9._:/-]+", model):
-        return None, "Invalid model name. Choose a valid model in Settings → 🤖 AI."
+    model = (model or "").strip()
+    if not model:
+        return None, "No model selected. Choose a model in Settings → 🤖 AI."
+    if not _is_valid_model_id(model):
+        return None, "Invalid model ID syntax. Check the exact API model ID in Settings → 🤖 AI."
 
     # Central enforcement covers every provider and all prompt builders,
     # including future call sites. Never silently switch providers.
@@ -1086,3 +1221,31 @@ class AICommandExplainWorker(QThread):
             self.error.emit(err)
         else:
             self.done.emit(text)
+
+class AIModelTestWorker(QThread):
+    """Validate a chosen provider/model pair using the existing request path."""
+
+    succeeded = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, provider: str, api_key: str, model: str, parent=None):
+        super().__init__(parent)
+        self._provider = provider
+        self._api_key = api_key
+        self._model = model
+        self.finished.connect(self.deleteLater)
+
+    def run(self):
+        answer, error = _call_provider(
+            self._provider,
+            self._api_key,
+            self._model,
+            "This is a connectivity test from KubeDock. Reply with a short confirmation only.",
+        )
+        if error:
+            self.failed.emit(error)
+        else:
+            self.succeeded.emit(
+                f"Model test succeeded for {self._provider} / {self._model}. "
+                f"Response: {answer[:240]}"
+            )
