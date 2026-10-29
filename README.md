@@ -343,19 +343,25 @@ The swipe can begin from the tab content area, so navigation does not depend on 
 
 # 🤖 AI / Ops Assistant
 
-KubeDock includes AI-assisted infrastructure workflows.
+KubeDock includes AI-assisted infrastructure workflows, task-specific provider routing, and a safety-first AI Intelligence Workspace.
 
 Depending on the configured provider, AI functionality can help with:
 
-- Troubleshooting
-- Log analysis
-- Explaining infrastructure errors
-- Kubernetes investigation
-- Command assistance
-- Operational questions
-- Pod diagnosis
+- Troubleshooting, log analysis, and pod diagnosis grounded in live pod status, events, and available metrics
+- Quick command explanations and deeper diagnoses with optional escalation
+- Voice/conversation provider selection and the existing Ops Mind voice engines
+- Explicit local/private pod diagnosis through Ollama at `http://127.0.0.1:11434` (loopback only; no silent cloud fallback)
+- Exporting redacted, timestamped incident evidence bundles without sending them to an AI provider
+- Deterministic candidate-signal correlation for OOM, probe, image-pull, scheduling, network, and permission failures
+- A read-only, time-bounded watch for a selected resource over the existing SSH connection
+- Multi-cluster inventory comparison, conservative resource right-sizing recommendations, remediation proposal validation, and service-index generation from the AI Intelligence Workspace
+- Optional local aggregate usage/error/latency counters; telemetry is disabled by default and does not store prompts, logs, responses, or API keys
 
-AI provider settings are managed from the application Settings dialog.
+Open **Settings → AI → Open AI Intelligence Workspace** to access the advisor tools. The workspace does not execute remediation actions. Existing Ops Mind confirmation, RBAC, protected-namespace safeguards, and post-mutation verification remain required for cluster changes.
+
+To use local inference, install Ollama separately, pull a model (for example `ollama pull qwen2.5:7b`), and start the Ollama service. KubeDock connects only to the loopback endpoint `127.0.0.1:11434`; it does not install models automatically.
+
+AI provider and task-profile settings are managed from the application Settings dialog. Task profiles select an explicitly configured provider/model and do not silently fall back to a different cloud provider.
 
 ---
 
