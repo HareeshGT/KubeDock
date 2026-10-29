@@ -533,7 +533,7 @@ target machine normally only downloads and copies the app; it does not install
 Python requirements or run PyInstaller locally.
 
 The rolling [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer)
-contains bundles for Linux x86-64/ARM64, macOS Apple Silicon/Intel, and Windows
+contains bundles for Linux x86-64, macOS Apple Silicon/Intel, and Windows
 x86-64. The main-branch GitHub Actions workflow refreshes these bundles after
 changes land on `main`. The fast bundle omits the optional Qwen3-TTS/PyTorch
 runtime, which can add several GB to an installation.
@@ -555,8 +555,7 @@ Install behavior can be selected with `KUBEDOCK_INSTALL_MODE`:
 
 Pass a branch argument to build that branch from source, for example
 `bash kubedock-installer.sh feature/my-branch`. To install the latest main
-bundle with a strict fast-only policy, run `KUBEDOCK_INSTALL_MODE=release bash
-kubedock-installer.sh`.
+bundle with a strict fast-only policy, run `KUBEDOCK_INSTALL_MODE=release bash kubedock-installer.sh`.
 
 ## macOS package installer
 
