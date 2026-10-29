@@ -126,25 +126,27 @@ jobs:
           import os
           import subprocess
           import sys
+          import tempfile
 
-          try:
-              result = subprocess.run(
-                  ["dist/KubeDock.app/Contents/MacOS/KubeDock"],
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  text=True,
-                  timeout=8,
-                  env=os.environ.copy(),
-              )
-          except subprocess.TimeoutExpired as exc:
-              output = exc.stdout or ""
-              if isinstance(output, bytes):
-                  output = output.decode("utf-8", errors="replace")
-              print(output)
-          else:
-              print(result.stdout or "")
-              print(f"Frozen KubeDock exited early with status {result.returncode}", file=sys.stderr)
-              raise SystemExit(1)
+          with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as log:
+              try:
+                  result = subprocess.run(
+                      ["dist/KubeDock.app/Contents/MacOS/KubeDock"],
+                      stdout=log,
+                      stderr=subprocess.STDOUT,
+                      text=True,
+                      timeout=8,
+                      env=os.environ.copy(),
+                  )
+              except subprocess.TimeoutExpired:
+                  log.seek(0)
+                  print(log.read())
+                  print("Frozen macOS executable remained alive through the startup smoke-test window.")
+              else:
+                  log.seek(0)
+                  print(log.read())
+                  print(f"Frozen KubeDock exited early with status {result.returncode}", file=sys.stderr)
+                  raise SystemExit(1)
           PY
 
       - name: Smoke-test Windows application startup
