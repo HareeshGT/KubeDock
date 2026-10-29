@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget, QListWidget, QListWidgetItem,
 )
 
 import ai_intelligence
@@ -46,6 +46,8 @@ class AIIntelligenceDialog(QDialog):
         self._watch_config = None
         self._cluster_snapshots = {}
         self._capture_workers = {}
+        self._service_records = []
+        self._service_capture_worker = None
         self._build_watch_tab()
         self._build_remediation_tab()
         self._incident_worker = None
@@ -431,6 +433,276 @@ class AIIntelligenceDialog(QDialog):
         self._show_result(self.remediation_output, result)
 
 
+
+    def _build_cross_system_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.cross_system_path = QLineEdit()
+        self.cross_system_path.setPlaceholderText("Incident/evidence bundle JSON")
+        choose = QPushButton("Choose evidence JSON")
+        choose.clicked.connect(lambda: self._choose_json(self.cross_system_path))
+        layout.addWidget(self.cross_system_path)
+        layout.addWidget(choose)
+        layout.addWidget(QLabel(
+            "Correlates recognizable failure signals across supplied host, Docker, Kubernetes, "
+            "application-log and metrics evidence. Results are hypotheses, not causal proof."
+        ))
+        analyze = QPushButton("Correlate evidence signals")
+        analyze.clicked.connect(self._correlate_evidence_file)
+        layout.addWidget(analyze)
+        self.cross_system_output = self._output(layout)
+        self.tabs.addTab(tab, "Cross-system diagnosis")
+
+    def _correlate_evidence_file(self):
+        try:
+            payload = self._read_json_file(self.cross_system_path.text())
+            evidence = payload.get("evidence", payload)
+            if not isinstance(evidence, dict):
+                raise ValueError("Evidence must be a JSON object.")
+            log_keys = ("logs", "application_logs", "host_logs", "docker_logs", "container_logs", "system_logs")
+            logs = []
+            events = []
+            metrics = {}
+            for key, value in evidence.items():
+                lowered = str(key).lower()
+                if any(token in lowered for token in ("log", "stdout", "stderr")):
+                    if isinstance(value, str):
+                        logs.extend(value.splitlines())
+                    elif isinstance(value, list):
+                        logs.extend(str(item) for item in value[:ai_intelligence.MAX_EVIDENCE_ITEMS])
+                elif "event" in lowered:
+                    events.extend(value if isinstance(value, list) else [value])
+                elif "metric" in lowered or "cpu" in lowered or "memory" in lowered:
+                    metrics[key] = value
+            result = ai_intelligence.correlate_incident_signals(
+                logs=logs, events=events, metrics=metrics
+            )
+            result["sources"] = {
+                "cluster": payload.get("cluster", "unknown"),
+                "namespace": payload.get("namespace", "unknown"),
+                "resource": payload.get("resource", "unknown"),
+                "log_sources_detected": [key for key in log_keys if key in evidence],
+            }
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Cannot correlate evidence", str(exc))
+            return
+        self._show_result(self.cross_system_output, result)
+
+    def _build_usage_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(QLabel(
+            "Opt-in local aggregates only: provider, task profile, call count, error count, "
+            "and average latency. Prompts, logs, API keys, and response text are never recorded."
+        ))
+        refresh = QPushButton("Refresh usage summary")
+        refresh.clicked.connect(self._refresh_usage_summary)
+        layout.addWidget(refresh)
+        self.usage_output = self._output(layout)
+        self._refresh_usage_summary()
+        self.tabs.addTab(tab, "Usage / latency")
+
+    def _refresh_usage_summary(self):
+        enabled = bool((load_settings().get("ai") or {}).get("usage_telemetry_enabled", False))
+        if not enabled:
+            result = {
+                "enabled": False,
+                "message": "Telemetry is disabled. Enable the opt-in checkbox in Settings → AI to start collecting local aggregate counters.",
+                "records": [],
+            }
+        else:
+            try:
+                ledger = ai_intelligence.UsageLedger(str(db.DB_PATH))
+                result = {"enabled": True, "records": ledger.summary(30)}
+            except Exception as exc:
+                result = {"enabled": True, "error": str(exc), "records": []}
+        self._show_result(self.usage_output, result)
+
+
+    def _build_incident_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.incident_bundle_path = QLineEdit()
+        self.incident_bundle_path.setPlaceholderText("Redacted incident bundle JSON")
+        choose = QPushButton("Choose incident bundle")
+        choose.clicked.connect(lambda: self._choose_json(self.incident_bundle_path))
+        layout.addWidget(self.incident_bundle_path)
+        layout.addWidget(choose)
+        layout.addWidget(QLabel(
+            "Analyze an exported incident bundle with the configured Deep Diagnosis profile. "
+            "Evidence is redacted again before provider submission. No remediation is executed."
+        ))
+        analyze = QPushButton("Investigate incident with AI")
+        analyze.clicked.connect(self._investigate_incident_bundle)
+        layout.addWidget(analyze)
+        self.incident_output = self._output(layout)
+        self.tabs.addTab(tab, "Incident investigator")
+
+    def _investigate_incident_bundle(self):
+        try:
+            payload = self._read_json_file(self.incident_bundle_path.text())
+            evidence = payload.get("evidence", {})
+            if not isinstance(evidence, dict):
+                raise ValueError("Incident evidence must be a JSON object.")
+            logs = evidence.get("logs", "")
+            if not isinstance(logs, str):
+                logs = json.dumps(logs, ensure_ascii=False)
+            resource_context = evidence.get("live_resource_evidence", "")
+            if not isinstance(resource_context, str):
+                resource_context = json.dumps(resource_context, ensure_ascii=False)
+            signals = evidence.get("candidate_signals")
+            if signals:
+                resource_context += "\\n\\nPreviously correlated candidate signals (not proof):\\n" + json.dumps(signals, ensure_ascii=False)
+            if not logs.strip() and not resource_context.strip():
+                raise ValueError("The incident bundle contains no logs or resource evidence.")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Cannot investigate incident", str(exc))
+            return
+        settings = ai_assist.get_ai_settings()
+        assignment = settings.get("task_profiles", {}).get("deep_diagnosis", {})
+        provider = assignment.get("provider") or settings["provider"]
+        api_key = ai_assist.get_api_key(provider)
+        if not api_key and provider != "ollama":
+            QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
+            return
+        model = ai_assist.get_model(provider)
+        self.incident_output.setPlainText("Investigating incident evidence…")
+        self._incident_worker = ai_assist.AIExplainWorker(
+            provider, api_key, model,
+            str(payload.get("resource") or "unknown-resource"),
+            str(payload.get("namespace") or "unknown"),
+            str(evidence.get("container") or "default"),
+            logs,
+            parent=self,
+            resource_context=resource_context,
+            task_profile="deep_diagnosis",
+        )
+        self._incident_worker.done.connect(self.incident_output.setPlainText)
+        self._incident_worker.error.connect(lambda message: self.incident_output.setPlainText("Investigation failed: " + message))
+        self._incident_worker.start()
+
+    def _build_services_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.service_context = QLineEdit()
+        self.service_context.setPlaceholderText("kubectl context name for live service discovery")
+        layout.addWidget(self.service_context)
+        capture = QPushButton("Discover services over current SSH")
+        capture.clicked.connect(self._capture_services)
+        layout.addWidget(capture)
+        self.service_filter = QLineEdit()
+        self.service_filter.setPlaceholderText("Filter by cluster, namespace, service, or port")
+        self.service_filter.textChanged.connect(self._filter_services)
+        layout.addWidget(self.service_filter)
+        self.service_list = QListWidget()
+        self.service_list.itemDoubleClicked.connect(self._show_selected_service)
+        layout.addWidget(self.service_list, 1)
+        self.services_path = QLineEdit()
+        self.services_path.setPlaceholderText("Or load JSON with a services array")
+        choose = QPushButton("Choose services JSON")
+        choose.clicked.connect(lambda: self._choose_json(self.services_path))
+        layout.addWidget(self.services_path)
+        layout.addWidget(choose)
+        button = QPushButton("Build service index from JSON")
+        button.clicked.connect(self._build_service_index)
+        layout.addWidget(button)
+        layout.addWidget(QLabel("Double-click a service to view its safe identifiers and a read-only kubectl command. No Service exposure or mutation is performed."))
+        self.services_output = self._output(layout)
+        self.tabs.addTab(tab, "Service index")
+
+    def _capture_services(self):
+        if self._service_capture_worker is not None:
+            return
+        ssh = self._find_ssh_connection()
+        context = self.service_context.text().strip()
+        if ssh is None:
+            QMessageBox.warning(self, "SSH not connected", "Connect to a VM in KubeDock before discovering services.")
+            return
+        if not context:
+            QMessageBox.information(self, "Context required", "Enter the kubectl context for service discovery.")
+            return
+        inner = "kubectl --context " + shlex.quote(context) + " get services -A -o json 2>&1"
+        worker = CommandWorker(ssh, "bash -lc " + shlex.quote(inner), timeout=35)
+        self._service_capture_worker = worker
+        worker.result.connect(lambda output, error, code, label=context: self._on_services_captured(label, output, error, code))
+        worker.error.connect(lambda error: self.services_output.setPlainText("Service discovery failed: " + ai_intelligence.redact_evidence(error)))
+        worker.finished.connect(self._on_services_capture_finished)
+        worker.start()
+
+    def _on_services_captured(self, context, output, error, exit_code):
+        if exit_code != 0:
+            self.services_output.setPlainText("Service discovery failed; state is unknown.\\n" + ai_intelligence.redact_evidence(error or output))
+            return
+        try:
+            payload = json.loads(output)
+            items = payload.get("items")
+            if not isinstance(items, list):
+                raise ValueError("kubectl did not return a service list.")
+            records = []
+            for item in items[:5000]:
+                if not isinstance(item, dict):
+                    continue
+                metadata = item.get("metadata") or {}
+                spec = item.get("spec") or {}
+                records.append({
+                    "name": metadata.get("name", ""),
+                    "namespace": metadata.get("namespace", "default"),
+                    "cluster": context,
+                    "ports": [p.get("port") for p in (spec.get("ports") or []) if isinstance(p, dict) and p.get("port") is not None],
+                    "labels": metadata.get("labels") or {},
+                    "type": spec.get("type", "ClusterIP"),
+                })
+            self._service_records = ai_intelligence.build_service_index(records)
+            self._filter_services()
+            self.services_output.setPlainText(f"Discovered {len(self._service_records)} services from context {context}.")
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Invalid service inventory", str(exc))
+
+    def _on_services_capture_finished(self):
+        self._service_capture_worker = None
+
+    def _filter_services(self, _query=None):
+        if not hasattr(self, "service_list"):
+            return
+        query = self.service_filter.text().strip().lower()
+        self.service_list.clear()
+        for service in self._service_records:
+            searchable = " ".join((
+                service.get("cluster", ""), service.get("namespace", ""),
+                service.get("name", ""), " ".join(str(p) for p in service.get("ports", [])),
+            )).lower()
+            if query and query not in searchable:
+                continue
+            item = QListWidgetItem(
+                service["namespace"] + "/" + service["name"] +
+                "  ·  " + str(service.get("cluster") or "cluster") +
+                "  ·  ports " + (", ".join(str(p) for p in service.get("ports", [])) or "none")
+            )
+            item.setData(Qt.UserRole, service)
+            self.service_list.addItem(item)
+
+    def _show_selected_service(self, item):
+        service = item.data(Qt.UserRole) or {}
+        command = "kubectl --context " + shlex.quote(str(service.get("cluster") or "")) + " -n " + shlex.quote(str(service.get("namespace") or "")) + " get service " + shlex.quote(str(service.get("name") or ""))
+        self._show_result(self.services_output, {
+            "service": service,
+            "read_only_inspection_command": command,
+            "note": "The command is shown for inspection only and has not been executed.",
+        })
+
+    def _build_service_index(self):
+        try:
+            payload = self._read_json_file(self.services_path.text())
+            services = payload.get("services")
+            if not isinstance(services, list):
+                raise ValueError("The JSON object must contain a services array.")
+            result = ai_intelligence.build_service_index(services)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Cannot build service index", str(exc))
+            return
+        self._service_records = result
+        self._filter_services()
+        self._show_result(self.services_output, {"count": len(result), "services": result})
 
     def _build_cross_system_tab(self):
         tab = QWidget()
