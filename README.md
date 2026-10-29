@@ -47,6 +47,15 @@ Choose the installation mode with `KUBEDOCK_INSTALL_MODE`:
 
 For a macOS package, run `bash installer/build_pkg.sh` on a Mac.
 
+### Installer release versions
+
+Each successful scheduled or manually triggered installer deployment publishes an
+immutable semantic version such as `v1.0.0`, `v1.0.1`, and `v1.0.2` rather
+than a tag containing a commit hash and workflow run ID. Scheduled deployments
+increment the patch version. When manually running **Fast prebuilt installer
+bundles** from GitHub Actions, choose the `patch`, `minor`, or `major`
+version bump. Existing historical release tags remain available.
+
 ### Run from source
 
 Requirements depend on the features you use. You will generally need Python 3, plus the relevant SSH, Kubernetes, or AWS tools and credentials for your environment.
