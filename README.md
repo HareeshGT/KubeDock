@@ -1,1126 +1,125 @@
 # KubeDock
 
-> **Security:** See [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Please report security issues privately rather than through public issues.
-
 <p align="center">
-  <strong>A desktop control center for Virtual Machines, Kubernetes, SSH, SFTP, FTP, remote files, and cloud operations.</strong>
+  <strong>A desktop workspace for Kubernetes, virtual machines, SSH, remote files, Docker, and DevOps workflows.</strong>
 </p>
 
 <p align="center">
-  Manage infrastructure from one desktop application instead of switching between terminals, SSH clients, file managers, Kubernetes tools, and dashboards.
+  <a href="https://github.com/HareeshGT/KubeDock"><img src="https://img.shields.io/github/stars/HareeshGT/KubeDock?style=for-the-badge" alt="GitHub Stars"></a>
+  <a href="https://github.com/HareeshGT/KubeDock"><img src="https://img.shields.io/github/last-commit/HareeshGT/KubeDock?style=for-the-badge" alt="Last Commit"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-purple?style=for-the-badge" alt="MIT License"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/HareeshGT/KubeDock">
-    <img src="https://img.shields.io/github/stars/HareeshGT/KubeDock?style=for-the-badge" alt="GitHub Stars">
-  </a>
-  <a href="https://github.com/HareeshGT/KubeDock">
-    <img src="https://img.shields.io/github/forks/HareeshGT/KubeDock?style=for-the-badge" alt="GitHub Forks">
-  </a>
-  <a href="https://github.com/HareeshGT/KubeDock">
-    <img src="https://img.shields.io/github/last-commit/HareeshGT/KubeDock?style=for-the-badge" alt="Last Commit">
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-purple?style=for-the-badge" alt="MIT License">
-  </a>
-</p>
+KubeDock brings everyday infrastructure tasks into one desktop app, so you can manage remote systems without constantly switching between terminals, file managers, and cluster tools.
 
----
+## Features
 
-## Overview
+- **Virtual machines & SSH:** Connect to EC2 and remote hosts, run commands, and manage remote files.
+- **Remote file manager:** Browse, edit, upload, download, and search files over supported SSH/SFTP and FTP/FTPS connections.
+- **Kubernetes:** Inspect clusters, workloads, services, storage, events, and logs; open container shells; and manage port forwards.
+- **Docker:** Manage remote containers, images, volumes, and networks over SSH.
+- **AI-assisted operations:** Analyze logs and workload signals, investigate common failures, and review recommendations. Remediation actions require the app's existing safeguards and confirmation.
+- **Embedded Web App:** Use a mobile-friendly interface for common Kubernetes tasks.
+- **Themes & settings:** Customize the desktop experience and configure supported AI providers.
 
-**KubeDock** is a Python desktop infrastructure-management application built around common DevOps and cloud workflows.
+## Installation
 
-It combines:
+### Recommended: Fast prebuilt installer
 
-- Virtual Machines access
-- SSH and SFTP
-- Remote file management
-- FTP
-- Integrated terminal access
-- Kubernetes management
-- Docker management (containers, images, volumes, networks)
-- Pod logs and exec
-- Port forwarding and tunnels
-- AI-assisted operations
-- An embedded mobile-friendly Web App
-- Application security and settings
+Download the bundle for your operating system and architecture from the [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer).
 
-The goal is to make remote infrastructure feel like a single, consistent workspace.
+The bundles target Linux x86-64, macOS Apple Silicon/Intel, and Windows x86-64. They omit optional Qwen3-TTS/PyTorch and Qt WebEngine/Chromium components to keep installation lighter.
 
----
-
-# ✨ Features
-
-## ☁️ Virtual Machines Management
-
-Connect to and work with remote EC2 instances from the desktop application.
-
-Features include:
-
-- EC2 instance connections
-- SSH connectivity
-- Recent instance tracking
-- Remote filesystem browsing
-- Remote command execution
-- File upload and download
-- Remote file editing
-- Search
-- Media/file handling
-- Sudo filesystem access
-
----
-
-## 🖥️ Integrated SSH Terminal
-
-KubeDock includes an integrated terminal for remote systems.
-
-You can run normal Linux and infrastructure commands directly inside the application, for example:
-
-```bash
-kubectl get pods
-systemctl status nginx
-journalctl -u my-service
-df -h
-top
-```
-
----
-
-## 📁 Remote File Manager
-
-A Finder-style interface for remote filesystems.
-
-You can:
-
-- Browse directories
-- Create files and directories
-- Rename files
-- Delete files
-- Upload files
-- Download files
-- Search files
-- Edit files
-- Execute files
-- Stream remote video/audio directly over SSH/SFTP or FTP/FTPS (no download, no conversion)
-- Work with privileged directories
-
----
-
-## 🔐 Sudo Filesystem Access
-
-KubeDock supports privileged filesystem operations when protected paths require elevated access.
-
-This is intended to reduce repetitive manual privilege-escalation workflows when working with server files.
-
----
-
-# ☸️ Kubernetes Management
-
-KubeDock provides a dedicated Kubernetes management interface for common cluster operations.
-
-Supported resource views include:
-
-- Pods
-- Deployments
-- StatefulSets
-- DaemonSets
-- Services
-- Ingress
-- Jobs
-- CronJobs
-- Horizontal Pod Autoscalers
-- Persistent Volumes
-- Persistent Volume Claims
-- ConfigMaps
-- Secrets
-- Events
-- Storage resources
-
----
-
-## 📊 Kubernetes Dashboard
-
-The Kubernetes dashboard provides a high-level view of cluster activity, workloads, resources, events, and health information.
-
-It is designed to reduce the need to start every investigation from commands such as:
-
-```bash
-kubectl get ...
-```
-
----
-
-## 📦 Pod Management
-
-KubeDock provides pod-focused operational workflows including:
-
-- Pod status
-- Container information
-- Restart counts
-- Node information
-- Pod details
-- Pod logs
-- Kubernetes events
-- Container execution
-
-Running containers can also be opened for interactive shell access where supported.
-
----
-
-## 📜 Kubernetes Logs
-
-Inspect pod and container logs directly from KubeDock.
-
-Useful for investigating:
-
-- Application failures
-- CrashLoopBackOff
-- Startup errors
-- API failures
-- Configuration problems
-- Container errors
-
----
-
-## 🖥️ Kubernetes Exec
-
-Open an interactive shell inside a running container from the UI.
-
-Typical workflows such as:
-
-```bash
-kubectl exec -it <pod> -- /bin/bash
-```
-
-or:
-
-```bash
-kubectl exec -it <pod> -- /bin/sh
-```
-
-can be performed without leaving KubeDock.
-
-Output is **live**: the dialog keeps one persistent shell open in the pod, so a
-long-running `wget`, `curl`, `apt` or `pip` shows its progress as it happens
-(progress bars redraw in place, colours are preserved) instead of appearing only
-after the command finishes. `cd`, environment variables and pipes work because
-it is a real shell. Use the **Ctrl+C** button to interrupt a running command.
-Closing the dialog ends the session in the pod.
-
-> Full-screen programs that address the cursor (`vim`, `nano`, `top`, `htop`,
-> `less`) are not supported in this dialog. Use `top -b -n1`, `cat`, or edit
-> files with KubeDock's file editor instead.
-
----
-
-## 🔀 Port Forwarding & Tunnels
-
-KubeDock supports Kubernetes port forwarding and remote tunnel workflows.
-
-This can be useful for accessing internal services such as:
-
-- Grafana
-- Prometheus
-- Kibana
-- Internal APIs
-- Databases
-- Development services
-- Kubernetes dashboards
-
-without directly exposing those services publicly.
-
----
-
-# 🐳 Docker Management
-
-The **Docker** tab manages the Docker engine on the VM you are connected to. It
-runs the `docker` CLI over the existing SSH connection, so there is nothing
-extra to install on your machine and no additional credentials.
-
-Views:
-
-- **Containers** — state-aware Start, Stop, Restart, Pause/Unpause, live Logs
-  (`docker logs -f`), Run command (one non-interactive `sh -c` command), Inspect, Remove
-- **Images** — Pull, Inspect, Remove
-- **Volumes** — Inspect, Remove
-- **Networks** — Inspect, Remove
-
-Each view has a filter box, and an optional auto-refresh runs only while the tab
-is visible. Destructive actions ask for confirmation; removing a running
-container offers a force-remove.
-
-Requirements and notes:
-
-- Docker must be installed on the VM, and the SSH user must be allowed to use it
-  (member of the `docker` group, or switch user inside KubeDock — the Docker tab
-  follows the Sudo user switch just like the Kubernetes tab).
-- Clear messages are shown when Docker is missing, the daemon is not running, or
-  access to the Docker socket is denied.
-- Container, volume, network and image names are validated and shell-quoted before
-  they are sent to the host.
-
----
-
-# 🌐 Embedded Web App
-
-KubeDock now includes an **embedded Web App** that starts automatically with the desktop application.
-
-The Web App provides a mobile-friendly interface for monitoring and performing common Kubernetes operations from a phone, tablet, or another device that can reach the KubeDock host.
-
-### Web App capabilities
-
-- Mobile-friendly Kubernetes dashboard
-- Namespace listing
-- Pod listing
-- Deployment listing
-- Service listing
-- Node listing
-- Kubernetes events
-- Pod/container logs
-- Deployment restart
-- Deployment scaling
-- Pod deletion
-- TOTP-based login with expiring sessions
-- Health endpoint
-
-### Existing SSH connection is reused
-
-The embedded Web App does **not** create a second SSH connection to the VM.
-
-KubeDock passes its existing live SSH client to the Web App runtime, and Web App Kubernetes operations are executed through that managed session.
-
-This keeps the desktop and Web App on the same connection path and avoids unnecessary duplicate SSH sessions.
-
-### Web App OTP authentication
-
-The Web App uses a six-digit RFC 6238 TOTP rotating every 30 seconds. Open Settings → Web App to view/copy the code. The seed is generated once and stored in the OS credential vault, never ordinary settings or a network API. The FastAPI backend independently validates codes, rate-limits failures, prevents time-step reuse, and issues an expiring HttpOnly session. Username/password Basic Authentication is no longer accepted.
-
-**Remote access requires HTTPS.** Configure both `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` before using a phone or any non-loopback client. Without TLS, remote page/API access is refused; loopback remains available for development. Never send OTPs over plain LAN HTTP.
-
-### Web App logging
-
-The embedded server writes logs to:
-
-```text
-~/.kubedock/logs/webapp.log
-```
-
-### Web App configuration
-
-The Web App can use environment variables for its listener configuration:
-
-```text
-WEBAPP_HOST
-WEBAPP_PORT
-WEBAPP_TLS_CERTFILE
-WEBAPP_TLS_KEYFILE
-```
-
-The server binds to loopback (`127.0.0.1`) by default. When both TLS variables are set it binds to all interfaces (`0.0.0.0`) so devices on your network can connect over HTTPS; `WEBAPP_HOST` overrides either default. Remote browser access is permitted only over HTTPS, and WebApp APIs require a server-validated TOTP session.
-
-### Remote access
-
-Because the Web App is a network service, remote-device access depends on network connectivity between the client and the machine running KubeDock.
-
-A private network such as a VPN or mesh VPN can be used when you need to access the Web App while the phone and computer are on different physical networks.
-
----
-
-# 👆 Swipeable Settings
-
-The Settings dialog supports swipe-style navigation between its tabs.
-
-You can:
-
-- Swipe left to move to the next Settings tab
-- Swipe right to move to the previous Settings tab
-- Use horizontal trackpad gestures on supported systems
-- Drag horizontally with the mouse
-- Continue using normal tab clicks
-
-The swipe can begin from the tab content area, so navigation does not depend on clicking the tab header itself.
-
----
-
-# 🤖 AI / Ops Assistant
-
-KubeDock includes AI-assisted infrastructure workflows, task-specific provider routing, and a safety-first AI Intelligence Workspace.
-
-Depending on the configured provider, AI functionality can help with:
-
-- Troubleshooting, log analysis, and pod diagnosis grounded in live pod status, events, and available metrics
-- Quick command explanations and deeper diagnoses with optional escalation
-- Voice/conversation provider selection and the existing Ops Mind voice engines
-- Explicit local/private pod diagnosis through Ollama at `http://127.0.0.1:11434` (loopback only; no silent cloud fallback)
-- Exporting redacted, timestamped incident evidence bundles without sending them to an AI provider
-- Deterministic candidate-signal correlation for OOM, probe, image-pull, scheduling, network, and permission failures
-- A read-only, time-bounded watch for a selected resource over the existing SSH connection
-- Multi-cluster inventory comparison, conservative resource right-sizing recommendations, remediation proposal validation, and service-index generation from the AI Intelligence Workspace
-- Optional local aggregate usage/error/latency counters; telemetry is disabled by default and does not store prompts, logs, responses, or API keys
-
-Open **Settings → AI → Open AI Intelligence Workspace** to access the advisor tools. The workspace does not execute remediation actions. Existing Ops Mind confirmation, RBAC, protected-namespace safeguards, and post-mutation verification remain required for cluster changes.
-
-To use local inference, install Ollama separately, pull a model (for example `ollama pull qwen2.5:7b`), and start the Ollama service. KubeDock connects only to the loopback endpoint `127.0.0.1:11434`; it does not install models automatically.
-
-AI provider and task-profile settings are managed from the application Settings dialog. Task profiles select an explicitly configured provider/model and do not silently fall back to a different cloud provider.
-
----
-
-# 🎨 UI, Themes & SVG Icons
-
-KubeDock uses a consistent desktop UI with persistent theme settings and SVG-based icons.
-
-The SVG icon system centralizes icon rendering through `ui_icons.py` and supports crisp HiDPI rendering, including Retina displays.
-
-The application can map semantic labels to icons so controls can stay consistent across different parts of the UI.
-
----
-
-# 🔒 Security
-
-KubeDock connects to remote infrastructure and may handle sensitive credentials. Follow secure credential-handling practices and review the repository's [Security Policy](SECURITY.md) for supported versions and vulnerability reporting instructions.
-
-## Reporting Security Vulnerabilities
-
-Please **do not report suspected vulnerabilities in public GitHub issues, pull requests, or discussions**. Use [private vulnerability reporting](https://github.com/HareeshGT/KubeDock/security/advisories/new) when available. If it is unavailable, contact the maintainer privately through GitHub before sharing technical details publicly. Do not include live API keys, passwords, access tokens, kubeconfig files, private keys, or unredacted sensitive logs.
-
-## Application Lock
-
-KubeDock supports a PIN-protected application lock.
-
-The app can lock automatically after a configurable inactivity period.
-
-## PIN Storage
-
-PIN-related security uses password-derived cryptographic storage rather than storing the PIN itself as plain text.
-
-PBKDF2-SHA256 is used for PIN-related security.
-
-## Web App Authentication
-
-The embedded Web App requires a one-time TOTP login and an expiring session. Remote use must be protected by HTTPS.
-
-## Credential Handling
-
-Do not commit private keys, passwords, API keys, tokens, or other secrets to the repository.
-
----
-
-# 📡 FTP
-
-KubeDock also provides FTP functionality for connected devices and remote filesystems.
-
-The FTP interface is designed for graphical file-management workflows similar to the remote SFTP experience.
-
----
-
-# 🧩 Architecture
-
-KubeDock is being actively modularized so major infrastructure capabilities can evolve independently instead of putting application logic into one monolithic file.
-
-Key areas include:
-
-```text
-KubeDock/
-│
-├── main.py
-├── main_window.py
-│
-├── dashboard_tab.py
-├── kubernetes_tab.py
-├── k8s_cards.py
-│
-├── docker_tab.py
-├── docker_dialogs.py
-├── docker_utils.py
-│
-├── terminal_widget.py
-├── editor_widgets.py
-├── file_widgets.py
-│
-├── dialogs.py
-├── workers.py
-│
-├── settings_dialog.py
-├── themes.py
-├── ui_icons.py
-│
-├── security.py
-├── lock_screen.py
-├── sudo_fs.py
-│
-├── ftp_fs.py
-├── ai_assist.py
-├── k8s_ai_ops.py
-│
-├── webapp/
-│   ├── app.py
-│   ├── server.py
-│   ├── static/
-│   │   └── index.html
-│   └── ...
-│
-└── ...
-```
-
----
-
-# 🛠️ Technology Stack
-
-KubeDock is primarily built with:
-
-- Python
-- PyQt / Qt
-- Paramiko
-- Kubernetes tooling
-- `kubectl`
-- AWS infrastructure
-- FTP/SFTP tooling
-- FastAPI
-- Uvicorn
-- AI APIs
-- Shell commands
-- JSON-based application settings
-
-Architecture at a high level:
-
-```text
-                    ┌──────────────────────┐
-                    │       KubeDock       │
-                    │   Desktop UI / App   │
-                    └──────────┬───────────┘
-                               │
-             ┌─────────────────┼─────────────────┐
-             │                 │                 │
-             ▼                 ▼                 ▼
-        AWS / EC2         Kubernetes       Remote Files
-             │                 │                 │
-             ▼                 ▼                 ▼
-         SSH / SFTP        kubectl/API       SFTP / FTP
-                               │
-                               ▼
-                       Embedded Web App
-                               │
-                               ▼
-                       Phone / Tablet UI
-```
-
----
-
-# 💻 Requirements
-
-KubeDock is primarily developed and tested on macOS.
-
-Depending on the features you use, you may need:
-
-- Python 3
-- SSH client
-- `kubectl`
-- Kubernetes credentials / kubeconfig
-- AWS credentials where required
-- Appropriate SSH keys
-- Network access to target systems
-
-For Kubernetes workflows, verify that Kubernetes access is working in your environment.
-
-```bash
-kubectl config get-contexts
-kubectl cluster-info
-kubectl get nodes
-```
-
----
-
-# 🚀 Installation
-
-## Fast installer (recommended)
-
-KubeDock's standard installer prefers a **prebuilt application bundle** so the
-target machine normally only downloads and copies the app; it does not install
-Python requirements or run PyInstaller locally.
-
-The rolling [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer)
-contains bundles for Linux x86-64, macOS Apple Silicon/Intel, and Windows
-x86-64. The main-branch GitHub Actions workflow refreshes these bundles after
-changes land on `main`. Fast bundles omit the optional Qwen3-TTS/PyTorch stack
-and the large Qt WebEngine/Chromium runtime. The built-in remote editor remains
-available; install the optional Monaco editor only when you need it.
-
-To use the shell installer directly:
+On macOS or Linux, you can also run the installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/HareeshGT/KubeDock/main/installer/installer.sh -o kubedock-installer.sh
 bash kubedock-installer.sh
 ```
 
-Install behavior can be selected with `KUBEDOCK_INSTALL_MODE`:
+Choose the installation mode with `KUBEDOCK_INSTALL_MODE`:
 
-| Value | Behavior |
-|---|---|
-| `auto` (default) | Try the prebuilt bundle first; build from source if no compatible bundle is published. |
-| `release` | Require the prebuilt bundle. Fail instead of starting a source build if it is unavailable. |
-| `source` | Use the branch-selecting source installer and build with PyInstaller on the target machine. Set `KUBEDOCK_ENABLE_WEBENGINE=1` to include the optional Monaco editor. |
+| Mode | Behavior |
+| --- | --- |
+| `auto` | Use a compatible prebuilt bundle when available; otherwise build from source. |
+| `release` | Require a prebuilt bundle. |
+| `source` | Build from source on the target machine. |
 
-Pass a branch argument to build that branch from source, for example
-`bash kubedock-installer.sh feature/my-branch`. To install the latest main
-bundle with a strict fast-only policy, run `KUBEDOCK_INSTALL_MODE=release bash kubedock-installer.sh`.
+For a macOS package, run `bash installer/build_pkg.sh` on a Mac.
 
-## macOS package installer
+### Run from source
 
-Build a macOS `.pkg` on a Mac with:
-
-```bash
-bash installer/build_pkg.sh
-```
-
-The package offers a fast prebuilt installation by default. Choosing source
-mode allows selecting a branch and building it locally. The package is written
-to `dist/`.
-
-## Clone the repository
+Requirements depend on the features you use. You will generally need Python 3, plus the relevant SSH, Kubernetes, or AWS tools and credentials for your environment.
 
 ```bash
 git clone https://github.com/HareeshGT/KubeDock.git
 cd KubeDock
-```
-
-## Create a virtual environment
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-On Windows:
-
-```powershell
-.venv\Scripts\activate
-```
-
-## Install dependencies
-
-```bash
 pip install -r requirements.txt
-```
-
-The core requirements contain only packages needed by the regular desktop app
-and embedded Web App. Build tooling and the large Monaco/Qt WebEngine editor are
-kept separate:
-
-```bash
-# Only when packaging KubeDock locally with PyInstaller:
-pip install -r requirements-build.txt
-
-# Optional Monaco web editor; the built-in editor works without this:
-pip install -r requirements-editor.txt
-```
-
-The fast prebuilt bundles and default source installs use the built-in editor.
-For the source installer, set `KUBEDOCK_ENABLE_WEBENGINE=1` to include Monaco.
-
-### Optional: voice input and offline narration
-
-Voice features are kept out of the core requirements so ordinary installs do
-not need microphone, speech-recognition, or offline text-to-speech packages.
-The optional bundle installs SpeechRecognition, PyAudio, and pyttsx3; on macOS
-it also installs the pyobjc bridge used by the system speech backend. PyAudio
-may need the native PortAudio library first:
-
-```bash
-# macOS: brew install portaudio   |   Debian/Ubuntu: sudo apt install portaudio19-dev
-pip install -r requirements-voice.txt
-```
-
-Without these packages, typed Ops Mind requests continue to work; microphone
-input and offline narration report when their optional runtime is unavailable.
-OpenAI neural TTS remains a separate cloud option that uses the configured API
-key and may incur provider charges. Qwen3-TTS remains optional and is installed
-separately with `requirements-qwen-tts.txt`; its model weights are not bundled
-or downloaded during an ordinary installation.
-
----
-
-# ▶️ Running KubeDock
-
-From the project directory:
-
-```bash
 python3 main.py
 ```
 
-or:
+On Windows, activate the environment with `.venv\\Scripts\\activate`. For local packaging, install `requirements-build.txt`. Optional voice, Monaco editor, and Qwen3-TTS dependencies are documented in their respective requirements files.
 
-```bash
-python main.py
-```
+## Kubernetes and cloud access
 
----
-
-# ☸️ Kubernetes Setup
-
-Check available contexts:
+Configure your Kubernetes contexts, SSH connections, and AWS credentials using the standard tools for your environment. For example:
 
 ```bash
 kubectl config get-contexts
-```
-
-Select the context you need:
-
-```bash
-kubectl config use-context <context-name>
-```
-
-Verify access:
-
-```bash
 kubectl get nodes
-```
-
----
-
-# ☁️ AWS Setup
-
-For EC2 workflows, configure AWS credentials using the standard AWS mechanisms available in your environment.
-
-For example:
-
-```bash
-aws configure
-```
-
-Verify:
-
-```bash
 aws sts get-caller-identity
 ```
 
----
+KubeDock can only access resources that the configured user, SSH identity, and Kubernetes/AWS permissions allow.
 
-# 🔑 SSH Setup
+## Embedded Web App
 
-Make sure the SSH key has appropriate permissions:
+The Web App provides a mobile-friendly view of common Kubernetes resources and operations. It reuses KubeDock's existing managed SSH session.
 
-```bash
-chmod 600 ~/.ssh/my-key.pem
-```
+- Login uses a six-digit TOTP that rotates every 30 seconds, with expiring sessions.
+- The listener defaults to loopback.
+- **Remote access requires HTTPS.** Configure `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE` before connecting from another device. Do not send OTPs over plain HTTP.
+- Logs are written to `~/.kubedock/logs/webapp.log`.
 
-Test SSH access independently:
+## Security
 
-```bash
-ssh -i ~/.ssh/my-key.pem ubuntu@<EC2-IP>
-```
+KubeDock can connect to infrastructure and use credentials for remote systems and AI providers. Keep access credentials private, grant only the permissions you need, and never commit secrets to the repository.
 
-Once the SSH connection works, configure the corresponding connection details in KubeDock.
+Please report suspected vulnerabilities **privately**, not through public issues or pull requests. See the [Security Policy](SECURITY.md) and [private vulnerability reporting](https://github.com/HareeshGT/KubeDock/security/advisories/new).
 
----
+## Development
 
-# ⚙️ Application Settings
-
-The Settings dialog provides configuration for application behavior and infrastructure features.
-
-Available areas include:
-
-- Security / PIN lock
-- Kubernetes tab visibility
-- Protected Kubernetes namespaces
-- AI providers, models, and API keys
-- Web App TOTP code and HTTPS listener settings
-- Theme and other application preferences
-
----
-
-# 🌐 Web App Quick Start
-
-1. Start KubeDock.
-2. Connect to the VM as usual.
-3. Open **Settings → Web App**.
-4. Copy the current six-digit OTP shown in Settings → Web App.
-5. For remote devices, configure `WEBAPP_TLS_CERTFILE` and `WEBAPP_TLS_KEYFILE`.
-6. Open the HTTPS Web App URL from your phone or tablet and enter the current OTP.
-
-For devices on different physical networks, use a private VPN or mesh VPN between the devices or their networks.
-
----
-
-# 🧪 Development
-
-Clone the repository:
-
-```bash
-git clone https://github.com/HareeshGT/KubeDock.git
-cd KubeDock
-```
-
-Create the environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-Install runtime dependencies (see the optional editor and voice sections above for additional features):
-
-```bash
-pip install -r requirements.txt
-```
-
-For a local PyInstaller build, also install `requirements-build.txt`. The
-optional `requirements-editor.txt` can be installed before packaging if you
-want the Monaco/Qt WebEngine editor inside the resulting bundle.
-
-Run the application:
+Install the runtime dependencies as described above, then run:
 
 ```bash
 python3 main.py
 ```
 
----
+When contributing, create a feature branch, test your changes, and open a pull request. Do not include passwords, tokens, private keys, kubeconfig files, or sensitive logs in issues or pull requests.
 
-# 📦 Building the Application
+## Troubleshooting
 
-KubeDock includes an installer script for packaging the application.
+- **Kubernetes resources are missing:** Verify access with `kubectl config get-contexts` and `kubectl get nodes`.
+- **SSH fails:** Check the host, username, key permissions, network access, and SSH server.
+- **Web App is unreachable:** Check `~/.kubedock/logs/webapp.log`, the configured port, HTTPS settings, and the current OTP.
+- **Fast installer unavailable:** Try `KUBEDOCK_INSTALL_MODE=source` to build from source if your machine has the required build dependencies.
 
-```bash
-./installer.sh
-```
+## License
 
-The installer can work with a selected Git branch and packages the Web App static assets with the desktop application.
+KubeDock is licensed under the [MIT License](LICENSE).
 
-The current Web App UI source of truth is:
+## Links
 
-```text
-webapp/static/index.html
-```
-
-During packaging, the installer also regenerates the packaged fallback Web UI from the current `index.html`, preventing an outdated embedded UI from being shipped.
-
----
-
-# 🗂️ Typical Workflows
-
-## Manage an EC2 server
-
-```text
-Launch KubeDock
-      ↓
-Connect to EC2
-      ↓
-SSH / SFTP
-      ↓
-Browse filesystem
-      ↓
-Open terminal
-      ↓
-Inspect logs
-      ↓
-Edit / transfer files
-```
-
-## Troubleshoot Kubernetes
-
-```text
-Open Kubernetes
-      ↓
-Select cluster / context
-      ↓
-Inspect namespace
-      ↓
-Check pods
-      ↓
-Open pod logs
-      ↓
-Inspect events
-      ↓
-Exec into container
-      ↓
-Investigate / fix
-```
-
-## Monitor Kubernetes from a phone
-
-```text
-Phone
-  ↓
-Private VPN / reachable network
-  ↓
-KubeDock Web App
-  ↓
-Existing KubeDock SSH session
-  ↓
-Remote kubectl
-  ↓
-Kubernetes cluster
-```
-
----
-
-# 🐛 Troubleshooting
-
-## Kubernetes is not showing
-
-Verify:
-
-```bash
-kubectl config get-contexts
-kubectl cluster-info
-kubectl get nodes
-```
-
-If these commands fail outside KubeDock, fix the Kubernetes configuration first.
-
-## SSH connection fails
-
-Test independently:
-
-```bash
-ssh -i <key> <user>@<host>
-```
-
-Check:
-
-- Host/IP
-- Username
-- SSH key
-- Key permissions
-- Security groups
-- Network connectivity
-- SSH server availability
-
-## Web App cannot be reached
-
-Check that KubeDock is running and the embedded server has started.
-
-Check the log file:
-
-```bash
-cat ~/.kubedock/logs/webapp.log
-```
-
-Make sure the listening port is reachable, use HTTPS for remote devices, and enter the current six-digit OTP from Settings → Web App. Codes expire every 30 seconds.
-
-If using a VPN or mesh VPN, verify both devices are connected to the same private network and can reach one another.
-
-## Web App shows an old UI
-
-The packaged UI should come from:
-
-```text
-webapp/static/index.html
-```
-
-Rebuild the application with:
-
-```bash
-./installer.sh
-```
-
-The installer regenerates the packaged fallback from the current Web App HTML during the build process.
-
-## Permission denied on SSH key
-
-Use:
-
-```bash
-chmod 600 <private-key>
-```
-
-## Port forwarding does not work
-
-Check:
-
-```bash
-kubectl get pods
-kubectl get svc
-```
-
-Then verify that the target service and port exist and are reachable.
-
----
-
-# 🔐 Security Recommendations
-
-Never commit secrets to this repository.
-
-Do not commit:
-
-```text
-*.pem
-*.key
-.env
-.env.*
-credentials
-tokens
-passwords
-API keys
-private keys
-```
-
-Use environment variables, OS credential stores, SSH agents, or other secure credential-management mechanisms where appropriate.
-
-Before publishing changes, review:
-
-```bash
-git status
-git diff
-```
-
----
-
-# 🗺️ Roadmap
-
-Potential future improvements include:
-
-- More Kubernetes resource actions
-- Improved multi-cluster workflows
-- Better log analysis
-- More AI-assisted troubleshooting
-- More cloud-provider integrations
-- Improved connection management
-- More automation workflows
-- Additional platform support
-- More extensive automated testing
-- Further UI modularization
-
-The roadmap may change as the project evolves.
-
----
-
-# 🤝 Contributing
-
-Contributions are welcome.
-
-Create a feature branch:
-
-```bash
-git checkout -b feature/my-feature
-```
-
-Make and test your changes.
-
-Review them:
-
-```bash
-git diff
-```
-
-Commit:
-
-```bash
-git add .
-git commit -m "Add my feature"
-```
-
-Push:
-
-```bash
-git push origin feature/my-feature
-```
-
-Then open a Pull Request.
-
----
-
-# 🐞 Bug Reports
-
-When reporting a bug, include:
-
-- Operating system
-- Python version
-- KubeDock version or commit
-- Relevant logs
-- Steps to reproduce
-- Expected behavior
-- Actual behavior
-- Kubernetes version, if applicable
-
-Never include credentials, tokens, private keys, passwords, or other sensitive information in bug reports.
-
----
-
-# 📸 Screenshots
-
-Suggested documentation sections as the project evolves:
-
-- Main dashboard
-- EC2 manager
-- Remote file manager
-- SSH terminal
-- Kubernetes dashboard
-- Kubernetes resource views
-- FTP manager
-- AI / Ops assistant
-- Web App
-- Settings and themes
-
----
-
-# 📜 License
-
-KubeDock is licensed under the MIT License.
-
-Copyright (c) 2026 Hareesh GT
-
-See [`LICENSE`](LICENSE) for the complete license text.
-
----
-
-# 👤 Author
-
-**Hareesh GT**
-
-GitHub:
-
-https://github.com/HareeshGT
-
-Project:
-
-https://github.com/HareeshGT/KubeDock
-
----
-
-# ⭐ Support the Project
-
-If KubeDock is useful to you:
-
-- ⭐ Star the repository
-- 🐛 Report bugs
-- 💡 Suggest improvements
-- 🔧 Contribute code
-- 📖 Improve documentation
-- 🔀 Submit pull requests
+- [Repository](https://github.com/HareeshGT/KubeDock)
+- [Fast Installer releases](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer)
+- [Security Policy](SECURITY.md)
+- [Report a vulnerability privately](https://github.com/HareeshGT/KubeDock/security/advisories/new)
 
 ---
 
 <p align="center">
-
-**KubeDock**
-
-A unified desktop workspace for cloud, Kubernetes, and infrastructure operations.
-
-Built for developers, DevOps engineers, SREs, and infrastructure teams.
-
+  <strong>KubeDock</strong><br>
+  One desktop workspace for cloud, Kubernetes, and infrastructure operations.
 </p>
-
-
-## Local SQLite persistence
-
-KubeDock stores local recent-connection metadata, Dashboard history, and
-application settings in `~/.kubedock/kubedock.db` using Python's built-in
-`sqlite3` module. Existing `recent.csv`, dashboard history JSON, and legacy
-`settings.json` are migration sources only; after a successful migration, the
-app reads/writes these state categories through SQLite. The legacy files are
-retained as backups unless the user removes them. JSON used for API payloads,
-editor language handling, and remote tunnel definitions is not application-state
-persistence and remains unchanged.
-
-
-### Media playback compatibility
-
-KubeDock first streams remote audio/video directly through QtMultimedia. If the
-platform backend rejects a video (including MKV files containing unsupported
-codecs), the player automatically falls back to the local FFmpeg executable,
-converts the remote media to a temporary H.264/AAC MP4, and plays that result.
-The source file is never modified. On macOS, the installer installs FFmpeg
-through Homebrew. If FFmpeg is unavailable, KubeDock reports that clearly and
-provides the normal download option.
