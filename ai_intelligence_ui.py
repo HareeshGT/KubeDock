@@ -666,13 +666,15 @@ class AIIntelligenceDialog(QDialog):
                 difference = ai_incident_workflow.compare_watch_states(
                     self._last_watch_observation, text
                 )
-                if difference["changed"] or difference["critical_signals"]:
+                if difference["changed"]:
                     header = (
                         "\n[change detected · " + difference["severity"].upper() + "] "
                         + difference["message"]
                     )
-                    if difference["critical_signals"]:
-                        header += " Signals: " + ", ".join(difference["critical_signals"])
+                    if difference["new_critical_signals"]:
+                        header += " New critical signals: " + ", ".join(difference["new_critical_signals"])
+                    elif difference["critical_signals"]:
+                        header += " Persistent signals: " + ", ".join(difference["critical_signals"])
                     self.watch_output.append(header)
                     if difference["added"]:
                         self.watch_output.append("Added/changed lines:\n- " + "\n- ".join(difference["added"][:8]))
@@ -1140,6 +1142,7 @@ class AIIntelligenceDialog(QDialog):
 
         options = QHBoxLayout()
         self.incident_profile_combo = QComboBox()
+        self.incident_profile_combo.addItem("Quick explanations", "quick")
         self.incident_profile_combo.addItem("Deep Diagnosis", "deep_diagnosis")
         self.incident_profile_combo.addItem("Local / Private (Ollama)", "local_private")
         options.addWidget(QLabel("AI profile"))
@@ -1234,6 +1237,7 @@ class AIIntelligenceDialog(QDialog):
         command = ai_incident_workflow.build_live_incident_command(
             target["context"], target["namespace"], target["resource_kind"], target["resource_name"]
         )
+        self._live_incident_target = dict(target)
         self._pending_live_analysis = bool(also_analyze)
         self.incident_output.setPlainText(
             "Collecting bounded, read-only evidence. Secret and ConfigMap values are not queried…"
@@ -1246,12 +1250,11 @@ class AIIntelligenceDialog(QDialog):
         worker.start()
 
     def _on_live_incident_collected(self, output, error, exit_code):
-        target = ai_incident_workflow.validate_incident_target(
-            self.incident_context.text(),
-            self.incident_namespace.text(),
-            self.incident_resource_kind.currentText(),
-            self.incident_resource_name.text(),
-        )
+        target = dict(getattr(self, "_live_incident_target", {}) or {})
+        if not target:
+            self._pending_live_analysis = False
+            self.incident_output.setPlainText("Live collection returned without a validated target; discard this result.")
+            return
         sections = ai_incident_workflow.parse_live_incident_output(
             (output or "") + (("\n" + error) if error else "")
         )
@@ -1435,7 +1438,12 @@ class AIIntelligenceDialog(QDialog):
             QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
             return
         model = assignment.get("model_id") or ai_assist.get_model(provider)
-        self.incident_output.setPlainText("Investigating redacted incident evidence…")
+        prompt_context_chars = len(logs) + len(resource_context)
+        self._incident_estimated_tokens = ai_incident_workflow.estimate_prompt_tokens("x" * prompt_context_chars)
+        self.incident_output.setPlainText(
+            "Investigating redacted evidence… estimated evidence size "
+            f"~{self._incident_estimated_tokens} tokens (rough characters/4 estimate, not provider tokenization)."
+        )
         self._incident_worker = ai_assist.AIExplainWorker(
             provider, api_key, model,
             str(payload.get("resource") or "unknown-resource"),
@@ -1454,9 +1462,13 @@ class AIIntelligenceDialog(QDialog):
 
     def _on_incident_analysis_done(self, answer):
         sources = getattr(self, "_active_runbook_matches", [])
-        suffix = ""
+        suffix = (
+            "\n\nEstimated evidence size: ~"
+            + str(getattr(self, "_incident_estimated_tokens", "unknown"))
+            + " tokens (rough characters/4 estimate; not provider-reported token usage)."
+        )
         if sources:
-            suffix = "\n\nLocal runbook references used:\n- " + "\n- ".join(sources)
+            suffix += "\n\nLocal runbook references used:\n- " + "\n- ".join(sources)
         self.incident_output.setPlainText(str(answer) + suffix)
 
     def _build_services_tab(self):

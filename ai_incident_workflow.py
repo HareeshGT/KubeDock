@@ -294,23 +294,31 @@ def estimate_prompt_tokens(text: str) -> int:
 
 
 def compare_watch_states(previous: str, current: str) -> dict:
-    """Return a bounded deterministic diff and severity hint for two observations."""
+    """Return a bounded diff while ignoring volatile AGE values that change every poll."""
     prev_lines = [line.strip() for line in str(previous or "").splitlines() if line.strip()]
     curr_lines = [line.strip() for line in str(current or "").splitlines() if line.strip()]
-    previous_set, current_set = set(prev_lines), set(curr_lines)
-    added = [line for line in curr_lines if line not in previous_set]
-    removed = [line for line in prev_lines if line not in current_set]
+    age_pattern = re.compile(r"(?<=\\s)(?:\\d+[smhdwy])+(?=\\s|$)", re.I)
+    def normalize(line):
+        return age_pattern.sub("<AGE>", line)
+    normalized_previous = {normalize(line): line for line in prev_lines}
+    normalized_current = {normalize(line): line for line in curr_lines}
+    added = [line for key, line in normalized_current.items() if key not in normalized_previous]
+    removed = [line for key, line in normalized_previous.items() if key not in normalized_current]
     critical_terms = ("crashloopbackoff", "oomkilled", "imagepullbackoff", "errimagepull", "failedscheduling", "ready=false", "unhealthy")
-    lower = "\n".join(curr_lines).lower()
-    critical = [term for term in critical_terms if term in lower]
+    previous_lower = "\n".join(prev_lines).lower()
+    current_lower = "\n".join(curr_lines).lower()
+    critical = [term for term in critical_terms if term in current_lower]
+    previous_critical = [term for term in critical_terms if term in previous_lower]
+    new_critical = [term for term in critical if term not in previous_critical]
     changed = bool(added or removed)
     return {
         "changed": changed,
         "added": added[:30],
         "removed": removed[:30],
-        "severity": "high" if critical else ("info" if changed else "none"),
+        "severity": "high" if new_critical else ("info" if changed else "none"),
         "critical_signals": critical,
-        "message": "Meaningful state changes detected." if changed else "No textual state change detected.",
+        "new_critical_signals": new_critical,
+        "message": "Meaningful state changes detected." if changed else "No state change after normalizing volatile AGE values.",
     }
 
 
