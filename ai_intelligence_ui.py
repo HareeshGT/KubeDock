@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 
 import ai_intelligence
 import db
+import ai_assist
 from themes import load_settings
 from workers import CommandWorker
 
@@ -47,6 +48,8 @@ class AIIntelligenceDialog(QDialog):
         self._capture_workers = {}
         self._build_watch_tab()
         self._build_remediation_tab()
+        self._incident_worker = None
+        self._build_incident_tab()
         self._build_services_tab()
         self._build_cross_system_tab()
         self._build_usage_tab()
@@ -510,6 +513,69 @@ class AIIntelligenceDialog(QDialog):
             except Exception as exc:
                 result = {"enabled": True, "error": str(exc), "records": []}
         self._show_result(self.usage_output, result)
+
+
+    def _build_incident_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.incident_bundle_path = QLineEdit()
+        self.incident_bundle_path.setPlaceholderText("Redacted incident bundle JSON")
+        choose = QPushButton("Choose incident bundle")
+        choose.clicked.connect(lambda: self._choose_json(self.incident_bundle_path))
+        layout.addWidget(self.incident_bundle_path)
+        layout.addWidget(choose)
+        layout.addWidget(QLabel(
+            "Analyze an exported incident bundle with the configured Deep Diagnosis profile. "
+            "Evidence is redacted again before provider submission. No remediation is executed."
+        ))
+        analyze = QPushButton("Investigate incident with AI")
+        analyze.clicked.connect(self._investigate_incident_bundle)
+        layout.addWidget(analyze)
+        self.incident_output = self._output(layout)
+        self.tabs.addTab(tab, "Incident investigator")
+
+    def _investigate_incident_bundle(self):
+        try:
+            payload = self._read_json_file(self.incident_bundle_path.text())
+            evidence = payload.get("evidence", {})
+            if not isinstance(evidence, dict):
+                raise ValueError("Incident evidence must be a JSON object.")
+            logs = evidence.get("logs", "")
+            if not isinstance(logs, str):
+                logs = json.dumps(logs, ensure_ascii=False)
+            resource_context = evidence.get("live_resource_evidence", "")
+            if not isinstance(resource_context, str):
+                resource_context = json.dumps(resource_context, ensure_ascii=False)
+            signals = evidence.get("candidate_signals")
+            if signals:
+                resource_context += "\\n\\nPreviously correlated candidate signals (not proof):\\n" + json.dumps(signals, ensure_ascii=False)
+            if not logs.strip() and not resource_context.strip():
+                raise ValueError("The incident bundle contains no logs or resource evidence.")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Cannot investigate incident", str(exc))
+            return
+        settings = ai_assist.get_ai_settings()
+        assignment = settings.get("task_profiles", {}).get("deep_diagnosis", {})
+        provider = assignment.get("provider") or settings["provider"]
+        api_key = ai_assist.get_api_key(provider)
+        if not api_key and provider != "ollama":
+            QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
+            return
+        model = ai_assist.get_model(provider)
+        self.incident_output.setPlainText("Investigating incident evidence…")
+        self._incident_worker = ai_assist.AIExplainWorker(
+            provider, api_key, model,
+            str(payload.get("resource") or "unknown-resource"),
+            str(payload.get("namespace") or "unknown"),
+            str(evidence.get("container") or "default"),
+            logs,
+            parent=self,
+            resource_context=resource_context,
+            task_profile="deep_diagnosis",
+        )
+        self._incident_worker.done.connect(self.incident_output.setPlainText)
+        self._incident_worker.error.connect(lambda message: self.incident_output.setPlainText("Investigation failed: " + message))
+        self._incident_worker.start()
 
     def _build_services_tab(self):
         tab = QWidget()
