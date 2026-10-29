@@ -43,10 +43,6 @@ jobs:
             asset: KubeDock-linux-x86_64.tar.gz
             bundle: KubeDock
             family: linux
-          - runner: ubuntu-22.04-arm
-            asset: KubeDock-linux-arm64.tar.gz
-            bundle: KubeDock
-            family: linux
           - runner: macos-15
             asset: KubeDock-macos-arm64.tar.gz
             bundle: KubeDock.app
