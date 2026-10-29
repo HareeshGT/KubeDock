@@ -526,12 +526,49 @@ kubectl get nodes
 
 # 🚀 Installation
 
-## macOS installer
+## Fast installer (recommended)
 
-Prebuilt macOS installers (`KubeDock-<version>.pkg`) are published on the
-[GitHub Releases page](https://github.com/HareeshGT/KubeDock/releases). To build
-one yourself on macOS, run `installer/build_pkg.sh`; the package is written to
-`dist/`.
+KubeDock's standard installer prefers a **prebuilt application bundle** so the
+target machine normally only downloads and copies the app; it does not install
+Python requirements or run PyInstaller locally.
+
+The rolling [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer)
+contains bundles for Linux x86-64/ARM64, macOS Apple Silicon/Intel, and Windows
+x86-64. The main-branch GitHub Actions workflow refreshes these bundles after
+changes land on `main`. The fast bundle omits the optional Qwen3-TTS/PyTorch
+runtime, which can add several GB to an installation.
+
+To use the shell installer directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HareeshGT/KubeDock/main/installer/installer.sh -o kubedock-installer.sh
+bash kubedock-installer.sh
+```
+
+Install behavior can be selected with `KUBEDOCK_INSTALL_MODE`:
+
+| Value | Behavior |
+|---|---|
+| `auto` (default) | Try the prebuilt bundle first; build from source if no compatible bundle is published. |
+| `release` | Require the prebuilt bundle. Fail instead of starting a source build if it is unavailable. |
+| `source` | Use the branch-selecting source installer and build with PyInstaller on the target machine. |
+
+Pass a branch argument to build that branch from source, for example
+`bash kubedock-installer.sh feature/my-branch`. To install the latest main
+bundle with a strict fast-only policy, run `KUBEDOCK_INSTALL_MODE=release bash
+kubedock-installer.sh`.
+
+## macOS package installer
+
+Build a macOS `.pkg` on a Mac with:
+
+```bash
+bash installer/build_pkg.sh
+```
+
+The package offers a fast prebuilt installation by default. Choosing source
+mode allows selecting a branch and building it locally. The package is written
+to `dist/`.
 
 ## Clone the repository
 
