@@ -137,7 +137,7 @@ class AIIntelligenceDialog(QDialog):
             + "kubectl --context " + context_q + " -n " + namespace_q
             + " top pod " + pod_q + " --containers --no-headers 2>&1; sleep 5; done"
         )
-        request_expr = r'{range .spec.containers[*]}{.resources.requests.cpu}{" "}{.resources.requests.memory}{"\n"}{end}'
+        request_expr = r'{range .spec.containers[*]}CPU={.resources.requests.cpu};MEM={.resources.requests.memory}{"\n"}{end}'
         request_command = (
             "printf '\\n__REQUESTS__\\n'; kubectl --context " + context_q
             + " -n " + namespace_q + " get pod " + pod_q
@@ -207,15 +207,20 @@ class AIIntelligenceDialog(QDialog):
         memory_request = 0
         request_count = 0
         for line in requests_text:
-            fields = line.split()
-            if not fields or fields[0].lower().startswith("error"):
+            if not line.strip() or line.strip().lower().startswith("error"):
                 continue
+            fields = dict(
+                part.split("=", 1) for part in line.split(";") if "=" in part
+            )
             try:
-                if fields[0]:
-                    cpu_request += ai_intelligence.parse_cpu_millicores(fields[0])
-                if len(fields) > 1 and fields[1]:
-                    memory_request += ai_intelligence.parse_memory_bytes(fields[1])
-                request_count += 1
+                cpu_text = fields.get("CPU", "").strip()
+                memory_text = fields.get("MEM", "").strip()
+                if cpu_text:
+                    cpu_request += ai_intelligence.parse_cpu_millicores(cpu_text)
+                if memory_text:
+                    memory_request += ai_intelligence.parse_memory_bytes(memory_text)
+                if cpu_text or memory_text:
+                    request_count += 1
             except ValueError:
                 continue
         self.cpu_usage.setValue(sum(cpu_samples) / len(cpu_samples))
