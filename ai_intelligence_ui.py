@@ -774,7 +774,14 @@ class AIIntelligenceDialog(QDialog):
         button = QPushButton("Validate remediation proposal")
         button.clicked.connect(self._validate_remediation)
         layout.addWidget(button)
-        layout.addWidget(QLabel("The result is a proposal only. Existing confirmation, RBAC, protected-namespace and post-action verification checks remain mandatory."))
+        self.send_remediation_btn = QPushButton("Send proposal to Ops Mind for review")
+        self.send_remediation_btn.setEnabled(False)
+        self.send_remediation_btn.clicked.connect(self._send_remediation_to_ops_mind)
+        layout.addWidget(self.send_remediation_btn)
+        layout.addWidget(QLabel(
+            "The planner never executes a change. Sending a supported proposal only prefills Ops Mind; "
+            "you must review the request, run the existing checks, and confirm any mutation there."
+        ))
         self.remediation_output = self._output(layout)
         self.tabs.addTab(tab, "Remediation planner")
 
@@ -790,11 +797,78 @@ class AIIntelligenceDialog(QDialog):
         try:
             result = ai_intelligence.validate_remediation_plan(plan)
         except ValueError as exc:
+            self._validated_remediation_plan = None
+            self.send_remediation_btn.setEnabled(False)
             QMessageBox.warning(self, "Remediation proposal rejected", str(exc))
             return
+        self._validated_remediation_plan = result
+        self.send_remediation_btn.setEnabled(
+            result["action"] in {"scale", "restart", "delete"}
+        )
+        if not self.send_remediation_btn.isEnabled():
+            result["handoff_note"] = (
+                "This action is not dispatched through Ops Mind by this workspace. "
+                "Use the existing reviewed workflow for the selected operation."
+            )
         self._show_result(self.remediation_output, result)
 
-
+    def _send_remediation_to_ops_mind(self):
+        plan = self._validated_remediation_plan
+        if not isinstance(plan, dict) or plan.get("action") not in {"scale", "restart", "delete"}:
+            QMessageBox.information(
+                self, "Unsupported handoff",
+                "Only validated scale, restart, or delete proposals can be prefetched into Ops Mind."
+            )
+            return
+        window = self._find_main_window()
+        k8s_tab = getattr(window, "k8s_tab", None) if window is not None else None
+        if k8s_tab is None:
+            QMessageBox.warning(self, "Ops Mind unavailable", "Open KubeDock's Kubernetes tab and connect before using this handoff.")
+            return
+        if plan["action"] == "scale":
+            request = (
+                f"In namespace {plan['namespace']}, scale {plan['resource']} {plan['name']} "
+                f"to {plan['plan'].get('replicas', self.remediation_replicas.value())} replicas."
+            )
+        elif plan["action"] == "restart":
+            request = f"In namespace {plan['namespace']}, restart {plan['resource']} {plan['name']}."
+        else:
+            request = f"In namespace {plan['namespace']}, delete {plan['resource']} {plan['name']}."
+        subs = getattr(k8s_tab, "sub_tabs", None)
+        if subs is None:
+            QMessageBox.warning(self, "Ops Mind unavailable", "The Kubernetes Ops Mind panel was not found.")
+            return
+        ops_widget = None
+        ops_index = -1
+        for index in range(subs.count()):
+            if "Ops Mind" in subs.tabText(index):
+                root_widget = subs.widget(index)
+                candidates = [root_widget] + root_widget.findChildren(QWidget)
+                for candidate in candidates:
+                    if hasattr(candidate, "request_input") and hasattr(candidate, "_submit"):
+                        ops_widget = candidate
+                        ops_index = index
+                        break
+                if ops_widget is not None:
+                    break
+        if ops_widget is None:
+            QMessageBox.warning(self, "Ops Mind unavailable", "Could not locate the Ops Mind request box.")
+            return
+        if window is not None and hasattr(window, "main_tabs"):
+            window.main_tabs.setCurrentWidget(k8s_tab)
+        group_selector = getattr(k8s_tab, "tab_group_combo", None)
+        if group_selector is not None:
+            group_index = group_selector.findData("ai")
+            if group_index >= 0:
+                group_selector.setCurrentIndex(group_index)
+        subs.setCurrentIndex(ops_index)
+        ops_widget.request_input.setText(request)
+        ops_widget.request_input.setFocus()
+        QMessageBox.information(
+            self, "Proposal sent for review",
+            "The validated request has been preffilled in Ops Mind. It has not been submitted or executed. "
+            "Review the target and operation, then use Ops Mind's normal Run/confirmation workflow."
+        )
 
     def _build_cross_system_tab(self):
         tab = QWidget()
