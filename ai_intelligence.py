@@ -245,9 +245,12 @@ class UsageLedger:
     def __init__(self, database_path: str):
         self.database_path = database_path
         with sqlite3.connect(self.database_path) as connection:
-            connection.execute("CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, provider TEXT NOT NULL, profile TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(day, provider, profile))")
+            connection.execute("CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, provider TEXT NOT NULL, profile TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0, latency_total_ms INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(day, provider, profile))")
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(ai_usage_daily)")}
+            if "latency_total_ms" not in columns:
+                connection.execute("ALTER TABLE ai_usage_daily ADD COLUMN latency_total_ms INTEGER NOT NULL DEFAULT 0")
 
-    def record(self, provider: str, profile: str, *, success: bool, enabled: bool = True) -> None:
+    def record(self, provider: str, profile: str, *, success: bool, latency_ms: int = 0, enabled: bool = True) -> None:
         if not enabled:
             return
         day = datetime.now(timezone.utc).date().isoformat()
@@ -255,17 +258,19 @@ class UsageLedger:
         profile = re.sub(r"[^a-zA-Z0-9_.-]", "", profile)[:80] or "unknown"
         with sqlite3.connect(self.database_path) as connection:
             connection.execute(
-                "INSERT INTO ai_usage_daily(day,provider,profile,calls,errors) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(day,provider,profile) DO UPDATE SET calls=calls+1, errors=errors+excluded.errors",
-                (day, provider, profile, 1, 0 if success else 1),
+                "INSERT INTO ai_usage_daily(day,provider,profile,calls,errors,latency_total_ms) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(day,provider,profile) DO UPDATE SET calls=calls+1, errors=errors+excluded.errors, latency_total_ms=latency_total_ms+excluded.latency_total_ms",
+                (day, provider, profile, 1, 0 if success else 1, max(0, int(latency_ms))),
             )
 
     def summary(self, days: int = 30) -> list[dict]:
         days = max(1, min(int(days), 365))
         with sqlite3.connect(self.database_path) as connection:
             rows = connection.execute(
-                "SELECT provider,profile,SUM(calls),SUM(errors) FROM ai_usage_daily "
-                "WHERE day >= date('now', ?) GROUP BY provider,profile ORDER BY provider,profile",
+                "SELECT provider,profile,SUM(calls),SUM(errors), "
+                "CASE WHEN SUM(calls)>0 THEN CAST(SUM(latency_total_ms)/SUM(calls) AS INTEGER) ELSE 0 END "
+                "FROM ai_usage_daily WHERE day >= date('now', ?) "
+                "GROUP BY provider,profile ORDER BY provider,profile",
                 (f"-{days} days",),
             ).fetchall()
-        return [{"provider": r[0], "profile": r[1], "calls": r[2], "errors": r[3]} for r in rows]
+        return [{"provider": r[0], "profile": r[1], "calls": r[2], "errors": r[3], "average_latency_ms": r[4]} for r in rows]
