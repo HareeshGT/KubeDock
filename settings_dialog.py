@@ -511,8 +511,8 @@ class SettingsDialog(QDialog):
         v.addWidget(profile_group)
         profile_help = QLabel(
             "Choose which configured provider handles quick command explanations, "
-            "deep pod diagnoses, and voice/conversational requests. Each profile "
-            "uses that provider's saved model and API key."
+            "deep pod diagnoses, voice/conversation, and private local inference. "
+            "Ollama uses only http://127.0.0.1:11434 and does not require an API key."
         )
         profile_help.setWordWrap(True)
         profile_help.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
@@ -523,6 +523,7 @@ class SettingsDialog(QDialog):
             ("quick", "Quick explanations"),
             ("deep_diagnosis", "Deep diagnoses"),
             ("voice", "Voice / conversation"),
+            ("local_private", "Local / Private (Ollama loopback)"),
         ):
             v.addWidget(QLabel(label))
             combo = QComboBox()
