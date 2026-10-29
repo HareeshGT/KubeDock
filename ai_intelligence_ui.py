@@ -577,7 +577,7 @@ class AIIntelligenceDialog(QDialog):
         if not api_key and provider != "ollama":
             QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
             return
-        model = ai_assist.get_model(provider)
+        model = assignment.get("model_id") or ai_assist.get_model(provider)
         self.incident_output.setPlainText("Investigating incident evidence…")
         self._incident_worker = ai_assist.AIExplainWorker(
             provider, api_key, model,
