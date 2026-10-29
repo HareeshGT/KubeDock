@@ -1,6 +1,5 @@
 """themes.py — Theme definitions, QSS builder, and apply helpers."""
 
-import os
 import re
 
 # ─── Theme palette definitions ────────────────────────────────
@@ -82,13 +81,6 @@ THEMES = {
 from db import get_all_settings, set_settings
 
 T = {}
-
-APP_DIR = os.path.join(os.path.expanduser("~"), ".kubedock")
-os.makedirs(APP_DIR, mode=0o700, exist_ok=True)
-try:
-    os.chmod(APP_DIR, 0o700)
-except OSError:
-    pass
 
 CURRENT_THEME = "Obsidian Purple"
 
