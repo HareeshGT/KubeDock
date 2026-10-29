@@ -1,28 +1,16 @@
 """settings_dialog.py — App-wide Settings dialog."""
 
-from PyQt5.QtCore import QEvent, QTimer, Qt
+from pathlib import Path
+from PyQt5.QtCore import QEvent, QTimer, Qt, QUrl
 from PyQt5.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QCheckBox,
-    QComboBox,
-    QTabBar,
-    QTabWidget,
-    QWidget,
-    QScrollArea,
-    QDialogButtonBox,
-    QFrame,
-    QLineEdit,
-    QApplication,
-    QListWidget,
-    QInputDialog,
-    QMessageBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
+    QComboBox, QTabBar, QTabWidget, QWidget, QScrollArea, QDialogButtonBox,
+    QFrame, QLineEdit, QApplication, QListWidget, QInputDialog, QMessageBox,
+    QSpinBox, QGroupBox, QGridLayout, QFormLayout,
 )
-from PyQt5.QtGui import QFont
-
+from PyQt5.QtGui import QFont, QDesktopServices
+from db import APP_DIR, connect as db_connect
+from app_preferences import PERFORMANCE_PROFILES, normalize_performance_settings, normalize_connection_preferences
 from themes import T, apply_qss_to, load_settings, save_settings
 import security
 import ai_assist
@@ -315,8 +303,10 @@ class SettingsDialog(QDialog):
         lay.addWidget(title)
 
         tabs = SwipeTabWidget()
+        tabs.addTab(self._build_general_tab(), " ⚙  General ")
+        tabs.addTab(self._build_connections_tab(), " ⌁  Connections ")
         tabs.addTab(self._build_security_tab(), " 🔒  Security ")
-        tabs.addTab(self._build_k8s_tab(), " ⎈  Kubernetes Tabs ")
+        tabs.addTab(self._build_k8s_tab(), " ⎈  Kubernetes ")
         tabs.addTab(self._build_ai_tab(), " 🤖  AI ")
         tabs.addTab(self._build_webapp_tab(), " 🌐  Web App ")
         lay.addWidget(tabs, 1)
@@ -327,6 +317,146 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self._on_save)
         btns.rejected.connect(self.reject)
         lay.addWidget(btns)
+
+    def _build_general_tab(self):
+        w = QWidget()
+        root = QVBoxLayout(w)
+        root.setContentsMargins(4, 14, 4, 4)
+        root.setSpacing(12)
+        intro = QLabel("Control refresh frequency and local maintenance. These preferences are saved locally.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        root.addWidget(intro)
+
+        group = QGroupBox("Performance & refresh")
+        group_layout = QVBoxLayout(group)
+        form = QFormLayout()
+        self._performance_values = {}
+        self._applying_performance_profile = False
+        perf = normalize_performance_settings(load_settings())
+        self.performance_profile_combo = QComboBox()
+        for label, key in (("Low resource usage", "low_resource"), ("Balanced (current defaults)", "balanced"), ("Responsive", "responsive"), ("Custom", "custom")):
+            self.performance_profile_combo.addItem(label, key)
+        self.performance_profile_combo.setCurrentIndex(max(0, self.performance_profile_combo.findData(perf["profile"])))
+        form.addRow("Refresh profile", self.performance_profile_combo)
+        for key, label, low, high in (
+            ("dashboard_refresh_seconds", "Dashboard while open", 1, 60),
+            ("background_refresh_seconds", "Dashboard in background", 10, 600),
+            ("kubernetes_refresh_seconds", "Kubernetes auto-refresh", 5, 600),
+            ("docker_refresh_seconds", "Docker auto-refresh", 3, 300),
+            ("tunnel_refresh_seconds", "Tunnel status polling", 5, 300),
+        ):
+            spin = QSpinBox()
+            spin.setRange(low, high)
+            spin.setSuffix(" s")
+            spin.setSingleStep(1 if high <= 60 else 5)
+            spin.setKeyboardTracking(False)
+            spin.setValue(perf[key])
+            self._performance_values[key] = spin
+            form.addRow(label, spin)
+            spin.valueChanged.connect(self._mark_custom_performance)
+        group_layout.addLayout(form)
+        self.pause_dashboard_chk = QCheckBox("Pause dashboard polling when the Dashboard tab is inactive")
+        self.pause_dashboard_chk.setChecked(perf["pause_dashboard_when_inactive"])
+        group_layout.addWidget(self.pause_dashboard_chk)
+        hint = QLabel("Manual Refresh actions remain available in every profile.")
+        hint.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
+        group_layout.addWidget(hint)
+        root.addWidget(group)
+
+        maintenance = QGroupBox("Maintenance")
+        maintenance_layout = QVBoxLayout(maintenance)
+        open_folder = QPushButton("Open KubeDock data folder")
+        open_folder.clicked.connect(self._open_app_data_folder)
+        maintenance_layout.addWidget(open_folder)
+        clear_history = QPushButton("Clear dashboard history…")
+        clear_history.clicked.connect(self._clear_dashboard_history)
+        maintenance_layout.addWidget(clear_history)
+        root.addWidget(maintenance)
+        root.addStretch(1)
+        self.performance_profile_combo.currentIndexChanged.connect(self._on_performance_profile_changed)
+        self._set_performance_controls_enabled(perf["profile"] == "custom")
+        return w
+
+    def _on_performance_profile_changed(self, _index):
+        profile = self.performance_profile_combo.currentData()
+        if profile in PERFORMANCE_PROFILES:
+            self._applying_performance_profile = True
+            try:
+                for key, value in PERFORMANCE_PROFILES[profile].items():
+                    self._performance_values[key].setValue(value)
+            finally:
+                self._applying_performance_profile = False
+        self._set_performance_controls_enabled(profile == "custom")
+
+    def _mark_custom_performance(self, _value=None):
+        if self._applying_performance_profile:
+            return
+        if self.performance_profile_combo.currentData() != "custom":
+            self.performance_profile_combo.blockSignals(True)
+            self.performance_profile_combo.setCurrentIndex(self.performance_profile_combo.findData("custom"))
+            self.performance_profile_combo.blockSignals(False)
+            self._set_performance_controls_enabled(True)
+
+    def _set_performance_controls_enabled(self, enabled):
+        for control in getattr(self, "_performance_values", {}).values():
+            control.setEnabled(bool(enabled))
+
+    def _open_app_data_folder(self):
+        try:
+            Path(APP_DIR).mkdir(mode=0o700, parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(APP_DIR)))
+        except Exception as exc:
+            QMessageBox.warning(self, "Unable to open folder", str(exc))
+
+    def _clear_dashboard_history(self):
+        answer = QMessageBox.question(
+            self, "Clear dashboard history",
+            "Delete saved dashboard history from this device? This does not remove "
+            "connection profiles, settings, or credentials.",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            with db_connect() as database:
+                database.execute("DELETE FROM dashboard_history")
+            QMessageBox.information(self, "Dashboard history", "Dashboard history cleared.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Unable to clear history", str(exc))
+
+    def _build_connections_tab(self):
+        w = QWidget()
+        root = QVBoxLayout(w)
+        root.setContentsMargins(4, 14, 4, 4)
+        root.setSpacing(12)
+        intro = QLabel("Set SSH defaults and choose whether Kubernetes selections are remembered per connection.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        root.addWidget(intro)
+        group = QGroupBox("SSH defaults")
+        form = QFormLayout(group)
+        connection = normalize_connection_preferences(load_settings())
+        self.ssh_timeout_spin = QSpinBox()
+        self.ssh_timeout_spin.setRange(3, 60)
+        self.ssh_timeout_spin.setSuffix(" s")
+        self.ssh_timeout_spin.setValue(connection["ssh_connect_timeout_seconds"])
+        form.addRow("Connect timeout", self.ssh_timeout_spin)
+        self.ssh_keepalive_spin = QSpinBox()
+        self.ssh_keepalive_spin.setRange(0, 120)
+        self.ssh_keepalive_spin.setSuffix(" s (0 = disabled)")
+        self.ssh_keepalive_spin.setValue(connection["ssh_keepalive_seconds"])
+        form.addRow("SSH keepalive interval", self.ssh_keepalive_spin)
+        root.addWidget(group)
+        self.remember_k8s_chk = QCheckBox("Remember Kubernetes context and namespace for each connection")
+        self.remember_k8s_chk.setChecked(connection["remember_k8s_context"])
+        root.addWidget(self.remember_k8s_chk)
+        help_text = QLabel("Selections are keyed by a one-way hash of host, port, and username. Private-key paths and contents are not copied into these preferences.")
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        root.addWidget(help_text)
+        root.addStretch(1)
+        return w
 
     def _build_security_tab(self):
         w = QWidget()
@@ -414,18 +544,42 @@ class SettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         inner = QWidget()
-        iv = QVBoxLayout(inner)
-        iv.setSpacing(4)
+        iv = QGridLayout(inner)
+        iv.setSpacing(10)
         iv.setContentsMargins(2, 6, 2, 6)
         self._k8s_checks = {}
-
+        grouped = {"Workloads": [], "Networking": [], "Storage & configuration": [], "Observability": [], "Tools": []}
         for title in self._k8s_titles:
-            chk = QCheckBox(title.strip())
-            chk.setChecked(title not in self._hidden)
-            iv.addWidget(chk)
-            self._k8s_checks[title] = chk
-
-        iv.addStretch()
+            lowered = title.strip().lower()
+            if any(token in lowered for token in ("pod", "deployment", "stateful", "daemon", "hpa", "job")):
+                group_name = "Workloads"
+            elif any(token in lowered for token in ("service", "ingress", "tunnel")):
+                group_name = "Networking"
+            elif any(token in lowered for token in ("storage", "config", "secret", "persistent")):
+                group_name = "Storage & configuration"
+            elif any(token in lowered for token in ("event", "metric", "monitor", "history")):
+                group_name = "Observability"
+            else:
+                group_name = "Tools"
+            grouped[group_name].append(title)
+        positions = {"Workloads": (0, 0), "Networking": (0, 1), "Storage & configuration": (1, 0), "Observability": (1, 1), "Tools": (2, 0)}
+        for group_name, titles in grouped.items():
+            if not titles:
+                continue
+            box = QGroupBox(group_name)
+            box_layout = QVBoxLayout(box)
+            box_layout.setContentsMargins(10, 10, 10, 10)
+            box_layout.setSpacing(5)
+            for title in titles:
+                chk = QCheckBox(title.strip())
+                chk.setChecked(title not in self._hidden)
+                box_layout.addWidget(chk)
+                self._k8s_checks[title] = chk
+            row, col = positions[group_name]
+            iv.addWidget(box, row, col)
+        iv.setRowStretch(3, 1)
+        iv.setColumnStretch(0, 1)
+        iv.setColumnStretch(1, 1)
         scroll.setWidget(inner)
         v.addWidget(scroll, 1)
         v.addSpacing(4)
@@ -530,6 +684,15 @@ class SettingsDialog(QDialog):
         profile_help.setWordWrap(True)
         profile_help.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
         v.addWidget(profile_help)
+        v.addWidget(QLabel("Default response detail"))
+        self.ai_response_detail_combo = QComboBox()
+        self.ai_response_detail_combo.addItem("Concise", "concise")
+        self.ai_response_detail_combo.addItem("Balanced", "balanced")
+        self.ai_response_detail_combo.addItem("Detailed", "detailed")
+        current_detail = str(load_settings().get("ai_response_detail", "balanced") or "balanced")
+        detail_index = self.ai_response_detail_combo.findData(current_detail)
+        self.ai_response_detail_combo.setCurrentIndex(detail_index if detail_index >= 0 else 1)
+        v.addWidget(self.ai_response_detail_combo)
 
         self.task_profile_combos = {}
         self.task_profile_model_combos = {}
@@ -919,7 +1082,21 @@ class SettingsDialog(QDialog):
         else:
             security.save_lock_settings(enabled=False)
 
-        save_settings(k8s_hidden_tabs=self.hidden_k8s_tabs())
+        performance = {
+            "profile": self.performance_profile_combo.currentData(),
+            "pause_dashboard_when_inactive": self.pause_dashboard_chk.isChecked(),
+            **{key: widget.value() for key, widget in self._performance_values.items()},
+        }
+        save_settings(
+            performance_settings=performance,
+            connection_preferences={
+                "ssh_connect_timeout_seconds": self.ssh_timeout_spin.value(),
+                "ssh_keepalive_seconds": self.ssh_keepalive_spin.value(),
+            },
+            remember_k8s_context=self.remember_k8s_chk.isChecked(),
+            ai_response_detail=self.ai_response_detail_combo.currentData(),
+            k8s_hidden_tabs=self.hidden_k8s_tabs(),
+        )
         k8s_ai_ops.save_protected_namespaces(
             [p.strip() for p in self.protected_ns_edit.text().split(",")]
         )
@@ -949,6 +1126,15 @@ class SettingsDialog(QDialog):
         )
 
         self._webapp_original_enabled = self.webapp_enable_btn.isChecked()
+        main_window = self.parent()
+        for component_name in ("dashboard_tab", "docker_tab", "k8s_tab"):
+            component = getattr(main_window, component_name, None)
+            apply_preferences = getattr(component, "apply_refresh_settings", None)
+            if callable(apply_preferences):
+                try:
+                    apply_preferences()
+                except Exception:
+                    pass
         if self._webapp_otp_timer:
             self._webapp_otp_timer.stop()
         self.accept()
