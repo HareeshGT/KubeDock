@@ -70,11 +70,11 @@ class AIIntelligenceTests(unittest.TestCase):
     def test_usage_ledger_stores_only_aggregates_and_honors_opt_out(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = UsageLedger(str(Path(directory) / "usage.db"))
-            ledger.record("groq", "quick", success=True)
-            ledger.record("groq", "quick", success=False)
+            ledger.record("groq", "quick", success=True, latency_ms=100)
+            ledger.record("groq", "quick", success=False, latency_ms=300)
             ledger.record("openai", "voice", success=True, enabled=False)
             rows = ledger.summary()
-            self.assertEqual(rows, [{"provider": "groq", "profile": "quick", "calls": 2, "errors": 1}])
+            self.assertEqual(rows, [{"provider": "groq", "profile": "quick", "calls": 2, "errors": 1, "average_latency_ms": 200}])
 
 
 
