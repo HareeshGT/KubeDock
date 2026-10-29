@@ -181,7 +181,7 @@ if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release
 fi
 
 install_prebuilt_bundle() {
-  local asset="" arch="" base url tmp archive extracted target staged backup
+  local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
   base="https://github.com/HareeshGT/KubeDock/releases/download/fast-installer"
 
   case "$OS" in
@@ -247,6 +247,40 @@ install_prebuilt_bundle() {
     rm -rf "$tmp"
     return 2
   fi
+
+  checksum_file="$tmp/SHA256SUMS"
+  if ! curl -fL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 60 "$base/SHA256SUMS" -o "$checksum_file"; then
+    echo "Could not download the prebuilt bundle checksum file." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  expected_hash="$(awk -v name="$asset" '$2 == name { print $1; exit }' "$checksum_file")"
+  if ! [[ "$expected_hash" =~ ^[[:xdigit:]]{64}$ ]]; then
+    echo "The release checksum file does not contain a valid digest for $asset." >&2
+    rm -rf "$tmp"
+    return 2
+  fi
+
+  if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    archive_win="$(cygpath -w "$archive")"
+    archive_win="${archive_win//\\'/\\'\\'}"
+    actual_hash="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath '$archive_win').Hash" 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    actual_hash="$(sha256sum "$archive" | awk '{ print $1 }' | tr '[:upper:]' '[:lower:]')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_hash="$(shasum -a 256 "$archive" | awk '{ print $1 }' | tr '[:upper:]' '[:lower:]')"
+  else
+    echo "No SHA-256 utility was found; cannot verify the downloaded bundle." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  expected_hash="$(printf '%s' "$expected_hash" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    echo "SHA-256 verification failed for $asset." >&2
+    rm -rf "$tmp"
+    return 2
+  fi
+  echo "SHA-256 checksum verified."
 
   if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     archive_win="$(cygpath -w "$archive")"
