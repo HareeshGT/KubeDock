@@ -88,12 +88,39 @@ class CustomAIModelTests(unittest.TestCase):
                     self.assertIn("/models/" + model_id + ":generateContent", url)
                 else:
                     self.assertEqual(json.loads(body)["model"], model_id)
-                expected_header = (
-                    "x-api-key" if provider_id == "anthropic" else
-                    "x-goog-api-key" if provider_id == "gemini" else
-                    "Authorization"
-                )
-                self.assertIn(expected_header, headers)
+                if provider_id == "ollama":
+                    self.assertEqual(url, "http://127.0.0.1:11434/v1/chat/completions")
+                    self.assertNotIn("Authorization", headers)
+                else:
+                    expected_header = (
+                        "x-api-key" if provider_id == "anthropic" else
+                        "x-goog-api-key" if provider_id == "gemini" else
+                        "Authorization"
+                    )
+                    self.assertIn(expected_header, headers)
+
+
+    def test_task_profiles_and_local_provider_are_persisted(self):
+        profiles = {
+            "quick": {"provider": "groq"},
+            "deep_diagnosis": {"provider": "anthropic"},
+            "voice": {"provider": "mistral"},
+            "local_private": {"provider": "ollama"},
+        }
+        ai_assist.save_ai_settings(
+            "mistral", {"mistral": "mistral-key"},
+            {"mistral": "mistral-small-latest", "ollama": "qwen2.5:7b"},
+            task_profiles=profiles, auto_escalation=True,
+        )
+        settings = ai_assist.get_ai_settings()
+        self.assertEqual(settings["task_profiles"]["local_private"]["provider"], "ollama")
+        self.assertTrue(settings["auto_escalation"])
+        self.assertEqual(settings["models"]["ollama"], "qwen2.5:7b")
+
+    def test_ollama_does_not_require_an_api_key(self):
+        result, error = ai_assist._call_provider("ollama", "", "", "hello")
+        self.assertIsNone(result)
+        self.assertIn("No model selected", error)
 
     def test_backward_compatibility_for_existing_settings(self):
         self.settings_store["ai"] = {
