@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# KubeDock installer: clones the selected branch, builds it with PyInstaller and
-# installs the result for the current OS (macOS, Linux, or Windows via Git Bash).
+# KubeDock installer: prefer the prebuilt rolling main bundle for a fast install.
+# If no compatible bundle is published (or a branch is explicitly requested),
+# fall back to the existing branch-selecting source build with PyInstaller.
 #
-#   ./installer.sh [branch]
+#   ./installer.sh                 # fast prebuilt bundle, when available
+#   ./installer.sh <branch>        # build the requested branch from source
+#
+# Environment:
+#   KUBEDOCK_INSTALL_MODE          auto (default), release (fast-only), or source.
+#   KUBEDOCK_ENABLE_QWEN_TTS       1/0: include (or skip) the optional Qwen3-TTS runtime.
+#   KUBEDOCK_KEEP_BUILD            1: keep the temporary build directory (debugging).
+#   KUBEDECK_PKG_MODE              Set by the macOS .pkg wrapper (installer/build_pkg.sh).
 #
 # Environment:
 #   KUBEDECK_BRANCH            Branch to build (same as the positional argument).
