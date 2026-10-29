@@ -195,16 +195,18 @@ class AIIntelligenceDialog(QDialog):
                 metadata = item.get("metadata") or {}
                 spec = item.get("spec") or {}
                 status = item.get("status") or {}
+                if not isinstance(status, dict):
+                    status = {}
                 pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec.get("template"), dict) else spec
                 containers = pod_spec.get("containers", []) if isinstance(pod_spec, dict) else []
-                container_statuses = status.get("containerStatuses", []) if isinstance(status, list) else status.get("containerStatuses", [])
+                container_statuses = status.get("containerStatuses", [])
                 normalized = {
                     "kind": str(item.get("kind") or "").lower(),
                     "namespace": str(metadata.get("namespace") or "default"),
                     "name": str(metadata.get("name") or ""),
-                    "phase": status.get("phase") if isinstance(status, dict) else None,
+                    "phase": status.get("phase"),
                     "replicas": spec.get("replicas"),
-                    "ready_replicas": status.get("readyReplicas") if isinstance(status, dict) else None,
+                    "ready_replicas": status.get("readyReplicas"),
                     "images": sorted(str(c.get("image")) for c in containers if isinstance(c, dict) and c.get("image")),
                     "ports": sorted(str(p.get("port")) for p in (spec.get("ports") or []) if isinstance(p, dict) and p.get("port")),
                     "restarts": sum(int(c.get("restartCount") or 0) for c in container_statuses if isinstance(c, dict)),
