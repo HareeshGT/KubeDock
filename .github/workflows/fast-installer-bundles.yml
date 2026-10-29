@@ -35,7 +35,7 @@ permissions:
 
 # Publish sequentially so concurrent schedule/manual runs cannot choose the same tag.
 concurrency:
-  group: fast-installer-versioned-release
+  group: fast-installer-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'deploy' }}
   cancel-in-progress: false
 
 jobs:
