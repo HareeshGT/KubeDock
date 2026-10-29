@@ -25,7 +25,7 @@ jobs:
       - name: Install minimal runtime dependency
         run: python -m pip install --upgrade pip PyQt5
       - name: Compile changed Python modules
-        run: python -m py_compile ai_assist.py ai_intelligence.py settings_dialog.py dialogs_parts/log_viewer.py tests/test_ai_custom_models.py tests/test_ai_intelligence.py tests/test_ai_task_profiles.py
+        run: python -m py_compile ai_assist.py ai_intelligence.py ai_intelligence_ui.py settings_dialog.py dialogs_parts/log_viewer.py tests/test_ai_custom_models.py tests/test_ai_intelligence.py tests/test_ai_task_profiles.py
       - name: Run AI regression tests
         env:
           QT_QPA_PLATFORM: offscreen
