@@ -105,7 +105,7 @@ class CustomAIModelTests(unittest.TestCase):
             "quick": {"provider": "groq", "model_id": "openai/gpt-oss-20b"},
             "deep_diagnosis": {"provider": "anthropic"},
             "voice": {"provider": "mistral"},
-            "local_private": {"provider": "ollama"},
+            "local_private": {"provider": "openai", "model_id": "cloud-model-id"},
         }
         ai_assist.save_ai_settings(
             "mistral", {"mistral": "mistral-key"},
@@ -114,6 +114,7 @@ class CustomAIModelTests(unittest.TestCase):
         )
         settings = ai_assist.get_ai_settings()
         self.assertEqual(settings["task_profiles"]["local_private"]["provider"], "ollama")
+        self.assertEqual(settings["task_profiles"]["local_private"]["model_id"], "qwen2.5:7b")
         self.assertTrue(settings["auto_escalation"])
         self.assertEqual(settings["models"]["ollama"], "qwen2.5:7b")
         self.assertEqual(settings["task_profiles"]["quick"]["model_id"], "openai/gpt-oss-20b")
