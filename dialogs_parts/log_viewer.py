@@ -74,8 +74,13 @@ class LogViewerDialog(QDialog):
 
     self.explain_btn = icon_button(" Analyze with AI")
     self.explain_btn.setToolTip("Ask AI to diagnose this log output")
-    self.explain_btn.clicked.connect(self._on_explain)
+    self.explain_btn.clicked.connect(lambda: self._on_explain("deep_diagnosis"))
     ctrl.addWidget(self.explain_btn)
+
+    self.local_explain_btn = QPushButton("Analyze Locally")
+    self.local_explain_btn.setToolTip("Diagnose using the configured Ollama loopback model; evidence stays on this machine")
+    self.local_explain_btn.clicked.connect(lambda: self._on_explain("local_private"))
+    ctrl.addWidget(self.local_explain_btn)
 
     self.export_incident_btn = QPushButton("Export Incident")
     self.export_incident_btn.setToolTip("Save a redacted, timestamped incident evidence bundle as JSON")
@@ -198,7 +203,7 @@ class LogViewerDialog(QDialog):
     QMessageBox.information(self, "Incident Exported", f"Redacted incident evidence saved to: {path}")
 
   # ── AI diagnosis ──────────────────────────────────────────
-  def _on_explain(self):
+  def _on_explain(self, task_profile="deep_diagnosis"):
     if self._ai_worker is not None or self._evidence_worker is not None:
       return
 
@@ -207,20 +212,29 @@ class LogViewerDialog(QDialog):
       QMessageBox.information(self, "Nothing to explain", "There's no log output yet.")
       return
 
-    provider = ai_assist.get_provider()
+    ai_settings = ai_assist.get_ai_settings()
+    assignment = ai_settings.get("task_profiles", {}).get(task_profile) or {}
+    provider = assignment.get("provider") or ai_settings["provider"]
     api_key = ai_assist.get_api_key(provider)
-    if not api_key:
+    if not api_key and provider != "ollama":
       label = ai_assist.PROVIDERS.get(provider, {}).get("label", provider)
       QMessageBox.information(
         self, "No API key set",
-        f"Add a {label} API key in Settings → AI to use this feature."
+        f"Add a {label} API key in Settings → AI to use this profile."
       )
       return
+    if provider == "ollama" and task_profile != "local_private":
+      # Ollama remains an explicit local choice, never a silent fallback.
+      QMessageBox.information(
+        self, "Local model selected",
+        "Ollama is configured for this task. Ensure Ollama is running at 127.0.0.1:11434."
+      )
 
     self._pending_ai_explain = {
       "provider": provider,
       "api_key": api_key,
       "model": ai_assist.get_model(provider),
+      "task_profile": task_profile,
       "log_text": log_text,
     }
     self._ai_dialog = AIExplainDialog(self, f"AI diagnosis — {self._pod}")
@@ -318,6 +332,7 @@ class LogViewerDialog(QDialog):
       pending["provider"], pending["api_key"], pending["model"],
       self._pod, self._ns, self._container, log_text,
       resource_context=resource_context,
+      task_profile=pending.get("task_profile", "deep_diagnosis"),
     )
     worker.done.connect(self._on_explain_done)
     worker.error.connect(self._on_explain_error)
