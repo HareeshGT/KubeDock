@@ -24,6 +24,12 @@ from themes import load_settings, save_settings
 from workers import CommandWorker
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Do not let a metrics endpoint redirect the app to another network target."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class PrometheusHistoryWorker(QThread):
     result_ready = pyqtSignal(dict)
     error = pyqtSignal(str)
@@ -46,7 +52,8 @@ class PrometheusHistoryWorker(QThread):
                 request = urllib.request.Request(
                     url, headers={"Accept": "application/json", "User-Agent": "KubeDock/AI-Workspace"}
                 )
-                with urllib.request.urlopen(request, timeout=15) as response:
+                opener = urllib.request.build_opener(_NoRedirectHandler())
+                with opener.open(request, timeout=15) as response:
                     body = response.read(2 * 1024 * 1024 + 1)
                 if len(body) > 2 * 1024 * 1024:
                     raise ValueError("Prometheus response exceeded the 2 MiB limit.")
@@ -806,7 +813,10 @@ class AIIntelligenceDialog(QDialog):
             "explicit_delete_confirmation": self.delete_confirm.isChecked(),
         }
         try:
-            result = ai_intelligence.validate_remediation_plan(plan)
+            from k8s_ai_ops import get_protected_namespaces
+            result = ai_intelligence.validate_remediation_plan(
+                plan, protected_namespaces=get_protected_namespaces()
+            )
         except ValueError as exc:
             self._validated_remediation_plan = None
             self.send_remediation_btn.setEnabled(False)
@@ -1158,7 +1168,7 @@ class AIIntelligenceDialog(QDialog):
         options.addWidget(QLabel("AI profile"))
         options.addWidget(self.incident_profile_combo)
         self.incident_include_runbooks_chk = QCheckBox("Include matching local runbooks")
-        self.incident_include_runbooks_chk.setChecked(True)
+        self.incident_include_runbooks_chk.setChecked(False)
         options.addWidget(self.incident_include_runbooks_chk)
         layout.addLayout(options)
 

@@ -109,6 +109,8 @@ class IncidentWorkflowTests(unittest.TestCase):
         query = build_prometheus_history_queries("apps", "api-123", 7)
         self.assertIn("quantile_over_time(0.95", query["cpu_p95_cores"])
         self.assertIn('[7d:5m]', query["cpu_sample_count"])
+        self.assertTrue(query["cpu_sample_count"].startswith("min("))
+        self.assertTrue(query["memory_sample_count"].startswith("min("))
         with self.assertRaises(ValueError):
             build_prometheus_history_queries("apps;evil", "api", 7)
         with self.assertRaises(ValueError):

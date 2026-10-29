@@ -369,8 +369,8 @@ def build_prometheus_history_queries(namespace: str, pod: str, days: int = 7) ->
     return {
         "cpu_p95_cores": f"sum(quantile_over_time(0.95, ({cpu_rate})[{days}d:5m]))",
         "memory_p95_bytes": f"sum(quantile_over_time(0.95, {memory}[{days}d]))",
-        "cpu_sample_count": f"sum(count_over_time(({cpu_rate})[{days}d:5m]))",
-        "memory_sample_count": f"sum(count_over_time({memory}[{days}d]))",
+        "cpu_sample_count": f"min(count_over_time(({cpu_rate})[{days}d:5m]))",
+        "memory_sample_count": f"min(count_over_time({memory}[{days}d]))",
     }
 
 
