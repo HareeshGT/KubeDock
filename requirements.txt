@@ -1,29 +1,19 @@
-# KubeDock — runtime dependencies
+# KubeDock core runtime dependencies.
 #
-# PyQt5 (with QtMultimedia/QtMultimediaWidgets for direct playback) and
-# paramiko (SSH/SFTP — used throughout main_window.py, sudo_fs.py, workers.py)
-# are required Python packages. FFmpeg is an external native executable used
-# only as a compatibility fallback when QtMultimedia cannot decode a remote
-# audio/video codec or container. Everything else is Python standard library.
+# Heavy or feature-specific packages live in separate requirement files:
+#   requirements-build.txt  PyInstaller only needed for source/package builds
+#   requirements-editor.txt Qt WebEngine for the optional Monaco editor
+#   requirements-voice.txt microphone input and offline narration
+#   requirements-qwen-tts.txt optional local Qwen3-TTS/PyTorch stack
 #
-# Microphone input for Ops Mind voice commands needs PyAudio, which depends on
-# native PortAudio libraries and often fails to build. It lives in
-# requirements-voice.txt so a normal install never breaks on it:
-#   pip install -r requirements-voice.txt
+# Uvicorn's WebSocket support is required by the Web App, so install websockets
+# explicitly. KubeDock does not use Uvicorn's reload/watchfiles or YAML log-config
+# features, and does not need the extra uvloop/httptools stack.
 
 PyQt5>=5.15,<6
 paramiko>=3.0
 fastapi>=0.110
-uvicorn[standard]>=0.29
-python-dotenv>=1.0
+uvicorn>=0.29
+websockets>=12.0
 keyring>=25.0
 pydantic>=2.0
-
-# Optional voice input and offline speech dependencies live in
-# requirements-voice.txt so ordinary installations remain lightweight.
-
-# ── Optional: only needed to build the macOS .app bundle ──
-pyinstaller>=6.0
-# ── Optional VS Code-style remote file editor ──
-# Monaco is hosted by Qt WebEngine; the native editor remains the fallback.
-PyQtWebEngine>=5.15.7,<5.16; sys_platform != "linux" or platform_machine != "aarch64"

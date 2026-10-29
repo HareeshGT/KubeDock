@@ -1,0 +1,4 @@
+# Optional VS Code-style Monaco editor hosted in Qt WebEngine.
+# The built-in editor remains available when this dependency is not installed.
+# Qt WebEngine brings a large bundled Chromium runtime; opt in only when needed.
+PyQtWebEngine>=5.15.7,<5.16; sys_platform != "linux" or platform_machine != "aarch64"
