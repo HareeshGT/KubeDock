@@ -412,6 +412,18 @@ def _groq_truncated(data):
     return bool(choices) and choices[0].get("finish_reason") == "length"
 
 
+def _ollama_request(prompt, api_key, model):
+    """Call the loopback-only Ollama OpenAI-compatible endpoint."""
+    url = "http://127.0.0.1:11434/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    body = json.dumps({
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }).encode("utf-8")
+    return url, headers, body
+
 
 PROVIDERS = {
     "anthropic": {
@@ -515,6 +527,16 @@ PROVIDERS = {
 
         "default_model": "openai/gpt-oss-120b",
     },
+    "ollama": {
+        "label": "Ollama (Local / Private)",
+        "key_placeholder": "Not required — local loopback endpoint",
+        "build_request": _ollama_request,
+        "parse_response": _openai_parse,
+        "parse_error": _openai_error,
+        "was_truncated": _openai_truncated,
+        "model_samples": ["qwen2.5:7b", "llama3.2:3b", "deepseek-r1:8b"],
+        "default_model": "qwen2.5:7b",
+    },
 }
 
 DEFAULT_PROVIDER = "anthropic"
@@ -605,11 +627,11 @@ def get_ai_settings() -> dict:
     custom_models = _normalise_custom_models(stored.get("custom_models") or {})
     stored_profiles = stored.get("task_profiles") or {}
     task_profiles = {}
-    for profile in ("quick", "deep_diagnosis", "voice"):
+    for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
         item = stored_profiles.get(profile) or {}
-        selected_provider = item.get("provider", provider)
+        selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
         if selected_provider not in PROVIDERS:
-            selected_provider = provider
+            selected_provider = "ollama" if profile == "local_private" else provider
         task_profiles[profile] = {"provider": selected_provider}
     return {
         "provider": provider,
@@ -660,11 +682,11 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
     if task_profiles is None:
         task_profiles = existing_ai.get("task_profiles") or {}
     cleaned_profiles = {}
-    for profile in ("quick", "deep_diagnosis", "voice"):
+    for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
         item = task_profiles.get(profile) or {}
-        selected_provider = item.get("provider", provider)
+        selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
         if selected_provider not in PROVIDERS:
-            selected_provider = provider
+            selected_provider = "ollama" if profile == "local_private" else provider
         cleaned_profiles[profile] = {"provider": selected_provider}
     if auto_escalation is None:
         auto_escalation = bool(existing_ai.get("auto_escalation", False))
@@ -1036,7 +1058,7 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return None, f"Unknown AI provider: {provider_id!r}"
-    if not api_key:
+    if not api_key and provider_id != "ollama":
         return None, f"No {provider['label']} API key set. Add one in Settings → 🤖 AI."
 
     model = (model or "").strip()
@@ -1140,7 +1162,7 @@ def _task_provider_selection(profile: str, fallback_provider: str, fallback_key:
         provider = fallback_provider
     api_key = settings.get("api_keys", {}).get(provider) or (fallback_key if provider == fallback_provider else "")
     model = settings.get("models", {}).get(provider) or (fallback_model if provider == fallback_provider else "")
-    if not api_key:
+    if not api_key and provider != "ollama":
         return None, None, None, f"No API key is configured for the {profile.replace('_', ' ')} profile provider ({provider}). Add it in Settings → AI."
     if not _is_valid_model_id(model):
         return None, None, None, f"No valid model is configured for the {profile.replace('_', ' ')} profile provider ({provider})."
