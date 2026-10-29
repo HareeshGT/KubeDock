@@ -263,8 +263,7 @@ install_prebuilt_bundle() {
 
   if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     archive_win="$(cygpath -w "$archive")"
-    archive_win="${archive_win//\\'/\\'\\'}"
-    actual_hash="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath '$archive_win').Hash" 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+    KUBEDOCK_ARCHIVE_WIN="$archive_win" actual_hash="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$path = $env:KUBEDOCK_ARCHIVE_WIN; (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash' 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
   elif command -v sha256sum >/dev/null 2>&1; then
     actual_hash="$(sha256sum "$archive" | awk '{ print $1 }' | tr '[:upper:]' '[:lower:]')"
   elif command -v shasum >/dev/null 2>&1; then
@@ -285,7 +284,7 @@ install_prebuilt_bundle() {
   if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     archive_win="$(cygpath -w "$archive")"
     tmp_win="$(cygpath -w "$tmp")"
-    if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '$archive_win' -DestinationPath '$tmp_win' -Force"; then
+    if ! KUBEDOCK_ARCHIVE_WIN="$archive_win" KUBEDOCK_TMP_WIN="$tmp_win" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$archive = $env:KUBEDOCK_ARCHIVE_WIN; $destination = $env:KUBEDOCK_TMP_WIN; Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force'; then
       echo "Downloaded Windows prebuilt bundle could not be extracted." >&2
       rm -rf "$tmp"
       return 2
