@@ -46,6 +46,7 @@ class AIIntelligenceDialog(QDialog):
         self._build_watch_tab()
         self._build_remediation_tab()
         self._build_services_tab()
+        self._build_cross_system_tab()
         self._build_usage_tab()
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
@@ -330,6 +331,61 @@ class AIIntelligenceDialog(QDialog):
             return
         self._show_result(self.remediation_output, result)
 
+
+
+    def _build_cross_system_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.cross_system_path = QLineEdit()
+        self.cross_system_path.setPlaceholderText("Incident/evidence bundle JSON")
+        choose = QPushButton("Choose evidence JSON")
+        choose.clicked.connect(lambda: self._choose_json(self.cross_system_path))
+        layout.addWidget(self.cross_system_path)
+        layout.addWidget(choose)
+        layout.addWidget(QLabel(
+            "Correlates recognizable failure signals across supplied host, Docker, Kubernetes, "
+            "application-log and metrics evidence. Results are hypotheses, not causal proof."
+        ))
+        analyze = QPushButton("Correlate evidence signals")
+        analyze.clicked.connect(self._correlate_evidence_file)
+        layout.addWidget(analyze)
+        self.cross_system_output = self._output(layout)
+        self.tabs.addTab(tab, "Cross-system diagnosis")
+
+    def _correlate_evidence_file(self):
+        try:
+            payload = self._read_json_file(self.cross_system_path.text())
+            evidence = payload.get("evidence", payload)
+            if not isinstance(evidence, dict):
+                raise ValueError("Evidence must be a JSON object.")
+            log_keys = ("logs", "application_logs", "host_logs", "docker_logs", "container_logs", "system_logs")
+            logs = []
+            events = []
+            metrics = {}
+            for key, value in evidence.items():
+                lowered = str(key).lower()
+                if any(token in lowered for token in ("log", "stdout", "stderr")):
+                    if isinstance(value, str):
+                        logs.extend(value.splitlines())
+                    elif isinstance(value, list):
+                        logs.extend(str(item) for item in value[:ai_intelligence.MAX_EVIDENCE_ITEMS])
+                elif "event" in lowered:
+                    events.extend(value if isinstance(value, list) else [value])
+                elif "metric" in lowered or "cpu" in lowered or "memory" in lowered:
+                    metrics[key] = value
+            result = ai_intelligence.correlate_incident_signals(
+                logs=logs, events=events, metrics=metrics
+            )
+            result["sources"] = {
+                "cluster": payload.get("cluster", "unknown"),
+                "namespace": payload.get("namespace", "unknown"),
+                "resource": payload.get("resource", "unknown"),
+                "log_sources_detected": [key for key in log_keys if key in evidence],
+            }
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Cannot correlate evidence", str(exc))
+            return
+        self._show_result(self.cross_system_output, result)
 
     def _build_usage_tab(self):
         tab = QWidget()
