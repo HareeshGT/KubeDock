@@ -268,21 +268,51 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None, k8s_tab_titles=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        # Size the dialog for its content while respecting the available screen.
-        # The previous fixed 460x540 size forced the AI tab to clip long controls
-        # and made the tab bar show horizontal navigation arrows on normal screens.
+        self.setObjectName("settingsDialog")
+        # Keep Settings feeling like a dialog, not a maximized application
+        # window. The upper bounds adapt to smaller displays.
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
         if available is not None:
-            width = min(820, max(420, int(available.width() * 0.88)))
-            height = min(760, max(420, int(available.height() * 0.88)))
+            max_width = min(1040, max(480, available.width() - 48))
+            max_height = min(860, max(480, available.height() - 48))
+            width = min(960, max(680, int(available.width() * 0.78)), max_width)
+            height = min(800, max(580, int(available.height() * 0.82)), max_height)
         else:
-            width, height = 820, 760
-
-        self.setMinimumSize(min(640, width), min(560, height))
+            max_width, max_height = 1040, 860
+            width, height = 960, 800
+        self.setMaximumSize(max_width, max_height)
+        self.setMinimumSize(min(720, width), min(560, height))
         self.resize(width, height)
         self.setSizeGripEnabled(True)
         apply_qss_to(self)
+        # Settings uses quieter, readable headings rather than the dense,
+        # letter-spaced section labels used by the main application panels.
+        self.setStyleSheet(self.styleSheet() + f"""
+            QDialog#settingsDialog QGroupBox {{
+                color: {T['TEXT_PRIMARY']};
+                border: 1px solid {T['BORDER']};
+                border-radius: 10px;
+                margin-top: 14px;
+                padding: 14px 12px 12px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: 0;
+            }}
+            QDialog#settingsDialog QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+                color: {T['TEXT_PRIMARY']};
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: 0;
+            }}
+            QDialog#settingsDialog QTabBar::tab {{
+                padding: 10px 12px;
+                font-size: 12px;
+            }}
+        """)
         settings = load_settings()
         self._k8s_titles = list(k8s_tab_titles or [])
         self._hidden = set(settings.get("k8s_hidden_tabs", []))
@@ -303,12 +333,14 @@ class SettingsDialog(QDialog):
         lay.addWidget(title)
 
         tabs = SwipeTabWidget()
-        tabs.addTab(self._build_general_tab(), " ⚙  General ")
-        tabs.addTab(self._build_connections_tab(), " ⌁  Connections ")
-        tabs.addTab(self._build_security_tab(), " 🔒  Security ")
-        tabs.addTab(self._build_k8s_tab(), " ⎈  Kubernetes ")
-        tabs.addTab(self._build_ai_tab(), " 🤖  AI ")
-        tabs.addTab(self._build_webapp_tab(), " 🌐  Web App ")
+        tabs.addTab(self._build_general_tab(), "⚙ General")
+        tabs.addTab(self._build_connections_tab(), "⌁ Connections")
+        tabs.addTab(self._build_security_tab(), "🔒 Security")
+        tabs.addTab(self._build_k8s_tab(), "⎈ Kubernetes")
+        tabs.addTab(self._build_ai_tab(), "🤖 AI")
+        tabs.addTab(self._build_webapp_tab(), "🌐 Web App")
+        tabs.tabBar().setExpanding(False)
+        tabs.setUsesScrollButtons(True)
         lay.addWidget(tabs, 1)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -320,68 +352,142 @@ class SettingsDialog(QDialog):
 
     def _build_general_tab(self):
         w = QWidget()
-        root = QVBoxLayout(w)
-        root.setContentsMargins(4, 14, 4, 4)
-        root.setSpacing(12)
-        intro = QLabel("Control refresh frequency and local maintenance. These preferences are saved locally.")
-        intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
-        root.addWidget(intro)
+        root = QGridLayout(w)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setHorizontalSpacing(14)
+        root.setVerticalSpacing(12)
 
-        group = QGroupBox("Performance & refresh")
-        group_layout = QVBoxLayout(group)
-        form = QFormLayout()
+        intro = QLabel(
+            "Control refresh behaviour and local maintenance. Changes are saved on this device."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("secondary_text")
+        root.addWidget(intro, 0, 0, 1, 2)
+
+        perf = normalize_performance_settings(load_settings())
         self._performance_values = {}
         self._applying_performance_profile = False
-        perf = normalize_performance_settings(load_settings())
+
+        performance_group = QGroupBox("Performance and refresh")
+        performance_layout = QVBoxLayout(performance_group)
+        performance_layout.setContentsMargins(12, 18, 12, 12)
+        performance_layout.setSpacing(12)
+
+        profile_row = QHBoxLayout()
+        profile_label = QLabel("Refresh profile")
+        profile_label.setMinimumWidth(110)
+        profile_row.addWidget(profile_label)
         self.performance_profile_combo = QComboBox()
-        for label, key in (("Low resource usage", "low_resource"), ("Balanced (current defaults)", "balanced"), ("Responsive", "responsive"), ("Custom", "custom")):
+        for label, key in (
+            ("Low resource usage", "low_resource"),
+            ("Balanced", "balanced"),
+            ("Responsive", "responsive"),
+            ("Custom", "custom"),
+        ):
             self.performance_profile_combo.addItem(label, key)
-        self.performance_profile_combo.setCurrentIndex(max(0, self.performance_profile_combo.findData(perf["profile"])))
-        form.addRow("Refresh profile", self.performance_profile_combo)
-        for key, label, low, high in (
+        self.performance_profile_combo.setCurrentIndex(
+            max(0, self.performance_profile_combo.findData(perf["profile"]))
+        )
+        self.performance_profile_combo.setMaximumWidth(260)
+        profile_row.addWidget(self.performance_profile_combo)
+        profile_row.addStretch(1)
+        performance_layout.addLayout(profile_row)
+
+        interval_grid = QGridLayout()
+        interval_grid.setHorizontalSpacing(10)
+        interval_grid.setVerticalSpacing(10)
+        interval_grid.setColumnStretch(0, 1)
+        interval_grid.setColumnStretch(1, 1)
+        field_spec = (
             ("dashboard_refresh_seconds", "Dashboard while open", 1, 60),
             ("background_refresh_seconds", "Dashboard in background", 10, 600),
             ("kubernetes_refresh_seconds", "Kubernetes auto-refresh", 5, 600),
             ("docker_refresh_seconds", "Docker auto-refresh", 3, 300),
             ("tunnel_refresh_seconds", "Tunnel status polling", 5, 300),
-        ):
+        )
+        for index, (key, label, low, high) in enumerate(field_spec):
+            tile = QFrame()
+            tile.setObjectName("refreshTile")
+            tile.setStyleSheet(
+                f"QFrame#refreshTile {{ background: {T['BG_PANEL']}; "
+                f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
+                f"QFrame#refreshTile QLabel {{ background: transparent; border: none; "
+                f"color: {T['TEXT_DIM']}; font-size: 11px; }}"
+            )
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(10, 8, 10, 8)
+            tile_layout.setSpacing(6)
+            label_widget = QLabel(label)
+            label_widget.setWordWrap(True)
+            tile_layout.addWidget(label_widget)
             spin = QSpinBox()
             spin.setRange(low, high)
             spin.setSuffix(" s")
             spin.setSingleStep(1 if high <= 60 else 5)
             spin.setKeyboardTracking(False)
             spin.setValue(perf[key])
+            spin.setMinimumWidth(100)
+            spin.setMaximumWidth(135)
+            tile_layout.addWidget(spin, 0, Qt.AlignLeft)
             self._performance_values[key] = spin
-            form.addRow(label, spin)
             spin.valueChanged.connect(self._mark_custom_performance)
-        group_layout.addLayout(form)
-        self.pause_dashboard_chk = QCheckBox("Pause dashboard polling when the Dashboard tab is inactive")
-        self.pause_dashboard_chk.setChecked(perf["pause_dashboard_when_inactive"])
-        group_layout.addWidget(self.pause_dashboard_chk)
-        hint = QLabel("Manual Refresh actions remain available in every profile.")
-        hint.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
-        group_layout.addWidget(hint)
-        root.addWidget(group)
+            interval_grid.addWidget(tile, index // 2, index % 2)
+        performance_layout.addLayout(interval_grid)
 
-        appearance = QGroupBox("Appearance & accessibility")
+        self.pause_dashboard_chk = QCheckBox(
+            "Pause dashboard polling when the Dashboard tab is inactive"
+        )
+        self.pause_dashboard_chk.setChecked(perf["pause_dashboard_when_inactive"])
+        self.pause_dashboard_chk.setToolTip(
+            "Stops automatic dashboard polling while another main page is selected."
+        )
+        performance_layout.addWidget(self.pause_dashboard_chk)
+        hint = QLabel("Manual Refresh actions remain available in every profile.")
+        hint.setWordWrap(True)
+        hint.setObjectName("secondary_text")
+        performance_layout.addWidget(hint)
+        root.addWidget(performance_group, 1, 0, 2, 1, Qt.AlignTop)
+
+        appearance = QGroupBox("Appearance and accessibility")
         appearance_layout = QVBoxLayout(appearance)
-        self.reduce_motion_chk = QCheckBox("Reduce motion (disable animated page transitions)")
+        appearance_layout.setContentsMargins(12, 18, 12, 12)
+        self.reduce_motion_chk = QCheckBox(
+            "Reduce motion (disable animated page transitions)"
+        )
         self.reduce_motion_chk.setChecked(bool(load_settings().get("reduce_motion", False)))
         appearance_layout.addWidget(self.reduce_motion_chk)
-        root.addWidget(appearance)
+        appearance_hint = QLabel(
+            "Useful when you prefer less movement while switching between pages."
+        )
+        appearance_hint.setWordWrap(True)
+        appearance_hint.setObjectName("secondary_text")
+        appearance_layout.addWidget(appearance_hint)
+        root.addWidget(appearance, 1, 1, Qt.AlignTop)
 
         maintenance = QGroupBox("Maintenance")
         maintenance_layout = QVBoxLayout(maintenance)
+        maintenance_layout.setContentsMargins(12, 18, 12, 12)
+        maintenance_layout.setSpacing(8)
         open_folder = QPushButton("Open KubeDock data folder")
         open_folder.clicked.connect(self._open_app_data_folder)
         maintenance_layout.addWidget(open_folder)
         clear_history = QPushButton("Clear dashboard history…")
         clear_history.clicked.connect(self._clear_dashboard_history)
         maintenance_layout.addWidget(clear_history)
-        root.addWidget(maintenance)
-        root.addStretch(1)
-        self.performance_profile_combo.currentIndexChanged.connect(self._on_performance_profile_changed)
+        maintenance_hint = QLabel(
+            "History cleanup does not remove saved connections, credentials, or settings."
+        )
+        maintenance_hint.setWordWrap(True)
+        maintenance_hint.setObjectName("secondary_text")
+        maintenance_layout.addWidget(maintenance_hint)
+        root.addWidget(maintenance, 2, 1, Qt.AlignTop)
+
+        root.setColumnStretch(0, 3)
+        root.setColumnStretch(1, 2)
+        root.setRowStretch(3, 1)
+        self.performance_profile_combo.currentIndexChanged.connect(
+            self._on_performance_profile_changed
+        )
         self._set_performance_controls_enabled(perf["profile"] == "custom")
         return w
 
@@ -434,81 +540,127 @@ class SettingsDialog(QDialog):
 
     def _build_connections_tab(self):
         w = QWidget()
-        root = QVBoxLayout(w)
-        root.setContentsMargins(4, 14, 4, 4)
-        root.setSpacing(12)
-        intro = QLabel("Set SSH defaults and choose whether Kubernetes selections are remembered per connection.")
+        root = QGridLayout(w)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setHorizontalSpacing(14)
+        root.setVerticalSpacing(12)
+        intro = QLabel(
+            "Choose default SSH behaviour and whether to remember Kubernetes selections for each connection."
+        )
         intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
-        root.addWidget(intro)
-        group = QGroupBox("SSH defaults")
-        form = QFormLayout(group)
+        intro.setObjectName("secondary_text")
+        root.addWidget(intro, 0, 0, 1, 2)
+
         connection = normalize_connection_preferences(load_settings())
+        ssh_group = QGroupBox("SSH defaults")
+        ssh_form = QFormLayout(ssh_group)
+        ssh_form.setContentsMargins(12, 18, 12, 12)
+        ssh_form.setHorizontalSpacing(16)
+        ssh_form.setVerticalSpacing(12)
+        ssh_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+
         self.ssh_timeout_spin = QSpinBox()
         self.ssh_timeout_spin.setRange(3, 60)
         self.ssh_timeout_spin.setSuffix(" s")
         self.ssh_timeout_spin.setValue(connection["ssh_connect_timeout_seconds"])
-        form.addRow("Connect timeout", self.ssh_timeout_spin)
+        self.ssh_timeout_spin.setMaximumWidth(145)
+        ssh_form.addRow("Connect timeout", self.ssh_timeout_spin)
+
         self.ssh_keepalive_spin = QSpinBox()
         self.ssh_keepalive_spin.setRange(0, 120)
         self.ssh_keepalive_spin.setSuffix(" s (0 = disabled)")
         self.ssh_keepalive_spin.setValue(connection["ssh_keepalive_seconds"])
-        form.addRow("SSH keepalive interval", self.ssh_keepalive_spin)
-        root.addWidget(group)
-        self.remember_k8s_chk = QCheckBox("Remember Kubernetes context and namespace for each connection")
+        self.ssh_keepalive_spin.setMaximumWidth(175)
+        ssh_form.addRow("SSH keepalive interval", self.ssh_keepalive_spin)
+        root.addWidget(ssh_group, 1, 0, Qt.AlignTop)
+
+        remember_group = QGroupBox("Kubernetes selection")
+        remember_layout = QVBoxLayout(remember_group)
+        remember_layout.setContentsMargins(12, 18, 12, 12)
+        remember_layout.setSpacing(8)
+        self.remember_k8s_chk = QCheckBox(
+            "Remember context and namespace for each connection"
+        )
         self.remember_k8s_chk.setChecked(connection["remember_k8s_context"])
-        root.addWidget(self.remember_k8s_chk)
-        help_text = QLabel("Selections are keyed by a one-way hash of host, port, and username. Private-key paths and contents are not copied into these preferences.")
+        remember_layout.addWidget(self.remember_k8s_chk)
+        help_text = QLabel(
+            "Selections are keyed by a one-way hash of host, port, and username. "
+            "Private-key paths and contents are not copied into these preferences."
+        )
         help_text.setWordWrap(True)
-        help_text.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
-        root.addWidget(help_text)
-        root.addStretch(1)
+        help_text.setObjectName("secondary_text")
+        remember_layout.addWidget(help_text)
+        root.addWidget(remember_group, 1, 1, Qt.AlignTop)
+        root.setColumnStretch(0, 1)
+        root.setColumnStretch(1, 1)
+        root.setRowStretch(2, 1)
         return w
 
     def _build_security_tab(self):
         w = QWidget()
-        v = QVBoxLayout(w)
-        v.setSpacing(10)
-        v.setContentsMargins(4, 14, 4, 4)
+        root = QGridLayout(w)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setHorizontalSpacing(14)
+        root.setVerticalSpacing(12)
 
+        lock_group = QGroupBox("App lock")
+        lock_layout = QVBoxLayout(lock_group)
+        lock_layout.setContentsMargins(12, 18, 12, 12)
+        lock_layout.setSpacing(10)
         self.lock_chk = QCheckBox("Require a PIN to open this app")
         self.lock_chk.setChecked(self._lock["enabled"])
         self.lock_chk.toggled.connect(self._on_lock_toggled)
-        v.addWidget(self.lock_chk)
+        lock_layout.addWidget(self.lock_chk)
 
-        desc = QLabel("Locks the app on launch, and again after a period of inactivity.")
+        desc = QLabel(
+            "KubeDock asks for the PIN at launch and again after the selected period of inactivity."
+        )
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
-        v.addWidget(desc)
-        v.addSpacing(4)
+        desc.setObjectName("secondary_text")
+        lock_layout.addWidget(desc)
 
         self.pin_btn = QPushButton(
             "Change PIN…" if self._lock["pin_hash"] else "Set PIN…"
         )
+        self.pin_btn.setMaximumWidth(220)
         self.pin_btn.clicked.connect(self._on_set_pin)
-        v.addWidget(self.pin_btn)
+        lock_layout.addWidget(self.pin_btn, 0, Qt.AlignLeft)
 
         self.pin_status = QLabel(
             "PIN is set." if self._lock["pin_hash"] else "No PIN set yet."
         )
-        self.pin_status.setStyleSheet(
-            f"color: {T['TEXT_DIM']}; font-size: 12px;"
-        )
-        v.addWidget(self.pin_status)
-        v.addSpacing(6)
+        self.pin_status.setObjectName("secondary_text")
+        lock_layout.addWidget(self.pin_status)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Auto-lock after"))
+        auto_row = QHBoxLayout()
+        auto_row.addWidget(QLabel("Auto-lock after"))
         self.autolock_combo = QComboBox()
         for label, mins in _AUTOLOCK_OPTIONS:
             self.autolock_combo.addItem(label, mins)
         idx = self.autolock_combo.findData(self._lock["autolock_minutes"])
         self.autolock_combo.setCurrentIndex(idx if idx >= 0 else 2)
-        row.addWidget(self.autolock_combo)
-        row.addStretch()
-        v.addLayout(row)
-        v.addStretch()
+        self.autolock_combo.setMaximumWidth(180)
+        auto_row.addWidget(self.autolock_combo)
+        auto_row.addStretch(1)
+        lock_layout.addLayout(auto_row)
+        root.addWidget(lock_group, 0, 0, Qt.AlignTop)
 
+        info_group = QGroupBox("Security notes")
+        info_layout = QVBoxLayout(info_group)
+        info_layout.setContentsMargins(12, 18, 12, 12)
+        info_layout.setSpacing(8)
+        info = QLabel(
+            "Choose a PIN you do not reuse elsewhere. Keep the auto-lock delay short "
+            "on shared machines. Changing the PIN does not change saved connection profiles."
+        )
+        info.setWordWrap(True)
+        info.setObjectName("secondary_text")
+        info_layout.addWidget(info)
+        info_layout.addStretch(1)
+        root.addWidget(info_group, 0, 1, Qt.AlignTop)
+        root.setColumnStretch(0, 3)
+        root.setColumnStretch(1, 2)
+        root.setRowStretch(1, 1)
         self._update_security_enabled_state()
         return w
 
@@ -539,23 +691,33 @@ class SettingsDialog(QDialog):
     def _build_k8s_tab(self):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setSpacing(6)
-        v.setContentsMargins(4, 14, 4, 4)
-
-        desc = QLabel("Choose which Kubernetes sub-tabs are visible.")
+        v.setSpacing(10)
+        v.setContentsMargins(12, 12, 12, 12)
+        desc = QLabel(
+            "Choose which Kubernetes sections are shown in the main view. Grouping here only changes Settings."
+        )
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        desc.setObjectName("secondary_text")
         v.addWidget(desc)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         inner = QWidget()
-        iv = QGridLayout(inner)
-        iv.setSpacing(10)
-        iv.setContentsMargins(2, 6, 2, 6)
+        inner.setMaximumWidth(900)
+        grid = QGridLayout(inner)
+        grid.setContentsMargins(2, 6, 2, 6)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
         self._k8s_checks = {}
-        grouped = {"Workloads": [], "Networking": [], "Storage & configuration": [], "Observability": [], "Tools": []}
+        grouped = {
+            "Workloads": [],
+            "Networking": [],
+            "Storage and configuration": [],
+            "Observability": [],
+            "Tools": [],
+        }
         for title in self._k8s_titles:
             lowered = title.strip().lower()
             if any(token in lowered for token in ("pod", "deployment", "stateful", "daemon", "hpa", "job")):
@@ -563,78 +725,69 @@ class SettingsDialog(QDialog):
             elif any(token in lowered for token in ("service", "ingress", "tunnel")):
                 group_name = "Networking"
             elif any(token in lowered for token in ("storage", "config", "secret", "persistent")):
-                group_name = "Storage & configuration"
+                group_name = "Storage and configuration"
             elif any(token in lowered for token in ("event", "metric", "monitor", "history")):
                 group_name = "Observability"
             else:
                 group_name = "Tools"
             grouped[group_name].append(title)
-        positions = {"Workloads": (0, 0), "Networking": (0, 1), "Storage & configuration": (1, 0), "Observability": (1, 1), "Tools": (2, 0)}
+        positions = {
+            "Workloads": (0, 0),
+            "Networking": (0, 1),
+            "Storage and configuration": (1, 0),
+            "Observability": (1, 1),
+            "Tools": (2, 0),
+        }
         for group_name, titles in grouped.items():
             if not titles:
                 continue
             box = QGroupBox(group_name)
             box_layout = QVBoxLayout(box)
-            box_layout.setContentsMargins(10, 10, 10, 10)
-            box_layout.setSpacing(5)
+            box_layout.setContentsMargins(12, 18, 12, 10)
+            box_layout.setSpacing(6)
             for title in titles:
                 chk = QCheckBox(title.strip())
                 chk.setChecked(title not in self._hidden)
                 box_layout.addWidget(chk)
                 self._k8s_checks[title] = chk
             row, col = positions[group_name]
-            iv.addWidget(box, row, col)
-        iv.setRowStretch(3, 1)
-        iv.setColumnStretch(0, 1)
-        iv.setColumnStretch(1, 1)
+            grid.addWidget(box, row, col, Qt.AlignTop)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(3, 1)
         scroll.setWidget(inner)
         v.addWidget(scroll, 1)
-        v.addSpacing(4)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet(f"color: {T['BORDER']};")
-        v.addWidget(line)
-        v.addSpacing(4)
-
-        protected_lbl = QLabel("Protected namespaces (Ops Mind)")
-        protected_lbl.setStyleSheet(
-            f"color: {T['TEXT_PRIMARY']}; font-weight: 600;"
-        )
-        v.addWidget(protected_lbl)
-
+        protected_group = QGroupBox("Ops Mind protection")
+        protected_layout = QVBoxLayout(protected_group)
+        protected_layout.setContentsMargins(12, 18, 12, 12)
+        protected_layout.setSpacing(8)
         protected_desc = QLabel(
-            "Comma-separated name fragments. When the AI Kubernetes Operations "
-            "panel targets a namespace matching one of these (e.g. \"mcp\" "
-            "matches \"mcp-prod-eks\"), scale requests require confirmation "
-            "just like delete already does. Restart always confirms."
+            "Namespace name fragments that require extra confirmation for scale actions. "
+            "For example, 'mcp' also matches 'mcp-prod-eks'. Restart actions always confirm."
         )
         protected_desc.setWordWrap(True)
-        protected_desc.setStyleSheet(
-            f"color: {T['TEXT_MUTED']}; font-size: 12px;"
-        )
-        v.addWidget(protected_desc)
-
+        protected_desc.setObjectName("secondary_text")
+        protected_layout.addWidget(protected_desc)
         self.protected_ns_edit = QLineEdit()
         self.protected_ns_edit.setText(", ".join(k8s_ai_ops.get_protected_namespaces()))
         self.protected_ns_edit.setPlaceholderText("prod, production, mcp")
-        v.addWidget(self.protected_ns_edit)
+        protected_layout.addWidget(self.protected_ns_edit)
+        v.addWidget(protected_group)
         return w
 
     def _build_ai_tab(self):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setSpacing(10)
-        v.setContentsMargins(4, 14, 4, 4)
+        v.setSpacing(12)
+        v.setContentsMargins(12, 12, 12, 12)
 
         desc = QLabel(
-            "Used by the ✨ Explain button in pod log/exec views to get an AI "
-            "diagnosis of crashes and errors. Pick a provider, choose (or type) "
-            "a model, and paste the matching API key — each is stored "
-            "per-provider and sent only to that provider's own API."
+            "Configure the provider and model used for AI diagnosis, then route individual "
+            "tasks to the models that suit them. API keys remain stored per provider."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        desc.setObjectName("secondary_text")
         v.addWidget(desc)
 
         ai_settings = ai_assist.get_ai_settings()
@@ -646,17 +799,22 @@ class SettingsDialog(QDialog):
         }
         self._current_provider_id = None
 
-        v.addSpacing(4)
-        v.addWidget(QLabel("Provider"))
+        provider_group = QGroupBox("Provider configuration")
+        provider_grid = QGridLayout(provider_group)
+        provider_grid.setContentsMargins(12, 18, 12, 12)
+        provider_grid.setHorizontalSpacing(12)
+        provider_grid.setVerticalSpacing(10)
+        provider_grid.addWidget(QLabel("Provider"), 0, 0)
         self.provider_combo = QComboBox()
         for pid, info in ai_assist.PROVIDERS.items():
             self.provider_combo.addItem(info["label"], pid)
-        v.addWidget(self.provider_combo)
+        self.provider_combo.setMaximumWidth(360)
+        provider_grid.addWidget(self.provider_combo, 0, 1)
 
-        v.addWidget(QLabel("Model"))
+        provider_grid.addWidget(QLabel("Model"), 1, 0)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        v.addWidget(self.model_combo)
+        provider_grid.addWidget(self.model_combo, 1, 1)
 
         model_actions = QHBoxLayout()
         self.add_model_btn = QPushButton("Add Model")
@@ -665,33 +823,40 @@ class SettingsDialog(QDialog):
         model_actions.addWidget(self.add_model_btn)
         model_actions.addWidget(self.manage_models_btn)
         model_actions.addWidget(self.test_model_btn)
-        v.addLayout(model_actions)
+        model_actions.addStretch(1)
+        provider_grid.addLayout(model_actions, 2, 1)
 
-        v.addWidget(QLabel("API key"))
-        row = QHBoxLayout()
+        provider_grid.addWidget(QLabel("API key"), 3, 0)
+        key_row = QHBoxLayout()
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.Password)
-        row.addWidget(self.api_key_edit, 1)
-
+        self.api_key_edit.setPlaceholderText("Enter the API key for this provider")
+        key_row.addWidget(self.api_key_edit, 1)
         self.show_key_btn = QPushButton("Show")
         self.show_key_btn.setCheckable(True)
-        self.show_key_btn.setFixedWidth(60)
+        self.show_key_btn.setFixedWidth(64)
         self.show_key_btn.toggled.connect(self._on_toggle_show_key)
-        row.addWidget(self.show_key_btn)
-        v.addLayout(row)
+        key_row.addWidget(self.show_key_btn)
+        provider_grid.addLayout(key_row, 3, 1)
+        provider_grid.setColumnMinimumWidth(0, 90)
+        provider_grid.setColumnStretch(1, 1)
+        v.addWidget(provider_group)
 
-        profile_group = QLabel("Task-specific model routing")
-        profile_group.setStyleSheet("font-weight: 600;")
-        v.addWidget(profile_group)
+        routing_group = QGroupBox("Task-specific model routing")
+        routing_layout = QGridLayout(routing_group)
+        routing_layout.setContentsMargins(12, 18, 12, 12)
+        routing_layout.setHorizontalSpacing(12)
+        routing_layout.setVerticalSpacing(10)
         profile_help = QLabel(
-            "Choose which configured provider handles quick command explanations, "
-            "deep pod diagnoses, voice/conversation, and private local inference. "
-            "Ollama uses only http://127.0.0.1:11434 and does not require an API key."
+            "Assign separate models for quick explanations, deeper diagnoses, voice, and "
+            "private local inference. Ollama uses only http://127.0.0.1:11434 and needs no API key."
         )
         profile_help.setWordWrap(True)
-        profile_help.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
-        v.addWidget(profile_help)
-        v.addWidget(QLabel("Default response detail"))
+        profile_help.setObjectName("secondary_text")
+        routing_layout.addWidget(profile_help, 0, 0, 1, 2)
+
+        response_row = QHBoxLayout()
+        response_row.addWidget(QLabel("Default response detail"))
         self.ai_response_detail_combo = QComboBox()
         self.ai_response_detail_combo.addItem("Concise", "concise")
         self.ai_response_detail_combo.addItem("Balanced", "balanced")
@@ -699,17 +864,35 @@ class SettingsDialog(QDialog):
         current_detail = str(load_settings().get("ai_response_detail", "balanced") or "balanced")
         detail_index = self.ai_response_detail_combo.findData(current_detail)
         self.ai_response_detail_combo.setCurrentIndex(detail_index if detail_index >= 0 else 1)
-        v.addWidget(self.ai_response_detail_combo)
+        self.ai_response_detail_combo.setMaximumWidth(220)
+        response_row.addWidget(self.ai_response_detail_combo)
+        response_row.addStretch(1)
+        routing_layout.addLayout(response_row, 1, 0, 1, 2)
 
         self.task_profile_combos = {}
         self.task_profile_model_combos = {}
-        for profile_id, label in (
+        profiles = (
             ("quick", "Quick explanations"),
             ("deep_diagnosis", "Deep diagnoses"),
             ("voice", "Voice / conversation"),
             ("local_private", "Local / Private (Ollama loopback)"),
-        ):
-            v.addWidget(QLabel(label))
+        )
+        for index, (profile_id, label) in enumerate(profiles):
+            profile_card = QFrame()
+            profile_card.setObjectName("taskProfileCard")
+            profile_card.setStyleSheet(
+                f"QFrame#taskProfileCard {{ background: {T['BG_PANEL']}; "
+                f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
+                f"QFrame#taskProfileCard QLabel {{ background: transparent; border: none; }}"
+            )
+            card_layout = QVBoxLayout(profile_card)
+            card_layout.setContentsMargins(10, 10, 10, 10)
+            card_layout.setSpacing(6)
+            title = QLabel(label)
+            title.setStyleSheet(f"font-weight: 600; color: {T['TEXT_PRIMARY']};")
+            card_layout.addWidget(title)
+
+            profile_settings = ai_settings.get("task_profiles", {}).get(profile_id, {})
             provider_combo = QComboBox()
             provider_choices = (
                 [("ollama", ai_assist.PROVIDERS["ollama"])]
@@ -720,14 +903,15 @@ class SettingsDialog(QDialog):
                 provider_combo.addItem(provider_info["label"], provider_id)
             if profile_id == "local_private":
                 provider_combo.setEnabled(False)
-            profile_settings = ai_settings.get("task_profiles", {}).get(profile_id, {})
             selected = profile_settings.get(
                 "provider", "ollama" if profile_id == "local_private" else ai_settings["provider"]
             )
-            index = provider_combo.findData(selected)
-            provider_combo.setCurrentIndex(index if index >= 0 else 0)
+            provider_index = provider_combo.findData(selected)
+            provider_combo.setCurrentIndex(provider_index if provider_index >= 0 else 0)
             self.task_profile_combos[profile_id] = provider_combo
-            v.addWidget(provider_combo)
+            provider_combo.setToolTip("Provider used for this task")
+            card_layout.addWidget(QLabel("Provider"))
+            card_layout.addWidget(provider_combo)
 
             model_combo = QComboBox()
             model_combo.setEditable(True)
@@ -738,27 +922,37 @@ class SettingsDialog(QDialog):
             provider_combo.currentIndexChanged.connect(
                 lambda _index, pid=profile_id: self._on_task_profile_provider_changed(pid)
             )
-            v.addWidget(model_combo)
+            card_layout.addWidget(QLabel("Model"))
+            card_layout.addWidget(model_combo)
+            routing_layout.addWidget(profile_card, 2 + index // 2, index % 2)
 
+        routing_layout.setColumnStretch(0, 1)
+        routing_layout.setColumnStretch(1, 1)
+        v.addWidget(routing_group)
+
+        behaviour_group = QGroupBox("Behaviour and tools")
+        behaviour_layout = QVBoxLayout(behaviour_group)
+        behaviour_layout.setContentsMargins(12, 18, 12, 12)
+        behaviour_layout.setSpacing(8)
         self.auto_escalation_chk = QCheckBox(
             "Automatically escalate failed/large command explanations to Deep Diagnosis"
         )
         self.auto_escalation_chk.setChecked(bool(ai_settings.get("auto_escalation", False)))
-        v.addWidget(self.auto_escalation_chk)
-
+        behaviour_layout.addWidget(self.auto_escalation_chk)
         self.usage_telemetry_chk = QCheckBox(
             "Enable local aggregate AI usage/latency counters (no prompts, logs, or API keys stored)"
         )
         self.usage_telemetry_chk.setChecked(bool(ai_settings.get("usage_telemetry_enabled", False)))
-        v.addWidget(self.usage_telemetry_chk)
-
+        behaviour_layout.addWidget(self.usage_telemetry_chk)
         self.ai_intelligence_tools_btn = QPushButton("Open AI Intelligence Workspace…")
         self.ai_intelligence_tools_btn.setToolTip(
             "Open incident-adjacent analysis, cluster comparison, watch planning, "
             "resource recommendations, remediation validation, and service indexing tools."
         )
         self.ai_intelligence_tools_btn.clicked.connect(self._open_ai_intelligence_workspace)
-        v.addWidget(self.ai_intelligence_tools_btn)
+        behaviour_layout.addWidget(self.ai_intelligence_tools_btn)
+        v.addWidget(behaviour_group)
+        v.addStretch(1)
 
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.add_model_btn.clicked.connect(self._add_custom_model)
@@ -768,9 +962,12 @@ class SettingsDialog(QDialog):
         self.provider_combo.setCurrentIndex(idx if idx >= 0 else 0)
         if self._current_provider_id is None:
             self._on_provider_changed(self.provider_combo.currentIndex())
-        v.addStretch()
+
+        w.setMaximumWidth(920)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         scroll.setWidget(w)
         return scroll
 
@@ -952,57 +1149,90 @@ class SettingsDialog(QDialog):
 
     def _build_webapp_tab(self):
         w = QWidget()
-        v = QVBoxLayout(w)
-        v.setSpacing(8)
-        v.setContentsMargins(4, 14, 4, 4)
+        root = QGridLayout(w)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setHorizontalSpacing(14)
+        root.setVerticalSpacing(12)
+
+        access_group = QGroupBox("Web App access")
+        access_layout = QVBoxLayout(access_group)
+        access_layout.setContentsMargins(12, 18, 12, 12)
+        access_layout.setSpacing(8)
         self.webapp_enable_btn = QPushButton()
         self.webapp_enable_btn.setCheckable(True)
         self.webapp_enable_btn.setChecked(self._webapp_enabled)
         self.webapp_enable_btn.setMinimumHeight(38)
         self.webapp_enable_btn.clicked.connect(self._on_webapp_toggle)
-        v.addWidget(self.webapp_enable_btn)
+        access_layout.addWidget(self.webapp_enable_btn)
 
         self.webapp_status_lbl = QLabel()
         self.webapp_status_lbl.setWordWrap(True)
-        self.webapp_status_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
-        v.addWidget(self.webapp_status_lbl)
+        self.webapp_status_lbl.setObjectName("secondary_text")
+        access_layout.addWidget(self.webapp_status_lbl)
         self._update_webapp_toggle_button(self._webapp_enabled)
-        desc = QLabel("The dashboard uses a six-digit TOTP code that changes every 30 seconds. The shared seed stays in the OS credential vault.")
+
+        desc = QLabel(
+            "The Web App uses a six-digit time-based one-time password that changes "
+            "every 30 seconds. The shared seed stays in the OS credential vault."
+        )
         desc.setWordWrap(True)
-        v.addWidget(desc)
-        v.addWidget(QLabel("Current Web App OTP"))
+        desc.setObjectName("secondary_text")
+        access_layout.addWidget(desc)
+        root.addWidget(access_group, 0, 0, Qt.AlignTop)
+
+        otp_group = QGroupBox("Current one-time password")
+        otp_layout = QVBoxLayout(otp_group)
+        otp_layout.setContentsMargins(12, 18, 12, 12)
+        otp_layout.setSpacing(8)
         self.webapp_otp_code = QLabel("------")
         self.webapp_otp_code.setAlignment(Qt.AlignCenter)
-        self.webapp_otp_code.setMinimumHeight(46)
-        self.webapp_otp_code.setStyleSheet(f"color: {T['ACCENT']}; font-size: 27px; font-weight: 600; letter-spacing: 5px; font-family: monospace;")
-        v.addWidget(self.webapp_otp_code)
+        self.webapp_otp_code.setMinimumHeight(52)
+        self.webapp_otp_code.setStyleSheet(
+            f"color: {T['ACCENT']}; font-size: 27px; font-weight: 600; "
+            "letter-spacing: 5px; font-family: monospace;"
+        )
+        otp_layout.addWidget(self.webapp_otp_code)
         otp_row = QHBoxLayout()
         self.webapp_otp_countdown = QLabel("Remaining: --s")
-        self.webapp_otp_countdown.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
+        self.webapp_otp_countdown.setObjectName("secondary_text")
         otp_row.addWidget(self.webapp_otp_countdown, 1)
         self.webapp_copy_otp_btn = QPushButton("Copy code")
         self.webapp_copy_otp_btn.setEnabled(False)
         self.webapp_copy_otp_btn.clicked.connect(self._copy_webapp_otp)
         otp_row.addWidget(self.webapp_copy_otp_btn)
-        v.addLayout(otp_row)
-        warning = QLabel("Remote devices require HTTPS. Set WEBAPP_TLS_CERTFILE and WEBAPP_TLS_KEYFILE before exposing the Web App.")
+        otp_layout.addLayout(otp_row)
+        root.addWidget(otp_group, 0, 1, Qt.AlignTop)
+
+        remote_group = QGroupBox("Remote access")
+        remote_layout = QVBoxLayout(remote_group)
+        remote_layout.setContentsMargins(12, 18, 12, 12)
+        remote_layout.setSpacing(8)
+        warning = QLabel(
+            "Remote devices require HTTPS. Set WEBAPP_TLS_CERTFILE and "
+            "WEBAPP_TLS_KEYFILE before exposing the Web App."
+        )
         warning.setWordWrap(True)
-        warning.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 11px;")
-        v.addWidget(warning)
+        warning.setObjectName("secondary_text")
+        remote_layout.addWidget(warning)
         try:
             from webapp import get_server_url
             login_url = get_server_url()
         except (ImportError, AttributeError):
             login_url = "http://127.0.0.1:8000"
-        self.webapp_link = QLabel(f'<a href="{login_url}">🔗 Open Web App Login</a>')
+        self.webapp_link = QLabel(f'<a href="{login_url}">Open Web App login</a>')
         self.webapp_link.setOpenExternalLinks(True)
         self.webapp_link.setStyleSheet(f"color: {T['ACCENT']};")
         self.webapp_link.setToolTip(login_url)
-        v.addWidget(self.webapp_link)
+        remote_layout.addWidget(self.webapp_link)
         self.webapp_url_label = QLabel(login_url)
-        self.webapp_url_label.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 12px;")
-        v.addWidget(self.webapp_url_label)
-        v.addStretch()
+        self.webapp_url_label.setWordWrap(True)
+        self.webapp_url_label.setObjectName("secondary_text")
+        remote_layout.addWidget(self.webapp_url_label)
+        root.addWidget(remote_group, 1, 0, 1, 2, Qt.AlignTop)
+        root.setColumnStretch(0, 1)
+        root.setColumnStretch(1, 1)
+        root.setRowStretch(2, 1)
+
         try:
             from webapp.otp_auth import get_or_create_secret
             self._webapp_otp_secret = get_or_create_secret()
@@ -1015,7 +1245,9 @@ class SettingsDialog(QDialog):
             self.webapp_otp_code.setText("Unavailable")
             self.webapp_otp_countdown.setText("Secure OS credential vault unavailable")
             self.webapp_copy_otp_btn.setEnabled(False)
-            self.webapp_status_lbl.setText("OTP is unavailable. Enable a supported OS credential vault before using Web App login.")
+            self.webapp_status_lbl.setText(
+                "OTP is unavailable. Enable a supported OS credential vault before using Web App login."
+            )
         return w
 
     def _refresh_webapp_otp(self):
