@@ -1182,7 +1182,8 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
             profiles = stored.get("task_profiles") or {}
             profile = next(
                 (name for name, item in profiles.items()
-                 if isinstance(item, dict) and item.get("provider") == provider_id),
+                 if isinstance(item, dict) and item.get("provider") == provider_id
+                 and (item.get("model_id") or (stored.get("models") or {}).get(provider_id)) == model),
                 "manual",
             )
             from ai_intelligence import UsageLedger
