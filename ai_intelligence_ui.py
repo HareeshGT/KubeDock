@@ -597,7 +597,7 @@ class AIIntelligenceDialog(QDialog):
             QMessageBox.warning(self, "Invalid watch plan", str(exc))
             return
         try:
-            ai_incident_workflow.validate_incident_target(
+            self._watch_target = ai_incident_workflow.validate_incident_target(
                 self.watch_context.text().strip(),
                 self.watch_namespace.text().strip(),
                 self.watch_resource.currentText(),
@@ -633,10 +633,15 @@ class AIIntelligenceDialog(QDialog):
             self.watch_output.append("SSH connection is no longer available; watch stopped.")
             self._stop_watch()
             return
-        namespace = shlex.quote(self.watch_namespace.text().strip())
-        name = shlex.quote(self.watch_name.text().strip())
-        resource = self.watch_resource.currentText()
-        context = self.watch_context.text().strip()
+        target = dict(getattr(self, "_watch_target", {}) or {})
+        if not target:
+            self.watch_output.append("Watch has no validated target; stopping.")
+            self._stop_watch()
+            return
+        namespace = shlex.quote(target["namespace"])
+        name = shlex.quote(target["resource_name"])
+        resource = target["resource_kind"]
+        context = target["context"]
         context_flag = "--context " + shlex.quote(context) + " " if context else ""
         inner = "kubectl " + context_flag + "-n " + namespace + " get " + resource + " " + name + " -o wide 2>&1"
         command = "bash -lc " + shlex.quote(inner)
@@ -713,10 +718,14 @@ class AIIntelligenceDialog(QDialog):
         if not observations:
             QMessageBox.information(self, "No observations", "Start a watch and collect observations first.")
             return
-        namespace = self.watch_namespace.text().strip()
-        context = self.watch_context.text().strip() or "current context"
-        resource = self.watch_resource.currentText()
-        name = self.watch_name.text().strip()
+        target = dict(getattr(self, "_watch_target", {}) or {})
+        if not target:
+            QMessageBox.information(self, "No validated target", "Start a watch first so the target can be recorded safely.")
+            return
+        namespace = target["namespace"]
+        context = target["context"] or "current context"
+        resource = target["resource_kind"]
+        name = target["resource_name"]
         bundle = ai_intelligence.build_incident_bundle(
             title="Watch-mode change review: " + resource + "/" + name,
             cluster=context,
@@ -920,6 +929,7 @@ class AIIntelligenceDialog(QDialog):
             command = ai_incident_workflow.build_cross_system_collection_command(
                 target["context"], target["namespace"], target["resource_kind"], target["resource_name"]
             )
+            self._cross_system_target = dict(target)
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid cross-system target", str(exc))
             return
@@ -941,10 +951,10 @@ class AIIntelligenceDialog(QDialog):
 
     def _on_cross_system_live_result(self, output, error, exit_code):
         try:
-            target = ai_incident_workflow.validate_incident_target(
-                self.incident_context.text(), self.incident_namespace.text(),
-                self.incident_resource_kind.currentText(), self.incident_resource_name.text(),
-            )
+            target = dict(getattr(self, "_cross_system_target", {}) or {})
+            if not target:
+                self.cross_system_output.setPlainText("Collection returned without a validated target; discard this result.")
+                return
             sections = ai_incident_workflow.parse_live_incident_output(
                 (output or "") + (("\n" + error) if error else "")
             )
