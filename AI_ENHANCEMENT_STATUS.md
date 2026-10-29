@@ -148,7 +148,7 @@ A quick review of the merged code found that resource evidence was tail-truncate
 
 ### Implemented on `feat/ai-infrastructure-intelligence`
 
-- [x] Added task-specific provider assignments for Quick explanations, Deep diagnoses, Voice/conversation, and Local/Private inference in Settings → AI. Failed/large command explanations can opt in to escalation to the configured Deep Diagnosis provider.
+- [x] Added task-specific provider and model assignments for Quick explanations, Deep diagnoses, Voice/conversation, and Local/Private inference in Settings → AI. Failed/large command explanations can opt in to escalation to the configured Deep Diagnosis provider.
 - [x] Added an Ollama provider pinned to `http://127.0.0.1:11434/v1/chat/completions`. No API key is required; the endpoint is loopback-only and no silent cloud fallback is performed. Pod logs offer an explicit **Analyze Locally** action.
 - [x] Added a pod-log **Export Incident** action and an **Incident Investigator** workspace tab. The export creates a timestamped JSON evidence bundle, redacts recognizable credentials, records evidence provenance via a SHA-256 digest, and is not sent to a provider unless the user explicitly loads it into the investigator and starts analysis.
 - [x] Added deterministic candidate-signal correlation for OOM, probe failures, image pulls, scheduling, dependency network failures, and permission errors. Signals are presented as hypotheses, not proof, and are attached to the diagnosis context only after redaction.
