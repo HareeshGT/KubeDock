@@ -24,26 +24,26 @@ WIN_SPEC.loader.exec_module(win_installer)
 
 class WindowsReleaseAssetURLTests(unittest.TestCase):
     def test_windows_installer_pins_bundle_and_checksum_to_latest_tag(self):
-        tag = "fast-installer-f5b9fa8-40904841970"
+        tag = "v1.2.3"
         bundle_url = win_installer.release_asset_url(tag, "KubeDock-windows-x86_64.zip")
         checksum_url = win_installer.release_asset_url(tag, "SHA256SUMS")
 
         self.assertEqual(
             bundle_url,
             "https://github.com/HareeshGT/KubeDock/releases/download/"
-            "fast-installer-f5b9fa8-40904841970/KubeDock-windows-x86_64.zip",
+            "v1.2.3/KubeDock-windows-x86_64.zip",
         )
         self.assertEqual(
             checksum_url,
             "https://github.com/HareeshGT/KubeDock/releases/download/"
-            "fast-installer-f5b9fa8-40904841970/SHA256SUMS",
+            "v1.2.3/SHA256SUMS",
         )
         self.assertNotIn("/download/fast-installer/", bundle_url)
 
     def test_windows_installer_resolves_latest_published_release(self):
         response = MagicMock()
         response.read.return_value = json.dumps({
-            "tag_name": "fast-installer-current-123",
+            "tag_name": "v1.3.0",
             "draft": False,
             "prerelease": False,
         }).encode("utf-8")
@@ -51,7 +51,7 @@ class WindowsReleaseAssetURLTests(unittest.TestCase):
         response.__exit__.return_value = False
         with patch.object(win_installer.urllib.request, "urlopen", return_value=response) as urlopen:
             tag = win_installer.get_latest_release_tag()
-        self.assertEqual(tag, "fast-installer-current-123")
+        self.assertEqual(tag, "v1.3.0")
         request = urlopen.call_args.args[0]
         self.assertEqual(request.full_url, win_installer.LATEST_RELEASE_API)
 
@@ -76,7 +76,7 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
     def test_build_metadata_records_source_and_optional_features(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             os.environ,
-            {"GITHUB_SHA": "test-source-sha", "GITHUB_REF_NAME": "test-branch"},
+            {"GITHUB_SHA": "test-source-sha", "GITHUB_REF_NAME": "test-branch", "KUBEDOCK_RELEASE_VERSION": "1.2.3"},
         ):
             bundle = Path(directory) / "KubeDock"
             bundle.mkdir()
@@ -85,6 +85,7 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
         self.assertEqual(metadata["application"], "KubeDock")
+        self.assertEqual(metadata["version"], "1.2.3")
         self.assertEqual(metadata["source_sha"], "test-source-sha")
         self.assertEqual(metadata["source_branch"], "test-branch")
         self.assertFalse(metadata["qwen_tts"])

@@ -12,6 +12,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
@@ -47,8 +48,30 @@ def _candidate_app_dirs() -> list[Path]:
         local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
         if local_app_data:
             candidates.append(Path(local_app_data) / "KubeDock")
+
+        roaming_app_data = os.environ.get("APPDATA", "").strip()
+        if roaming_app_data:
+            candidates.append(Path(roaming_app_data) / "KubeDock")
+
         if _HOME_DIR is not None:
-            candidates.append(_HOME_DIR / "AppData" / "Local" / "KubeDock")
+            candidates.extend([
+                _HOME_DIR / "AppData" / "Local" / "KubeDock",
+                _HOME_DIR / "AppData" / "Roaming" / "KubeDock",
+                _HOME_DIR / "KubeDockData",
+            ])
+
+        # An existing LocalAppData\\KubeDock directory can have broken ACLs
+        # (for example, after an elevated install). A separate user temp
+        # directory is a final writable fallback so startup does not fail only
+        # because that old directory cannot be opened. Existing DB data is
+        # copied here when the legacy database remains readable.
+        try:
+            temp_root = Path(tempfile.gettempdir())
+            user_key = os.environ.get("USERNAME", "").strip() or os.environ.get("USER", "").strip() or "current-user"
+            safe_user_key = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in user_key)[:48]
+            candidates.append(temp_root / "KubeDock-Data" / safe_user_key)
+        except (OSError, RuntimeError):
+            pass
     elif sys.platform == "darwin":
         if _HOME_DIR is not None:
             candidates.append(_HOME_DIR / "Library" / "Application Support" / "KubeDock")
@@ -73,6 +96,9 @@ def _is_storage_path_error(exc: sqlite3.OperationalError) -> bool:
             "attempt to write a readonly database",
             "readonly database",
             "disk i/o error",
+            "access is denied",
+            "permission denied",
+            "winerror 5",
         )
     )
 

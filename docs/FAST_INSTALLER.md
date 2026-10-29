@@ -31,10 +31,24 @@ source-build option.
 - macOS Intel
 - Windows x86-64
 
-On pushes to `main`, successful platform builds are assembled and published as
-assets on the rolling GitHub prerelease `fast-installer`. The tag is moved to
-the commit used for the latest assets. Pull requests build and validate the
-platform bundles but do not publish or update the release.
+Scheduled or manually triggered deployments publish immutable, sequential
+semantic-version releases: `v1.0.0`, `v1.0.1`, `v1.0.2`, and so on. Run IDs
+and commit hashes are no longer embedded in release tags. The first version is
+`v1.0.0` when no semantic releases exist; subsequent runs increment the
+patch version by default.
+
+For a manual workflow dispatch, choose a `patch`, `minor`, or `major` bump.
+For example, a minor bump after `v1.2.4` produces `v1.3.0`, and a major bump
+produces `v2.0.0`. Releases are immutable: if publishing a version fails, do
+not reuse or overwrite its tag; correct the failure and run the workflow again
+so it allocates the next version. The workflow marks the newly published
+version as the latest stable release, so the installers' `releases/latest`
+downloads keep working.
+
+Existing historical `fast-installer-<hash>-<run-id>` releases are left intact.
+New deployments no longer create releases with those random-looking names.
+The optional workflow schedules are retained; each successful scheduled or
+manual deployment receives the next semantic version.
 
 Linux ARM64 does not currently have a prebuilt bundle because PyQt5 falls back to a source build without an available wheel. In `auto` mode, Linux ARM64 therefore uses the existing source-build fallback; `release` mode exits with an explanatory message.
 

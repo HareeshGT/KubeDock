@@ -7,15 +7,55 @@ on:
     - cron: "0 8 * * *"   # 1:30 PM IST
     - cron: "11 15 * * *" # 8:41 PM IST (test)
   workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "Semantic version increment for this deployment"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+  pull_request:
+    branches: [main]
+    paths:
+      - "db.py"
+      - "installer/**"
+      - "tests/test_db_paths.py"
+      - "tests/test_installer_builder.py"
+      - "tests/test_release_version.py"
+      - "docs/FAST_INSTALLER.md"
+      - "README.md"
+      - ".github/workflows/fast-installer-bundles.yml"
 
 permissions:
   contents: read
 
+# Publish sequentially so concurrent schedule/manual runs cannot choose the same tag.
 concurrency:
-  group: fast-installer-bundles-${{ github.ref }}
-  cancel-in-progress: true
+  group: fast-installer-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'deploy' }}
+  cancel-in-progress: false
 
 jobs:
+  prepare-release-version:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check out repository tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Calculate next semantic version
+        id: version
+        env:
+          VERSION_BUMP: ${{ github.event.inputs.version_bump || 'patch' }}
+        run: python installer/release_version.py --bump "$VERSION_BUMP"
+
   installer-syntax:
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -32,11 +72,14 @@ jobs:
         run: |
           bash -n installer/installer.sh
           bash -n installer/build_pkg.sh
-          python -m py_compile installer/installer-win.py installer/build_prebuilt.py tests/test_installer_builder.py
+          python -m py_compile db.py installer/installer-win.py installer/build_prebuilt.py installer/release_version.py tests/test_db_paths.py tests/test_installer_builder.py tests/test_release_version.py
           python -m unittest discover -s tests -p "test_installer_builder.py" -v
+          python -m unittest discover -s tests -p "test_release_version.py" -v
+          python -m unittest discover -s tests -p "test_db_paths.py" -v
 
   build:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    if: github.ref == 'refs/heads/main'
+    needs: prepare-release-version
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +110,7 @@ jobs:
       ASSET_NAME: ${{ matrix.asset }}
       BUNDLE_NAME: ${{ matrix.bundle }}
       BUILD_FAMILY: ${{ matrix.family }}
+      KUBEDOCK_RELEASE_VERSION: ${{ needs.prepare-release-version.outputs.version }}
 
     steps:
       - name: Check out source
@@ -225,9 +269,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  publish-rolling-release:
-    needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+  publish-versioned-release:
+    needs: [prepare-release-version, build]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
 
     permissions:
@@ -250,6 +294,8 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.sha }}
           SOURCE_BRANCH: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.prepare-release-version.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare-release-version.outputs.tag }}
         run: |
           set -euo pipefail
           cd release-assets
@@ -267,13 +313,12 @@ jobs:
               p.name for p in root.glob("KubeDock-*") if p.is_file()
           )
 
-          release_tag = (
-              f"fast-installer-{os.environ['SOURCE_SHA'][:7]}-"
-              f"{os.environ['GITHUB_RUN_ID']}"
-          )
+          release_tag = os.environ["RELEASE_TAG"]
+          release_version = os.environ["RELEASE_VERSION"]
           manifest = {
               "application": "KubeDock",
               "release_tag": release_tag,
+              "release_version": release_version,
               "source_branch": os.environ["SOURCE_BRANCH"],
               "source_sha": os.environ["SOURCE_SHA"],
               "built_at": datetime.now(timezone.utc).isoformat(),
@@ -290,49 +335,27 @@ jobs:
 
           cat KubeDock-fast-installer.json
 
-      - name: Publish immutable rolling release
+      - name: Publish immutable semantic-version release
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
+          RELEASE_VERSION: ${{ needs.prepare-release-version.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare-release-version.outputs.tag }}
         run: |
           set -euo pipefail
+          NOTES="KubeDock fast installer v$RELEASE_VERSION. Built from commit $SOURCE_SHA. Choose the bundle for your OS and architecture. Optional Qwen3-TTS/PyTorch and Qt WebEngine are excluded from these lightweight bundles."
 
-          # Published releases are immutable, so every build needs its own
-          # unique tag. The workflow run ID keeps scheduled/manual builds of
-          # the same source commit from trying to overwrite existing assets.
-          RELEASE_TAG="fast-installer-${SOURCE_SHA:0:7}-${GITHUB_RUN_ID}"
-          NOTES="Latest stable rolling prebuilt installer bundles for KubeDock. Built from commit $SOURCE_SHA in workflow run $GITHUB_RUN_ID. Choose the bundle for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
-
-          # A retry can encounter a draft left by a partially failed publish.
-          # Draft assets may be repaired; published immutable assets must never
-          # be clobbered.
-          if release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null)"; then
-            is_draft="$(jq -r '.isDraft' <<< "$release_json")"
-            if [[ "$is_draft" == "true" ]]; then
-              gh release upload "$RELEASE_TAG" release-assets/* \
-                --repo "$GITHUB_REPOSITORY" \
-                --clobber
-              gh release edit "$RELEASE_TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --title "KubeDock Fast Installer" \
-                --notes "$NOTES" \
-                --draft=false \
-                --latest
-            else
-              echo "Release $RELEASE_TAG is already published; preserving its immutable assets."
-              gh release edit "$RELEASE_TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --title "KubeDock Fast Installer" \
-                --notes "$NOTES" \
-                --latest
-            fi
-          else
-            gh release create "$RELEASE_TAG" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
-              --title "KubeDock Fast Installer" \
-              --notes "$NOTES" \
-              --latest
+          # Each published version is immutable. Never reuse or overwrite a release tag.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "ERROR: Release $RELEASE_TAG already exists. Refusing to overwrite an immutable version." >&2
+            exit 1
           fi
 
-          echo "Published latest stable KubeDock bundles at tag: $RELEASE_TAG"
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "KubeDock v$RELEASE_VERSION" \
+            --notes "$NOTES" \
+            --latest
+
+          echo "Published KubeDock v$RELEASE_VERSION at tag $RELEASE_TAG"
