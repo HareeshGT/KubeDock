@@ -26,7 +26,7 @@ KubeDock brings everyday infrastructure tasks into one desktop app, so you can m
 
 ### Recommended: Fast prebuilt installer
 
-Download the bundle for your operating system and architecture from the [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer).
+Download the bundle for your operating system and architecture from the [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/latest).
 
 The bundles target Linux x86-64, macOS Apple Silicon/Intel, and Windows x86-64. They omit optional Qwen3-TTS/PyTorch and Qt WebEngine/Chromium components to keep installation lighter.
 
@@ -126,7 +126,7 @@ KubeDock is licensed under the [MIT License](LICENSE).
 ## Links
 
 - [Repository](https://github.com/HareeshGT/KubeDock)
-- [Fast Installer releases](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer)
+- [Fast Installer releases](https://github.com/HareeshGT/KubeDock/releases/latest)
 - [Security Policy](SECURITY.md)
 - [Report a vulnerability privately](https://github.com/HareeshGT/KubeDock/security/advisories/new)
 
