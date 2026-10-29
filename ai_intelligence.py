@@ -13,6 +13,7 @@ from hashlib import sha256
 import json
 import re
 import sqlite3
+import math
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -189,6 +190,40 @@ def compare_cluster_snapshots(left: Mapping[str, Any], right: Mapping[str, Any])
         "changed": changed,
         "left_count": len(a), "right_count": len(b),
     }
+
+
+def parse_cpu_millicores(value: str) -> float:
+    """Parse common Kubernetes CPU quantities into millicores."""
+    text = str(value or "").strip()
+    match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)(n|u|m)?", text)
+    if not match:
+        raise ValueError(f"Unsupported CPU quantity: {text!r}")
+    amount = float(match.group(1))
+    suffix = match.group(2) or ""
+    scale = {"n": 1e-6, "u": 1e-3, "m": 1.0, "": 1000.0}[suffix]
+    result = amount * scale
+    if not math.isfinite(result) or result < 0:
+        raise ValueError("CPU quantity must be finite and non-negative.")
+    return result
+
+
+def parse_memory_bytes(value: str) -> int:
+    """Parse common Kubernetes binary/SI memory quantities into bytes."""
+    text = str(value or "").strip()
+    match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?", text)
+    if not match:
+        raise ValueError(f"Unsupported memory quantity: {text!r}")
+    amount = float(match.group(1))
+    suffix = match.group(2) or ""
+    binary = {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
+              "Pi": 1024**5, "Ei": 1024**6}
+    decimal = {"K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4,
+               "P": 1000**5, "E": 1000**6}
+    scale = binary.get(suffix, decimal.get(suffix, 1))
+    result = amount * scale
+    if not math.isfinite(result) or result < 0:
+        raise ValueError("Memory quantity must be finite and non-negative.")
+    return int(result)
 
 
 def recommend_rightsizing(*, cpu_usage_millicores: float | None,
