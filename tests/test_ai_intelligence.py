@@ -54,6 +54,29 @@ class AIIntelligenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "protected"):
             validate_remediation_plan({"action": "restart", "namespace": "kube-system", "resource": "deployment", "name": "dns"})
 
+    def test_remediation_rejects_incompatible_action_resource_combinations(self):
+        with self.assertRaisesRegex(ValueError, "not supported for resource"):
+            validate_remediation_plan({
+                "action": "scale", "namespace": "apps", "resource": "pod", "name": "api", "replicas": 2,
+            })
+        with self.assertRaisesRegex(ValueError, "not supported for resource"):
+            validate_remediation_plan({
+                "action": "rollback", "namespace": "apps", "resource": "statefulset", "name": "db",
+            })
+        with self.assertRaisesRegex(ValueError, "unsupported characters"):
+            validate_remediation_plan({
+                "action": "restart", "namespace": "apps", "resource": "deployment", "name": "api;whoami",
+            })
+
+    def test_storage_and_node_pressure_signals_are_hypotheses(self):
+        result = correlate_incident_signals(
+            logs=["MountVolume.SetUp failed for volume data", "node has condition: DiskPressure"]
+        )
+        signals = {item["signal"] for item in result["observations"]}
+        self.assertIn("storage_volume", signals)
+        self.assertIn("node_pressure", signals)
+        self.assertIn("not proof", result["note"])
+
     def test_watch_config_is_bounded_and_non_mutating(self):
         config = bounded_watch_config(duration_seconds=120, interval_seconds=30)
         self.assertEqual(config["max_observations"], 4)
