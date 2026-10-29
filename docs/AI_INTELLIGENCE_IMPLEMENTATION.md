@@ -16,7 +16,7 @@ This branch introduces a deterministic, dependency-free task-profile resolver an
 
 ## Validation
 
-Run: python -m unittest tests.test_ai_task_profiles -v
+Run: python -m unittest discover -s tests -p 'test_ai_task_profiles.py' -v
 
 ## Remaining work from the full enhancement specification
 
