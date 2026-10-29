@@ -1177,13 +1177,13 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
     answer, error = _call_provider_impl(provider_id, api_key, model, prompt)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     try:
-        stored = load_settings().get("ai") or {}
+        stored = get_ai_settings()
         if stored.get("usage_telemetry_enabled"):
             profiles = stored.get("task_profiles") or {}
             profile = next(
                 (name for name, item in profiles.items()
                  if isinstance(item, dict) and item.get("provider") == provider_id
-                 and (item.get("model_id") or (stored.get("models") or {}).get(provider_id)) == model),
+                 and item.get("model_id") == model),
                 "manual",
             )
             from ai_intelligence import UsageLedger
