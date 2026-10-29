@@ -74,7 +74,6 @@ def build_args(include_qwen: bool) -> list[str]:
         "--collect-submodules=k8s_ai_ops_parts",
         "--hidden-import=speech_recognition",
         f"--add-data=assets{sep}assets",
-        f"--add-data=webapp{sep}webapp",
         f"--add-data=webapp/static{sep}webapp/static",
     ]
     if importlib.util.find_spec("pyaudio") is not None:
