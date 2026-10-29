@@ -10,6 +10,8 @@ from PyQt5.QtWidgets import (
 )
 
 import ai_intelligence
+import db
+from themes import load_settings
 
 
 class AIIntelligenceDialog(QDialog):
@@ -33,6 +35,7 @@ class AIIntelligenceDialog(QDialog):
         self._build_watch_tab()
         self._build_remediation_tab()
         self._build_services_tab()
+        self._build_usage_tab()
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         root.addWidget(close)
@@ -221,6 +224,37 @@ class AIIntelligenceDialog(QDialog):
             QMessageBox.warning(self, "Remediation proposal rejected", str(exc))
             return
         self._show_result(self.remediation_output, result)
+
+
+    def _build_usage_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(QLabel(
+            "Opt-in local aggregates only: provider, task profile, call count, error count, "
+            "and average latency. Prompts, logs, API keys, and response text are never recorded."
+        ))
+        refresh = QPushButton("Refresh usage summary")
+        refresh.clicked.connect(self._refresh_usage_summary)
+        layout.addWidget(refresh)
+        self.usage_output = self._output(layout)
+        self._refresh_usage_summary()
+        self.tabs.addTab(tab, "Usage / latency")
+
+    def _refresh_usage_summary(self):
+        enabled = bool((load_settings().get("ai") or {}).get("usage_telemetry_enabled", False))
+        if not enabled:
+            result = {
+                "enabled": False,
+                "message": "Telemetry is disabled. Enable the opt-in checkbox in Settings → AI to start collecting local aggregate counters.",
+                "records": [],
+            }
+        else:
+            try:
+                ledger = ai_intelligence.UsageLedger(str(db.DB_PATH))
+                result = {"enabled": True, "records": ledger.summary(30)}
+            except Exception as exc:
+                result = {"enabled": True, "error": str(exc), "records": []}
+        self._show_result(self.usage_output, result)
 
     def _build_services_tab(self):
         tab = QWidget()
