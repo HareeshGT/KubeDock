@@ -161,10 +161,10 @@ A quick review of the merged code found that resource evidence was tail-truncate
 ### Scope and limitations
 
 - Local inference requires the user to install and start Ollama and pull a model. The app connects only to loopback; no model installation is automated.
-- Cluster comparison and service indexing consume user-selected JSON inventory snapshots; automatic snapshot discovery for multiple clusters is not implemented by this workspace.
+- Cluster comparison can capture normalized inventories from two explicitly selected kubectl contexts over the current SSH session or compare user-provided JSON snapshots. Service discovery can query the current SSH session or load an exported inventory; it does not create cluster credentials.
 - The watch mode polls a single named resource with a read-only `kubectl get` command over the existing SSH session. It is finite (maximum one hour), interval-bounded, explicitly started, and performs no automatic remediation.
 - Resource right-sizing can collect five live usage samples via `kubectl top` and read current pod requests over SSH; it does not yet query historical Prometheus windows or write resource requests back to a workload.
 - The incident bundle exports the current pod logs plus collected describe/alternate-log/metrics evidence when available. It does not query Kubernetes Secret values.
 - The remediation workspace validates proposed actions but does not dispatch them. Existing Ops Mind confirmation, RBAC and post-mutation verification paths remain the only mutation route.
-- Voice profile selection applies to AI conversation follow-ups; local/private diagnosis is explicitly selectable from the pod log viewer.
+- Voice profile selection applies to Ops Mind command interpretation and AI conversation follow-ups; local/private diagnosis is explicitly selectable from the pod log viewer and Incident Investigator.
 - Full application regression, live cluster behavior, provider connectivity, voice hardware, packaging, and all-platform GUI smoke tests must be confirmed by GitHub Actions and/or on the target machine before merging.
