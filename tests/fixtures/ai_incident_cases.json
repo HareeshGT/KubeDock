@@ -15,7 +15,7 @@
     "id": "registry_auth",
     "logs": ["Failed to pull image: unauthorized: authentication required", "ImagePullBackOff"],
     "events": [],
-    "expected": ["image_pull"]
+    "expected": ["image_pull", "permission"]
   },
   {
     "id": "scheduler_capacity",
