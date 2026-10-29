@@ -1,5 +1,6 @@
 """Compact UI for safety-first AI infrastructure utilities."""
 import json
+import re
 import shlex
 import time
 from datetime import datetime, timezone
@@ -91,18 +92,145 @@ class AIIntelligenceDialog(QDialog):
         self.memory_request.setRange(0, 1e15)
         self.memory_request.setDecimals(0)
         self.memory_request.setSuffix(" bytes")
+        self.rightsizing_context = QLineEdit()
+        self.rightsizing_context.setPlaceholderText("kubectl context name")
+        self.rightsizing_namespace = QLineEdit()
+        self.rightsizing_namespace.setPlaceholderText("Namespace")
+        self.rightsizing_pod = QLineEdit()
+        self.rightsizing_pod.setPlaceholderText("Pod name")
+        form.addRow("Live context", self.rightsizing_context)
+        form.addRow("Live namespace", self.rightsizing_namespace)
+        form.addRow("Live pod", self.rightsizing_pod)
         form.addRow("Observed CPU usage", self.cpu_usage)
         form.addRow("Observed memory usage", self.memory_usage)
         form.addRow("Number of samples", self.sample_count)
         form.addRow("Current CPU request (optional)", self.cpu_request)
         form.addRow("Current memory request (optional)", self.memory_request)
         layout.addLayout(form)
+        collect = QPushButton("Collect 5 live samples over SSH")
+        collect.clicked.connect(self._collect_rightsizing_metrics)
+        layout.addWidget(collect)
         run = QPushButton("Calculate conservative recommendation")
         run.clicked.connect(self._recommend_resources)
         layout.addWidget(run)
         layout.addWidget(QLabel("Requires at least five samples. Recommendations never apply themselves."))
         self.rightsizing_output = self._output(layout)
         self.tabs.addTab(tab, "Right-sizing")
+
+
+    def _collect_rightsizing_metrics(self):
+        if self._rightsizing_worker is not None:
+            return
+        ssh = self._find_ssh_connection()
+        context = self.rightsizing_context.text().strip()
+        namespace = self.rightsizing_namespace.text().strip()
+        pod = self.rightsizing_pod.text().strip()
+        if ssh is None:
+            QMessageBox.warning(self, "SSH not connected", "Connect to a VM in KubeDock before collecting metrics.")
+            return
+        if not context or not namespace or not pod:
+            QMessageBox.information(self, "Target required", "Enter the kubectl context, namespace, and pod name.")
+            return
+        context_q, namespace_q, pod_q = map(shlex.quote, (context, namespace, pod))
+        sample_command = (
+            "for i in 1 2 3 4 5; do printf '__SAMPLE_%s__\\n' \"$i\"; "
+            + "kubectl --context " + context_q + " -n " + namespace_q
+            + " top pod " + pod_q + " --containers --no-headers 2>&1; sleep 5; done"
+        )
+        request_expr = r'{range .spec.containers[*]}{.resources.requests.cpu}{" "}{.resources.requests.memory}{"\\n"}{end}'
+        request_command = (
+            "printf '\\n__REQUESTS__\\n'; kubectl --context " + context_q
+            + " -n " + namespace_q + " get pod " + pod_q
+            + " -o jsonpath=" + shlex.quote(request_expr) + " 2>&1"
+        )
+        inner = sample_command + "; " + request_command
+        worker = CommandWorker(ssh, "bash -lc " + shlex.quote(inner), timeout=45)
+        self._rightsizing_worker = worker
+        worker.result.connect(self._on_rightsizing_metrics)
+        worker.error.connect(lambda error: self.rightsizing_output.setPlainText("Metric collection failed: " + ai_intelligence.redact_evidence(error)))
+        worker.finished.connect(self._on_rightsizing_metrics_finished)
+        self.rightsizing_output.setPlainText("Collecting five CPU/memory samples (about 25 seconds)…")
+        worker.start()
+
+    def _on_rightsizing_metrics(self, output, error, exit_code):
+        if exit_code != 0:
+            self.rightsizing_output.setPlainText(
+                "Metric collection failed; values remain unchanged.\\n"
+                + ai_intelligence.redact_evidence(error or output or str(exit_code))
+            )
+            return
+        samples = {}
+        requests_text = []
+        current_sample = None
+        in_requests = False
+        for line in (output or "").splitlines():
+            match = re.match(r"__SAMPLE_(\\d+)__", line.strip())
+            if match:
+                current_sample = int(match.group(1))
+                samples.setdefault(current_sample, [])
+                in_requests = False
+                continue
+            if line.strip() == "__REQUESTS__":
+                in_requests = True
+                current_sample = None
+                continue
+            if in_requests:
+                requests_text.append(line)
+            elif current_sample is not None:
+                samples[current_sample].append(line)
+        cpu_samples = []
+        memory_samples = []
+        for number in sorted(samples):
+            cpu_total = 0.0
+            memory_total = 0
+            found = False
+            for line in samples[number]:
+                fields = line.split()
+                if len(fields) < 3:
+                    continue
+                try:
+                    cpu_total += ai_intelligence.parse_cpu_millicores(fields[-2])
+                    memory_total += ai_intelligence.parse_memory_bytes(fields[-1])
+                    found = True
+                except ValueError:
+                    continue
+            if found:
+                cpu_samples.append(cpu_total)
+                memory_samples.append(memory_total)
+        if len(cpu_samples) < 5 or len(memory_samples) < 5:
+            self.rightsizing_output.setPlainText(
+                "Could not collect five valid metrics samples. Check Metrics Server/RBAC and retry.\\n"
+                + ai_intelligence.redact_evidence(output or error or "")
+            )
+            return
+        cpu_request = 0.0
+        memory_request = 0
+        request_count = 0
+        for line in requests_text:
+            fields = line.split()
+            if not fields or fields[0].lower().startswith("error"):
+                continue
+            try:
+                if fields[0]:
+                    cpu_request += ai_intelligence.parse_cpu_millicores(fields[0])
+                if len(fields) > 1 and fields[1]:
+                    memory_request += ai_intelligence.parse_memory_bytes(fields[1])
+                request_count += 1
+            except ValueError:
+                continue
+        self.cpu_usage.setValue(sum(cpu_samples) / len(cpu_samples))
+        self.memory_usage.setValue(sum(memory_samples) / len(memory_samples))
+        self.sample_count.setValue(min(len(cpu_samples), len(memory_samples)))
+        self.cpu_request.setValue(cpu_request if request_count else 0)
+        self.memory_request.setValue(memory_request if request_count else 0)
+        self.rightsizing_output.setPlainText(
+            "Collected " + str(min(len(cpu_samples), len(memory_samples)))
+            + " valid samples. Usage fields contain the average across samples; resource requests "
+            + ("were read from the pod spec." if request_count else "were not available in the pod spec.")
+        )
+
+    def _on_rightsizing_metrics_finished(self):
+        self._rightsizing_worker = None
 
     def _recommend_resources(self):
         result = ai_intelligence.recommend_rightsizing(
