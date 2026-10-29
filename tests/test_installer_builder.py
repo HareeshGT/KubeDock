@@ -1,6 +1,10 @@
 import importlib.util
+import json
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,14 +33,17 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         self.assertIn("--collect-all=qwen_tts", args)
         self.assertIn("--collect-all=transformers", args)
 
-    def test_metadata_source_can_be_supplied_by_ci(self):
-        metadata = {
-            "source_sha": "abc123",
-            "source_branch": "main",
-            "qwen_tts": False,
-        }
+    def test_metadata_records_source_revision_and_optional_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "KubeDock"
+            bundle.mkdir()
+            with patch.dict(os.environ, {"GITHUB_SHA": "abc123", "GITHUB_REF_NAME": "main"}):
+                builder.write_build_metadata(bundle, include_qwen=False)
+            metadata = json.loads((bundle / "KubeDock-BUILD-METADATA.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["source_sha"], "abc123")
         self.assertEqual(metadata["source_branch"], "main")
         self.assertFalse(metadata["qwen_tts"])
+        self.assertEqual(metadata["bundle_format"], "onedir")
 
 
 if __name__ == "__main__":
