@@ -267,9 +267,13 @@ jobs:
               p.name for p in root.glob("KubeDock-*") if p.is_file()
           )
 
+          release_tag = (
+              f"fast-installer-{os.environ['SOURCE_SHA'][:7]}-"
+              f"{os.environ['GITHUB_RUN_ID']}"
+          )
           manifest = {
               "application": "KubeDock",
-              "release_tag": "fast-installer",
+              "release_tag": release_tag,
               "source_branch": os.environ["SOURCE_BRANCH"],
               "source_sha": os.environ["SOURCE_SHA"],
               "built_at": datetime.now(timezone.utc).isoformat(),
@@ -286,36 +290,49 @@ jobs:
 
           cat KubeDock-fast-installer.json
 
-      - name: Create or update latest fast-installer release
+      - name: Publish immutable rolling release
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          if gh release view fast-installer --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Update the existing release assets.
-            gh release upload fast-installer release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
+          # Published releases are immutable, so every build needs its own
+          # unique tag. The workflow run ID keeps scheduled/manual builds of
+          # the same source commit from trying to overwrite existing assets.
+          RELEASE_TAG="fast-installer-${SOURCE_SHA:0:7}-${GITHUB_RUN_ID}"
+          NOTES="Latest stable rolling prebuilt installer bundles for KubeDock. Built from commit $SOURCE_SHA in workflow run $GITHUB_RUN_ID. Choose the bundle for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
 
-            # Ensure the release is stable and designated as the latest release.
-            gh release edit fast-installer \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "KubeDock Fast Installer" \
-              --notes "Latest stable prebuilt installer bundles for KubeDock. Built from commit $SOURCE_SHA. Choose the bundle for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles." \
-              --prerelease=false \
-              --latest
+          # A retry can encounter a draft left by a partially failed publish.
+          # Draft assets may be repaired; published immutable assets must never
+          # be clobbered.
+          if release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null)"; then
+            is_draft="$(jq -r '.isDraft' <<< "$release_json")"
+            if [[ "$is_draft" == "true" ]]; then
+              gh release upload "$RELEASE_TAG" release-assets/* \
+                --repo "$GITHUB_REPOSITORY" \
+                --clobber
+              gh release edit "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "KubeDock Fast Installer" \
+                --notes "$NOTES" \
+                --draft=false \
+                --latest
+            else
+              echo "Release $RELEASE_TAG is already published; preserving its immutable assets."
+              gh release edit "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "KubeDock Fast Installer" \
+                --notes "$NOTES" \
+                --latest
+            fi
           else
-            # Create a stable release, not a prerelease.
-            gh release create fast-installer release-assets/* \
+            gh release create "$RELEASE_TAG" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$SOURCE_SHA" \
               --title "KubeDock Fast Installer" \
-              --notes "Latest stable prebuilt installer bundles for KubeDock. Built from commit $SOURCE_SHA. Choose the bundle for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles." \
+              --notes "$NOTES" \
               --latest
           fi
 
-          # Keep the rolling tag aligned with the sources used for the latest assets.
-          git tag --force fast-installer "$SOURCE_SHA"
-          git push origin refs/tags/fast-installer --force
+          echo "Published latest stable KubeDock bundles at tag: $RELEASE_TAG"
