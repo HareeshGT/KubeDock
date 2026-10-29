@@ -98,7 +98,7 @@ jobs:
           if [[ "${RUNNER_OS:-}" == "macOS" && "${RUNNER_ARCH:-}" == "X64" ]]; then
             export OPENSSL_DIR="$(brew --prefix openssl@3)"
             export OPENSSL_STATIC=1
-            python -m pip cache purge
+            # Avoid reusing a cached wheel built with dynamic OpenSSL.
             export PIP_NO_CACHE_DIR=1
           fi
           python -m pip install --upgrade pip
