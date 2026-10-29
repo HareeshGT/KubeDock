@@ -142,3 +142,29 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - [x] Resolve the Homebrew formula prefix and check versioned/unversioned executables in the formula bin, Homebrew bin, and libexec bin directories; verify the selected interpreter is exactly Python 3.12 or 3.14 as configured before proceeding.
 - [x] Keep Python 3.14 as the default lightweight macOS build and use Python 3.12 only for opt-in Qwen builds.
 - Validation on GitHub Actions/Python 3.12: `bash -n installer/installer.sh`, `bash -n installer/build_pkg.sh`, and `python -m py_compile installer/installer-win.py` passed; versioned Python 3.12 candidate-resolution check passed; full suite **183 passed, 2 skipped, 2 warnings**. Run: https://github.com/HareeshGT/KubeDock/actions/runs/39681782972.
+
+
+## AI Intelligence Workspace implementation (2026-10-29)
+
+### Implemented on `feat/ai-infrastructure-intelligence`
+
+- [x] Added task-specific provider assignments for Quick explanations, Deep diagnoses, Voice/conversation, and Local/Private inference in Settings → AI. Failed/large command explanations can opt in to escalation to the configured Deep Diagnosis provider.
+- [x] Added an Ollama provider pinned to `http://127.0.0.1:11434/v1/chat/completions`. No API key is required; the endpoint is loopback-only and no silent cloud fallback is performed. Pod logs offer an explicit **Analyze Locally** action.
+- [x] Added a pod-log **Export Incident** action. It creates a timestamped JSON evidence bundle, redacts recognizable credentials, records evidence provenance via a SHA-256 digest, and never sends the export to a provider.
+- [x] Added deterministic candidate-signal correlation for OOM, probe failures, image pulls, scheduling, dependency network failures, and permission errors. Signals are presented as hypotheses, not proof, and are attached to the diagnosis context only after redaction.
+- [x] Added an AI Intelligence Workspace with a conservative resource right-sizing advisor, JSON snapshot comparison for two clusters, bounded read-only SSH watch mode, remediation proposal validation, and a searchable/deduplicated service index from exported service JSON.
+- [x] Remediation plans are proposals only. They require user approval, enforce a supported action allowlist and protected namespaces, require explicit delete confirmation, and mark verification as required. No action is executed by the workspace.
+- [x] Added opt-in local aggregate AI usage/latency telemetry. It stores provider/profile, calls, errors and average latency only; prompts, logs, responses and API keys are not recorded. It is disabled by default.
+- [x] Added focused unit tests for incident evidence redaction, signal correlation, remediation validation, bounded watch configuration, cluster snapshot comparison, conservative right-sizing, service indexing, and opt-in aggregate telemetry.
+- [x] Extended the AI model regression workflow to compile the new modules and run AI-focused tests.
+
+### Scope and limitations
+
+- Local inference requires the user to install and start Ollama and pull a model. The app connects only to loopback; no model installation is automated.
+- Cluster comparison and service indexing consume user-selected JSON inventory snapshots; automatic snapshot discovery for multiple clusters is not implemented by this workspace.
+- The watch mode polls a single named resource with a read-only `kubectl get` command over the existing SSH session. It is finite (maximum one hour), interval-bounded, explicitly started, and performs no automatic remediation.
+- Resource right-sizing accepts measured usage and sample count from the user; it does not yet automatically collect historical metrics or write resource requests back to a workload.
+- The incident bundle exports the current pod logs plus collected describe/alternate-log/metrics evidence when available. It does not query Kubernetes Secret values.
+- The remediation workspace validates proposed actions but does not dispatch them. Existing Ops Mind confirmation, RBAC and post-mutation verification paths remain the only mutation route.
+- Voice profile selection applies to AI conversation follow-ups; local/private diagnosis is explicitly selectable from the pod log viewer.
+- Full application regression, live cluster behavior, provider connectivity, voice hardware, packaging, and all-platform GUI smoke tests must be confirmed by GitHub Actions and/or on the target machine before merging.
