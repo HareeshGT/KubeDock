@@ -237,7 +237,7 @@ class LogViewerDialog(QDialog):
     self._pending_ai_explain = {
       "provider": provider,
       "api_key": api_key,
-      "model": ai_assist.get_model(provider),
+      "model": assignment.get("model_id") or ai_assist.get_model(provider),
       "task_profile": task_profile,
       "log_text": log_text,
     }
