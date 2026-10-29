@@ -84,6 +84,19 @@ class IncidentWorkflowTests(unittest.TestCase):
         self.assertEqual(result["severity"], "high")
         self.assertIn("crashloopbackoff", result["critical_signals"])
 
+    def test_watch_age_does_not_create_false_change_alert(self):
+        from ai_incident_workflow import compare_watch_states
+        previous = "NAME READY STATUS RESTARTS AGE\napi-123 1/1 Running 0 2m"
+        next_poll = "NAME READY STATUS RESTARTS AGE\napi-123 1/1 Running 0 3m"
+        result = compare_watch_states(previous, next_poll)
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["severity"], "none")
+        recovered_to_crash = compare_watch_states(
+            previous, "NAME READY STATUS RESTARTS AGE\napi-123 0/1 CrashLoopBackOff 1 3m"
+        )
+        self.assertTrue(recovered_to_crash["changed"])
+        self.assertIn("crashloopbackoff", recovered_to_crash["new_critical_signals"])
+
     def test_prometheus_url_rejects_cleartext_remote_and_credentials(self):
         self.assertEqual(validate_prometheus_base_url("http://localhost:9090/"), "http://localhost:9090")
         self.assertEqual(validate_prometheus_base_url("https://metrics.example.com/"), "https://metrics.example.com")

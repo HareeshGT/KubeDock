@@ -297,7 +297,7 @@ def compare_watch_states(previous: str, current: str) -> dict:
     """Return a bounded diff while ignoring volatile AGE values that change every poll."""
     prev_lines = [line.strip() for line in str(previous or "").splitlines() if line.strip()]
     curr_lines = [line.strip() for line in str(current or "").splitlines() if line.strip()]
-    age_pattern = re.compile(r"(?<=\\s)(?:\\d+[smhdwy])+(?=\\s|$)", re.I)
+    age_pattern = re.compile(r"(?<=\s)(?:\d+[smhdwy])+(?=\s|$)", re.I)
     def normalize(line):
         return age_pattern.sub("<AGE>", line)
     normalized_previous = {normalize(line): line for line in prev_lines}
