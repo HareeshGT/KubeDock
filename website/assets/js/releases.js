@@ -77,7 +77,8 @@
   }
   function renderPlatformCards() {
     if (!platformRoot) return;
-    const current = stableSorted(releases.filter(r => !r.prerelease && r.assets.length));
+    const stable = stableSorted(releases.filter(r => !r.prerelease && r.assets.length));
+    const current = stable.concat(stableSorted(releases.filter(r => r.prerelease && r.assets.length)));
     const platforms = [
       {id:'windows',name:'Windows',symbol:'⊞',detail:'Windows x86-64',match:a => isWindows(a)},
       {id:'macos',name:'macOS',symbol:'⌘',detail:'Apple Silicon and Intel',match:a => isMac(a)},
@@ -89,8 +90,8 @@
         const matches = release.assets.filter(p.match);
         if (matches.length) { selectedRelease = release; selectedAssets = matches; break; }
       }
-      if (!selectedRelease) return '<article class="platform-card"><div class="platform-head"><span class="platform-symbol">' + p.symbol + '</span><span class="release-badge">No matching asset</span></div><h3>' + p.name + '</h3><p>' + p.detail + '</p><div class="platform-empty">No stable package detected in the public release data.</div><a class="text-link" href="' + RELEASES_URL + '" target="_blank" rel="noopener noreferrer">Check GitHub Releases ↗</a></article>';
-      return '<article class="platform-card"><div class="platform-head"><span class="platform-symbol">' + p.symbol + '</span><span class="release-badge latest">' + (selectedRelease.id === latestStable(releases) ? 'LATEST STABLE' : 'STABLE') + '</span></div><h3>' + p.name + '</h3><p>' + p.detail + ' · ' + escapeHTML(selectedRelease.tag) + '</p><div class="platform-assets">' + selectedAssets.map(a => assetMarkup(a,true)).join('') + '</div><a class="text-link" href="' + escapeHTML(selectedRelease.url) + '" target="_blank" rel="noopener noreferrer">Release notes ↗</a></article>';
+      if (!selectedRelease) return '<article class="platform-card"><div class="platform-head"><span class="platform-symbol">' + p.symbol + '</span><span class="release-badge">No matching asset</span></div><h3>' + p.name + '</h3><p>' + p.detail + '</p><div class="platform-empty">No matching package detected in the public release data.</div><a class="text-link" href="' + RELEASES_URL + '" target="_blank" rel="noopener noreferrer">Check GitHub Releases ↗</a></article>';
+      return '<article class="platform-card"><div class="platform-head"><span class="platform-symbol">' + p.symbol + '</span><span class="release-badge latest">' + (selectedRelease.prerelease ? 'PRERELEASE' : (selectedRelease.id === latestStable(releases) ? 'LATEST STABLE' : 'STABLE')) + '</span></div><h3>' + p.name + '</h3><p>' + p.detail + ' · ' + escapeHTML(selectedRelease.tag) + '</p><div class="platform-assets">' + selectedAssets.map(a => assetMarkup(a,true)).join('') + '</div><a class="text-link" href="' + escapeHTML(selectedRelease.url) + '" target="_blank" rel="noopener noreferrer">Release notes ↗</a></article>';
     }).join('');
   }
   function matchesRelease(release) {
