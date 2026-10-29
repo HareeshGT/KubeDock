@@ -603,11 +603,21 @@ def get_ai_settings() -> dict:
         for pid, info in PROVIDERS.items()
     }
     custom_models = _normalise_custom_models(stored.get("custom_models") or {})
+    stored_profiles = stored.get("task_profiles") or {}
+    task_profiles = {}
+    for profile in ("quick", "deep_diagnosis", "voice"):
+        item = stored_profiles.get(profile) or {}
+        selected_provider = item.get("provider", provider)
+        if selected_provider not in PROVIDERS:
+            selected_provider = provider
+        task_profiles[profile] = {"provider": selected_provider}
     return {
         "provider": provider,
         "api_keys": api_keys,
         "models": models,
         "custom_models": custom_models,
+        "task_profiles": task_profiles,
+        "auto_escalation": bool(stored.get("auto_escalation", False)),
     }
 
 
@@ -629,7 +639,7 @@ def get_model(provider: str = None) -> str:
     )["default_model"]
 
 
-def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None):
+def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None, task_profiles=None, auto_escalation=None):
     """Save AI settings atomically while retaining current custom models by default."""
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
@@ -646,6 +656,18 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
     if custom_models is None:
         custom_models = (load_settings().get("ai") or {}).get("custom_models") or {}
     cleaned_custom_models = _normalise_custom_models(custom_models)
+    existing_ai = load_settings().get("ai") or {}
+    if task_profiles is None:
+        task_profiles = existing_ai.get("task_profiles") or {}
+    cleaned_profiles = {}
+    for profile in ("quick", "deep_diagnosis", "voice"):
+        item = task_profiles.get(profile) or {}
+        selected_provider = item.get("provider", provider)
+        if selected_provider not in PROVIDERS:
+            selected_provider = provider
+        cleaned_profiles[profile] = {"provider": selected_provider}
+    if auto_escalation is None:
+        auto_escalation = bool(existing_ai.get("auto_escalation", False))
     # Replace only the AI sub-setting. API keys, selections and custom model
     # definitions stay together inside SQLite app_settings.
     save_settings(ai={
@@ -653,6 +675,8 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         "api_keys": cleaned_keys,
         "models": cleaned_models,
         "custom_models": cleaned_custom_models,
+        "task_profiles": cleaned_profiles,
+        "auto_escalation": bool(auto_escalation),
     })
 
 
