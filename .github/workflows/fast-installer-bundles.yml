@@ -115,6 +115,22 @@ jobs:
       - name: Build the app bundle
         run: python installer/build_prebuilt.py
 
+      - name: Smoke-test frozen Linux application startup
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          timeout --kill-after=3s 8s dist/KubeDock/KubeDock > /tmp/kubedock-startup.log 2>&1
+          result=$?
+          cat /tmp/kubedock-startup.log
+          if [[ "$result" -ne 0 && "$result" -ne 124 && "$result" -ne 137 ]]; then
+            echo "Frozen KubeDock exited during startup with status $result"
+            exit "$result"
+          fi
+          echo "Frozen executable started under the offscreen Qt platform (exit=$result)."
+
       - name: Package Linux/macOS bundle
         if: runner.os != 'Windows'
         shell: bash
