@@ -62,6 +62,19 @@ python3 main.py
 
 On Windows, activate the environment with `.venv\\Scripts\\activate`. For local packaging, install `requirements-build.txt`. Optional voice, Monaco editor, and Qwen3-TTS dependencies are documented in their respective requirements files.
 
+## AI Operations
+
+KubeDock includes an AI Operations Centre alongside Ops Mind:
+
+- Launch live, read-only incident collection directly from a pod's log viewer or the Service Index. It gathers bounded Kubernetes status, events, logs and metrics, and for cross-system investigations a minimal host summary and Docker container inventory. It does not query Kubernetes Secret values, ConfigMap values, container environment variables, or Docker logs.
+- Runbook retrieval is local and opt-in. KubeDock indexes bounded Markdown/text files and includes matching excerpts in an investigation only when enabled for that investigation.
+- Hosted incident investigations require explicit per-investigation consent. The Settings AI local-only option blocks hosted model calls and Google Web Speech transcription; Local / Private must be configured to use Ollama on loopback.
+- Watch mode compares successive read-only observations, ignores ordinary Kubernetes AGE changes, can notify on meaningful state changes, and stops at its configured duration/observation limit.
+- The right-sizing advisor accepts optional historical Prometheus P95 CPU/memory data over HTTPS (or localhost HTTP); at least five samples are required. It remains advisory and never changes workload resources.
+- The remediation planner can prefill a supported proposal in Ops Mind for review, but it does not submit or execute the operation itself. Existing confirmation, protected-namespace, RBAC and verification controls remain in force.
+
+Signal correlations and AI recommendations are hypotheses, not proof. Evidence is redacted and bounded before persistence/provider use, but redaction is a best-effort safeguard. Do not collect or share credential values.
+
 ## Kubernetes and cloud access
 
 Configure your Kubernetes contexts, SSH connections, and AWS credentials using the standard tools for your environment. For example:

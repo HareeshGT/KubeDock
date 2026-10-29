@@ -944,6 +944,15 @@ class SettingsDialog(QDialog):
         )
         self.usage_telemetry_chk.setChecked(bool(ai_settings.get("usage_telemetry_enabled", False)))
         behaviour_layout.addWidget(self.usage_telemetry_chk)
+        self.local_only_ai_chk = QCheckBox(
+            "Block all cloud AI requests (use Local / Private inference only)"
+        )
+        self.local_only_ai_chk.setChecked(not bool(ai_settings.get("cloud_ai_enabled", True)))
+        self.local_only_ai_chk.setToolTip(
+            "Blocks hosted text-model calls and Google/OpenAI cloud speech services. "
+            "Typed Ops Mind requests and local Ollama inference remain available."
+        )
+        behaviour_layout.addWidget(self.local_only_ai_chk)
         self.ai_intelligence_tools_btn = QPushButton("Open AI Intelligence Workspace…")
         self.ai_intelligence_tools_btn.setToolTip(
             "Open incident-adjacent analysis, cluster comparison, watch planning, "
@@ -1356,6 +1365,7 @@ class SettingsDialog(QDialog):
             },
             auto_escalation=self.auto_escalation_chk.isChecked(),
             usage_telemetry_enabled=self.usage_telemetry_chk.isChecked(),
+            cloud_ai_enabled=not self.local_only_ai_chk.isChecked(),
         )
         save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),

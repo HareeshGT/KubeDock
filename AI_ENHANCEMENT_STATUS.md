@@ -168,3 +168,28 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - The remediation workspace validates proposed actions but does not dispatch them. Existing Ops Mind confirmation, RBAC and post-mutation verification paths remain the only mutation route.
 - Voice profile selection applies to Ops Mind command interpretation and AI conversation follow-ups; local/private diagnosis is explicitly selectable from the pod log viewer and Incident Investigator.
 - Full application regression, live cluster behavior, provider connectivity, voice hardware, packaging, and all-platform GUI smoke tests must be confirmed by GitHub Actions and/or on the target machine before merging.
+
+
+## End-to-end AI incident workflow enhancement (2026-10-29)
+
+### Implemented on feat/ai-incident-workflow-v2
+
+- [x] Added an AI Operations Centre overview with a connection/privacy/runbook status summary and shortcuts to existing tools.
+- [x] Added a live, read-only incident collector reachable from the pod log viewer and Service Index; it collects bounded resource summary, related events, warning events, pod logs and metrics where available, while excluding Secret/ConfigMap values.
+- [x] Added a live cross-system collector combining the selected Kubernetes target with minimal host status and Docker container inventory. It does not collect Docker logs or container environment variables.
+- [x] Added explicit per-investigation hosted-provider consent; Local / Private inference uses configured loopback Ollama. The shared provider boundary enforces local-only mode, Google Web Speech transcription is blocked in local-only mode, and OpenAI neural speech falls back to the local system voice.
+- [x] Added local runbook directory indexing, bounded Markdown/text retrieval, ranked snippets and visible source filenames. Local documents are not submitted unless the runbook-inclusion option is enabled for that investigation.
+- [x] Added historical Prometheus P95 CPU/memory inputs to the right-sizing advisor, with HTTPS required for remote endpoints, localhost-only HTTP, bounded responses, strict target validation and a minimum sample-count requirement.
+- [x] Added change-aware watch diffs, ignored volatile AGE changes, transition signals, optional system-tray notifications, and a handoff of watch observations to Incident Investigator.
+- [x] Added service-index-to-incident and pod-log-to-live-investigator shortcuts, prompt evidence compaction, a rough evidence token estimate, and a validated remediation handoff that only prefills Ops Mind. It never submits or executes the proposal itself.
+- [x] Added action/resource compatibility validation, protected-namespace fragment checks, and a synthetic incident fixture suite for deterministic failure-signal evaluation.
+
+### Explicit limitations
+
+- Historical Prometheus integration currently uses four read-only instant queries against the configured Prometheus endpoint; authenticated Prometheus deployments are not yet supported by the UI.
+- The live host/Docker collector is intentionally minimal: uptime, memory/disk summary and a bounded container inventory. It does not query Docker logs, environment variables or container filesystem data.
+- Local runbook retrieval uses deterministic lexical matching. It does not embed/index documents remotely; retrieved excerpts remain untrusted data in the model prompt.
+- The resource estimate is a rough characters-divided-by-four indicator, not the selected model's actual tokenizer or a provider-reported token count.
+- The remediation handoff only populates the existing Ops Mind text box. The user must inspect, submit, confirm and verify through the existing guarded execution path.
+- No automatic remediation, whole-cluster watch, continuous AI polling, remote runbook upload or secret value collection was added.
+- Real cluster/provider/Prometheus interaction and GUI smoke tests still require validation in the target environment. Synthetic tests require no credentials or cluster access.

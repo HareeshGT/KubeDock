@@ -24,6 +24,17 @@ MAX_WATCH_INTERVAL_SECONDS = 300
 MIN_WATCH_INTERVAL_SECONDS = 15
 DEFAULT_RIGHTSIZING_HEADROOM = 0.25
 _ALLOWED_ACTIONS = frozenset({"scale", "restart", "rollout_restart", "rollback", "delete"})
+_REMEDIATION_RESOURCES = frozenset({
+    "deployment", "statefulset", "daemonset", "replicaset", "pod",
+    "service", "ingress", "job", "cronjob", "hpa", "pvc",
+})
+_ACTION_RESOURCES = {
+    "scale": frozenset({"deployment", "statefulset"}),
+    "restart": frozenset({"deployment", "statefulset", "daemonset"}),
+    "rollout_restart": frozenset({"deployment", "statefulset", "daemonset"}),
+    "rollback": frozenset({"deployment"}),
+    "delete": _REMEDIATION_RESOURCES,
+}
 _PROTECTED_NAMESPACES = frozenset({"kube-system", "kube-public", "kube-node-lease"})
 
 
@@ -98,6 +109,8 @@ def correlate_incident_signals(*, events: Sequence[Mapping[str, Any]] = (),
         ("scheduling", ("failedscheduling", "insufficient cpu", "insufficient memory", "too many pods"), "The scheduler reports a placement constraint or insufficient node capacity."),
         ("dependency_network", ("connection refused", "no such host", "i/o timeout", "eai_again"), "A dependency connectivity, DNS, or routing failure may be present."),
         ("permission", ("forbidden", "permission denied", "unauthorized"), "An authorization or filesystem permission failure may be present."),
+        ("storage_volume", ("failedmount", "mountvolume.setup failed", "persistentvolumeclaim is not bound", "no persistent volumes available"), "A volume binding, mount, access-mode, or storage-capacity problem may be present."),
+        ("node_pressure", ("diskpressure", "node had condition: diskpressure", "node is low on resource: memory", "eviction threshold"), "Node-level resource pressure or eviction may be affecting workloads."),
     ]
     for code, terms, hypothesis in patterns:
         matched = [term for term in terms if term in haystack]
@@ -124,8 +137,25 @@ def validate_remediation_plan(plan: Mapping[str, Any], *, protected_namespaces: 
         raise ValueError("Action is not in the supported remediation allowlist.")
     if not namespace or not resource or not name:
         raise ValueError("Namespace, resource type, and resource name are required.")
-    protected = _PROTECTED_NAMESPACES | {str(n).strip() for n in protected_namespaces}
-    if namespace in protected:
+    resource = resource.lower()
+    namespace = namespace.lower()
+    if resource not in _REMEDIATION_RESOURCES:
+        raise ValueError("Resource type is not supported by the remediation planner.")
+    if resource not in _ACTION_RESOURCES[action]:
+        allowed = ", ".join(sorted(_ACTION_RESOURCES[action]))
+        raise ValueError(f"Action {action!r} is not supported for resource {resource!r}; allowed resources: {allowed}.")
+    if len(namespace) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?", namespace):
+        raise ValueError("Namespace must be a valid DNS-label style Kubernetes namespace.")
+    if len(name) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", name):
+        raise ValueError("Resource name contains unsupported characters.")
+    configured_patterns = {
+        str(pattern).strip().lower()
+        for pattern in protected_namespaces
+        if str(pattern).strip()
+    }
+    if namespace in _PROTECTED_NAMESPACES or any(
+        pattern in namespace for pattern in configured_patterns
+    ):
         raise ValueError(f"Remediation is blocked for protected namespace {namespace!r}.")
     if any(c in namespace + resource + name for c in "\n\r\x00"):
         raise ValueError("Resource identifiers contain invalid control characters.")

@@ -41,7 +41,9 @@ class AIIntelligenceWorkspaceUITests(unittest.TestCase):
             dialog = ai_intelligence_ui.AIIntelligenceDialog()
         try:
             labels = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+            self.assertIn("Overview", labels)
             self.assertIn("Incident investigator", labels)
+            self.assertIn("Runbooks", labels)
             self.assertIn("Cluster comparison", labels)
             self.assertIn("Watch mode", labels)
             self.assertIn("Right-sizing", labels)
@@ -49,6 +51,11 @@ class AIIntelligenceWorkspaceUITests(unittest.TestCase):
             self.assertIn("Service index", labels)
             self.assertIn("Cross-system diagnosis", labels)
             self.assertIn("Usage / latency", labels)
+            self.assertEqual(dialog.incident_profile_combo.itemData(0), "quick")
+            self.assertFalse(dialog.incident_cloud_consent_chk.isChecked())
+            self.assertFalse(dialog.incident_include_runbooks_chk.isChecked())
+            self.assertTrue(dialog.prometheus_history_btn.isEnabled())
+            self.assertFalse(dialog.send_remediation_btn.isEnabled())
         finally:
             dialog.close()
             dialog.deleteLater()
