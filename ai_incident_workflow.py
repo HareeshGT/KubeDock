@@ -109,6 +109,23 @@ def build_live_incident_command(context: str, namespace: str, resource_kind: str
     return "bash -lc " + shlex.quote("set +e; " + "; ".join(commands))
 
 
+def build_cross_system_collection_command(context: str, namespace: str, resource_kind: str, resource_name: str) -> str:
+    """Collect low-risk host/Docker inventory plus targeted Kubernetes evidence over SSH."""
+    import shlex
+    target = validate_incident_target(context, namespace, resource_kind, resource_name)
+    incident_command = build_live_incident_command(
+        target["context"], target["namespace"], target["resource_kind"], target["resource_name"]
+    )
+    host_commands = [
+        "printf '%s\\n' '__KUBEDOCK_HOST__'",
+        "(date -u; uptime; free -m 2>&1; df -h 2>&1 | tail -n 15) 2>&1",
+        "printf '\\n%s\\n' '__KUBEDOCK_DOCKER__'",
+        "docker ps --no-trunc --format " + shlex.quote("{{.Names}} | {{.Image}} | {{.Status}} | {{.Ports}}") + " 2>&1 | head -n 40",
+        incident_command,
+    ]
+    return "bash -lc " + shlex.quote("set +e; " + "; ".join(host_commands))
+
+
 def parse_live_incident_output(output: str, *, max_chars_per_section: int = 12_000) -> dict:
     """Split collector output into named sections and redact every section."""
     try:
@@ -116,6 +133,8 @@ def parse_live_incident_output(output: str, *, max_chars_per_section: int = 12_0
     except Exception:
         redact_evidence = lambda value: str(value or "")[:max_chars_per_section]
     markers = {
+        "__KUBEDOCK_HOST__": "host_summary",
+        "__KUBEDOCK_DOCKER__": "docker_inventory",
         "__KUBEDOCK_RESOURCE__": "resource_summary",
         "__KUBEDOCK_TARGET_EVENTS__": "target_events",
         "__KUBEDOCK_NAMESPACE_WARNINGS__": "namespace_warnings",
@@ -393,7 +412,7 @@ def parse_prometheus_history_results(results: dict) -> dict:
 
 __all__ = [
     "ALLOWED_INCIDENT_RESOURCES", "validate_incident_target", "build_live_incident_command",
-    "parse_live_incident_output", "load_runbook_documents", "match_runbook_snippets",
+    "build_cross_system_collection_command", "parse_live_incident_output", "load_runbook_documents", "match_runbook_snippets",
     "compact_evidence_text", "estimate_prompt_tokens", "compare_watch_states",
     "validate_prometheus_base_url", "prometheus_query_url", "build_prometheus_history_queries",
     "parse_prometheus_instant_response", "parse_prometheus_history_results",

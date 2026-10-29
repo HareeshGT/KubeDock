@@ -34,6 +34,16 @@ class IncidentWorkflowTests(unittest.TestCase):
         self.assertIn("--tail=100", command)
         self.assertIn("top pod", command)
 
+    def test_cross_system_collection_includes_host_docker_and_read_only_kubernetes(self):
+        from ai_incident_workflow import build_cross_system_collection_command
+        command = build_cross_system_collection_command("dev", "apps", "pod", "api-123")
+        self.assertIn("__KUBEDOCK_HOST__", command)
+        self.assertIn("__KUBEDOCK_DOCKER__", command)
+        self.assertIn("docker ps", command)
+        self.assertIn("kubectl", command)
+        self.assertNotIn("docker logs", command)
+        self.assertNotIn("delete", command)
+
     def test_live_output_splits_sections_and_redacts(self):
         sections = parse_live_incident_output(
             "__KUBEDOCK_RESOURCE__\nPhase=Pending\n"
