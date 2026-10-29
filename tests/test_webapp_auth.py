@@ -64,7 +64,7 @@ def test_successful_otp_creates_protected_session_and_replay_is_denied(monkeypat
     code = _fixed_totp(monkeypatch)
 
     response = Response()
-    result = server.login(server.LoginRequest(code=code), _request(), response)
+    result = server.login(server.LoginRequest(code=code), _request(scheme="https"), response)
 
     assert result["ok"] is True
     assert settings["webapp_totp_last_counter"] == int(_FIXED_TIME // 30)
