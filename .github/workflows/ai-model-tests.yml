@@ -56,4 +56,4 @@ jobs:
       - name: Run full unittest suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q
+        run: PYTHONPATH=. pytest -q
