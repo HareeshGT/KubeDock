@@ -21,6 +21,7 @@ on:
       - "installer/installer.sh"
       - "installer/installer-win.py"
       - "installer/build_pkg.sh"
+      - "tests/test_installer_builder.py"
       - ".github/workflows/fast-installer-bundles.yml"
   workflow_dispatch:
 
