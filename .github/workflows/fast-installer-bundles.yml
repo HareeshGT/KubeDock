@@ -1,6 +1,11 @@
 name: Fast prebuilt installer bundles
 
 on:
+  schedule:
+    - cron: "0 0 * * *"   # 5:30 AM IST
+    - cron: "0 8 * * *"   # 1:30 PM IST
+    - cron: "0 12 * * *"  # 5:30 PM IST
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -23,7 +28,6 @@ on:
       - "installer/build_pkg.sh"
       - "tests/test_installer_builder.py"
       - ".github/workflows/fast-installer-bundles.yml"
-  workflow_dispatch:
 
 permissions:
   contents: write
