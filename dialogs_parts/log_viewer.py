@@ -185,6 +185,10 @@ class LogViewerDialog(QDialog):
         "previous_container_logs": bool(self.prev_chk.isChecked()),
         "logs": log_text,
         "live_resource_evidence": self._last_resource_evidence or "not collected",
+        "candidate_signals": ai_intelligence.correlate_incident_signals(
+          logs=log_text.splitlines(),
+          events=(self._last_resource_evidence or "").splitlines(),
+        ),
       },
     )
     path, _ = QFileDialog.getSaveFileName(
