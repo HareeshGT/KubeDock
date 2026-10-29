@@ -18,6 +18,9 @@ on:
       - "assets/**"
       - "requirements*.txt"
       - "installer/build_prebuilt.py"
+      - "installer/installer.sh"
+      - "installer/installer-win.py"
+      - "installer/build_pkg.sh"
       - ".github/workflows/fast-installer-bundles.yml"
   workflow_dispatch:
 
