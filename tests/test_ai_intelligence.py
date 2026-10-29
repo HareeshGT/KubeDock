@@ -53,6 +53,11 @@ class AIIntelligenceTests(unittest.TestCase):
     def test_protected_namespace_rejected(self):
         with self.assertRaisesRegex(ValueError, "protected"):
             validate_remediation_plan({"action": "restart", "namespace": "kube-system", "resource": "deployment", "name": "dns"})
+        with self.assertRaisesRegex(ValueError, "protected"):
+            validate_remediation_plan(
+                {"action": "scale", "namespace": "mcp-prod-eks", "resource": "deployment", "name": "api", "replicas": 2},
+                protected_namespaces=["mcp"],
+            )
 
     def test_remediation_rejects_incompatible_action_resource_combinations(self):
         with self.assertRaisesRegex(ValueError, "not supported for resource"):

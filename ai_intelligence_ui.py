@@ -1439,7 +1439,7 @@ class AIIntelligenceDialog(QDialog):
             return
         model = assignment.get("model_id") or ai_assist.get_model(provider)
         prompt_context_chars = len(logs) + len(resource_context)
-        self._incident_estimated_tokens = ai_incident_workflow.estimate_prompt_tokens("x" * prompt_context_chars)
+        self._incident_estimated_tokens = ai_incident_workflow.estimate_prompt_tokens(logs + resource_context)
         self.incident_output.setPlainText(
             "Investigating redacted evidence… estimated evidence size "
             f"~{self._incident_estimated_tokens} tokens (rough characters/4 estimate, not provider tokenization)."

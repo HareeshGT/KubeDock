@@ -148,8 +148,14 @@ def validate_remediation_plan(plan: Mapping[str, Any], *, protected_namespaces: 
         raise ValueError("Namespace must be a valid DNS-label style Kubernetes namespace.")
     if len(name) > 253 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", name):
         raise ValueError("Resource name contains unsupported characters.")
-    protected = _PROTECTED_NAMESPACES | {str(n).strip() for n in protected_namespaces}
-    if namespace in protected:
+    configured_patterns = {
+        str(pattern).strip().lower()
+        for pattern in protected_namespaces
+        if str(pattern).strip()
+    }
+    if namespace in _PROTECTED_NAMESPACES or any(
+        pattern in namespace for pattern in configured_patterns
+    ):
         raise ValueError(f"Remediation is blocked for protected namespace {namespace!r}.")
     if any(c in namespace + resource + name for c in "\n\r\x00"):
         raise ValueError("Resource identifiers contain invalid control characters.")
