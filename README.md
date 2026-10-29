@@ -1,5 +1,7 @@
 # KubeDock
 
+> **Security:** See [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Please report security issues privately rather than through public issues.
+
 <p align="center">
   <strong>A desktop control center for Virtual Machines, Kubernetes, SSH, SFTP, FTP, remote files, and cloud operations.</strong>
 </p>
@@ -376,6 +378,12 @@ The application can map semantic labels to icons so controls can stay consistent
 ---
 
 # 🔒 Security
+
+KubeDock connects to remote infrastructure and may handle sensitive credentials. Follow secure credential-handling practices and review the repository's [Security Policy](SECURITY.md) for supported versions and vulnerability reporting instructions.
+
+## Reporting Security Vulnerabilities
+
+Please **do not report suspected vulnerabilities in public GitHub issues, pull requests, or discussions**. Use [private vulnerability reporting](https://github.com/HareeshGT/KubeDock/security/advisories/new) when available. If it is unavailable, contact the maintainer privately through GitHub before sharing technical details publicly. Do not include live API keys, passwords, access tokens, kubeconfig files, private keys, or unredacted sensitive logs.
 
 ## Application Lock
 
