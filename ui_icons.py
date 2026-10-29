@@ -47,6 +47,26 @@ except Exception:
 
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
+# Exact duplicate SVGs share a canonical file. Preserve semantic icon names
+# for existing callers while avoiding duplicate physical files in packages.
+ICON_ALIASES = {
+    "add": "plus", "analyze": "ai", "explain": "ai",
+    "applications": "folder", "etc": "folder", "ftp": "folder",
+    "library": "folder", "opt": "folder", "root": "folder",
+    "sftp": "folder", "srv": "folder", "tmp": "folder", "var": "folder",
+    "hpa": "chart", "disconnect": "close",
+    "config": "settings", "jobs": "settings",
+    "daemonsets": "shield", "security": "shield",
+    "statefulsets": "database", "storage": "database", "volumes": "database",
+    "trash": "delete",
+    "deployment": "server", "deployments": "server", "instance": "server",
+    "describe": "file", "log": "file", "logs": "file",
+    "info": "events", "exec": "terminal", "ssh": "terminal",
+    "filter": "search", "link": "ingress", "pin": "lock",
+    "service": "network", "services": "network",
+    "switch_user": "switch", "users": "user",
+}
+
 # Cache of rendered QIcons, keyed by (path, color-as-string, size, dpr).
 # Small and bounded in practice: a fixed icon set x a handful of theme
 # colors x a handful of sizes x the screen(s) in use.
@@ -138,11 +158,9 @@ def icon_path(name: str) -> str:
         return ""
 
     if name.lower().endswith(".svg"):
-        filename = name
-    else:
-        filename = f"{name}.svg"
-
-    return str(ICON_DIR / filename)
+        name = name[:-4]
+    canonical_name = ICON_ALIASES.get(name, name)
+    return str(ICON_DIR / f"{canonical_name}.svg")
 
 
 def _render_pixmap(path: str, color: Optional[str], size: int) -> Optional[QPixmap]:
@@ -627,6 +645,7 @@ load_icon = icon
 __all__ = [
     "ICON_DIR",
     "LABEL_TO_ICON",
+    "ICON_ALIASES",
     "icon_path",
     "default_icon_color",
     "refresh_theme_icons",

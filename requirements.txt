@@ -13,19 +13,14 @@
 
 PyQt5>=5.15,<6
 paramiko>=3.0
-SpeechRecognition>=3.10,<4
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-dotenv>=1.0
 keyring>=25.0
 pydantic>=2.0
 
-# ── Ops Mind spoken status narration (k8s_ai_ops.py) ──
-# OpenAI neural speech uses the standard-library HTTP client and reuses the
-# OpenAI key in Settings → AI. pyttsx3 remains the offline/on-device fallback
-# and uses NSSpeechSynthesizer on macOS.
-pyttsx3>=2.90
-pyobjc; sys_platform == "darwin"
+# Optional voice input and offline speech dependencies live in
+# requirements-voice.txt so ordinary installations remain lightweight.
 
 # ── Optional: only needed to build the macOS .app bundle ──
 pyinstaller>=6.0

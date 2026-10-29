@@ -633,15 +633,8 @@ class SettingsDialog(QDialog):
         return combo.currentText().strip()
 
     def _open_ai_intelligence_workspace(self):
-        try:
-            from ai_intelligence_ui import AIIntelligenceDialog
-            dialog = AIIntelligenceDialog(self)
-            dialog.exec_()
-        except Exception as exc:
-            QMessageBox.warning(
-                self, "AI Intelligence Workspace Unavailable",
-                f"Could not open the workspace: {exc}"
-            )
+        from ai_intelligence_ui import open_ai_intelligence_workspace
+        open_ai_intelligence_workspace(self)
 
     def _selected_model_id(self):
         index = self.model_combo.currentIndex()
