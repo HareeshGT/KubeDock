@@ -26,7 +26,6 @@ source-build option.
 `.github/workflows/fast-installer-bundles.yml` builds the application for:
 
 - Linux x86-64
-- Linux ARM64
 - macOS Apple Silicon
 - macOS Intel
 - Windows x86-64
@@ -36,7 +35,7 @@ assets on the rolling GitHub prerelease `fast-installer`. The tag is moved to
 the commit used for the latest assets. Pull requests build and validate the
 platform bundles but do not publish or update the release.
 
-Assets include build metadata and a checksum file. These are application
+Linux ARM64 does not currently have a prebuilt bundle because PyQt5 falls back to a source build without an available wheel. In `auto` mode, Linux ARM64 therefore uses the existing source-build fallback; `release` mode exits with an explanatory message.\n\nAssets include build metadata and a checksum file. These are application
 bundles, not signed/notarized consumer installers. macOS bundles are ad-hoc
 signed, not Developer ID signed/notarized.
 
