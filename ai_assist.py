@@ -1129,6 +1129,24 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
         )
     return text, None
 
+# ─── Task-aware provider selection ─────────────────────────────────
+
+def _task_provider_selection(profile: str, fallback_provider: str, fallback_key: str, fallback_model: str):
+    """Resolve a configured task profile; never fall back to an unconfigured key."""
+    settings = get_ai_settings()
+    assignment = settings.get("task_profiles", {}).get(profile) or {}
+    provider = assignment.get("provider") or fallback_provider
+    if provider not in PROVIDERS:
+        provider = fallback_provider
+    api_key = settings.get("api_keys", {}).get(provider) or (fallback_key if provider == fallback_provider else "")
+    model = settings.get("models", {}).get(provider) or (fallback_model if provider == fallback_provider else "")
+    if not api_key:
+        return None, None, None, f"No API key is configured for the {profile.replace('_', ' ')} profile provider ({provider}). Add it in Settings → AI."
+    if not _is_valid_model_id(model):
+        return None, None, None, f"No valid model is configured for the {profile.replace('_', ' ')} profile provider ({provider})."
+    return provider, api_key, model, None
+
+
 # ─── Background workers ──────────────────────────────────────────
 
 
@@ -1203,7 +1221,13 @@ class AIExplainWorker(QThread):
             self._pod, self._namespace, self._container, self._log_text,
             resource_context=self._resource_context,
         )
-        text, err = _call_provider(self._provider, self._api_key, self._model, prompt)
+        provider, api_key, model, selection_error = _task_provider_selection(
+            "deep_diagnosis", self._provider, self._api_key, self._model
+        )
+        if selection_error:
+            self.error.emit(selection_error)
+            return
+        text, err = _call_provider(provider, api_key, model, prompt)
         if err:
             self.error.emit(err)
         else:
@@ -1240,7 +1264,18 @@ class AICommandExplainWorker(QThread):
         prompt = _build_command_prompt(
             self._command, self._exit_code, self._stderr_text, self._stdout_text
         )
-        text, err = _call_provider(self._provider, self._api_key, self._model, prompt)
+        profile = "quick"
+        settings = get_ai_settings()
+        evidence_size = len(self._command or "") + len(self._stderr_text or "") + len(self._stdout_text or "")
+        if settings.get("auto_escalation") and (self._exit_code not in (0, None, "0") or evidence_size > 6000):
+            profile = "deep_diagnosis"
+        provider, api_key, model, selection_error = _task_provider_selection(
+            profile, self._provider, self._api_key, self._model
+        )
+        if selection_error:
+            self.error.emit(selection_error)
+            return
+        text, err = _call_provider(provider, api_key, model, prompt)
         if err:
             self.error.emit(err)
         else:
