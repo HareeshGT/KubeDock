@@ -35,6 +35,10 @@ def redact_evidence(value: Any) -> str:
     text = re.sub(r"(?im)((?:password|passwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)", r"\1[REDACTED]", text)
     text = re.sub(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", "[REDACTED AWS KEY]", text)
     text = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,})\b", "[REDACTED TOKEN]", text)
+    text = re.sub(r"\bAIza[0-9A-Za-z_-]{30,}\b", "[REDACTED API KEY]", text)
+    text = re.sub(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b", "[REDACTED API KEY]", text)
+    text = re.sub(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b", "[REDACTED JWT]", text)
+    text = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer [REDACTED]", text)
     text = re.sub(r"(?i)(://[^:/\s]+:)[^@/\s]+(@)", r"\1[REDACTED]\2", text)
     return text[:MAX_TEXT_CHARS]
 
