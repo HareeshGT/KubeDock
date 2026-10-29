@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -9,12 +10,52 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from urllib.parse import quote
 
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
 ICON = "KubeDock.ico"
 BUILD_ID = "WINDOWS-FAST-PREBUILT-RELEASE-2026-10-29-R1"
 RECOMMENDED_PYTHON = "3.13"
+
+LATEST_RELEASE_API = "https://api.github.com/repos/HareeshGT/KubeDock/releases/latest"
+RELEASE_DOWNLOAD_BASE = "https://github.com/HareeshGT/KubeDock/releases/download"
+
+
+def get_latest_release_tag() -> str:
+    """Resolve the latest published stable release once per installation."""
+    request = urllib.request.Request(
+        LATEST_RELEASE_API,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "KubeDock-Installer",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        release = json.loads(response.read().decode("utf-8"))
+    tag = release.get("tag_name") if isinstance(release, dict) else None
+    if not isinstance(tag, str) or not tag.strip() or "/" in tag or "\\" in tag:
+        raise RuntimeError("GitHub did not return a valid latest KubeDock release tag.")
+    if release.get("draft") or release.get("prerelease"):
+        raise RuntimeError("GitHub's latest KubeDock release is not a published stable release.")
+    return tag
+
+
+def release_asset_url(tag: str, asset: str) -> str:
+    """Build a download URL pinned to one immutable release tag."""
+    if (
+        not isinstance(asset, str)
+        or not asset
+        or asset in {".", ".."}
+        or "/" in asset
+        or "\\" in asset
+    ):
+        raise ValueError("Release asset must be a simple filename.")
+    if not isinstance(tag, str) or not tag.strip() or "/" in tag or "\\" in tag:
+        raise ValueError("Release tag is invalid.")
+    return f"{RELEASE_DOWNLOAD_BASE}/{quote(tag, safe='')}/{quote(asset, safe='')}"
+
+
 
 
 
@@ -485,10 +526,14 @@ def install_application(output):
 def install_prebuilt_release() -> Path:
     """Download and install the ready-to-run Windows bundle without pip/PyInstaller."""
     asset = "KubeDock-windows-x86_64.zip"
-    url = f"https://github.com/HareeshGT/KubeDock/releases/download/fast-installer/{asset}"
     temp_dir = Path(tempfile.mkdtemp(prefix="KubeDockFastInstall-"))
     archive = temp_dir / asset
     try:
+        # Resolve latest once so the binary and SHA256SUMS always come from
+        # exactly the same immutable release, rather than an outdated moving tag.
+        release_tag = get_latest_release_tag()
+        url = release_asset_url(release_tag, asset)
+        archive.parent.mkdir(parents=True, exist_ok=True)
         request = urllib.request.Request(url, headers={"User-Agent": "KubeDock-Installer"})
         print(f"Downloading prebuilt bundle: {url}")
         with urllib.request.urlopen(request, timeout=45) as response, archive.open("wb") as output:
@@ -511,7 +556,7 @@ def install_prebuilt_release() -> Path:
         if not archive.is_file() or archive.stat().st_size == 0:
             raise RuntimeError("The downloaded KubeDock bundle is empty.")
 
-        checksum_url = "https://github.com/HareeshGT/KubeDock/releases/download/fast-installer/SHA256SUMS"
+        checksum_url = release_asset_url(release_tag, "SHA256SUMS")
         checksum_request = urllib.request.Request(checksum_url, headers={"User-Agent": "KubeDock-Installer"})
         with urllib.request.urlopen(checksum_request, timeout=30) as response:
             checksum_lines = response.read().decode("utf-8").splitlines()
@@ -531,7 +576,7 @@ def install_prebuilt_release() -> Path:
         print("[OK] SHA-256 checksum verified.")
 
         extract_root = temp_dir / "extracted"
-        extract_root.mkdir()
+        extract_root.mkdir(parents=True, exist_ok=True)
         root_resolved = extract_root.resolve()
         with zipfile.ZipFile(archive) as package:
             for member in package.infolist():

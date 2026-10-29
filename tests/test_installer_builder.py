@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +15,51 @@ assert SPEC is not None and SPEC.loader is not None
 builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
 
+WIN_INSTALLER_PATH = ROOT / "installer" / "installer-win.py"
+WIN_SPEC = importlib.util.spec_from_file_location("kubedock_windows_installer", WIN_INSTALLER_PATH)
+assert WIN_SPEC is not None and WIN_SPEC.loader is not None
+win_installer = importlib.util.module_from_spec(WIN_SPEC)
+WIN_SPEC.loader.exec_module(win_installer)
+
+
+class WindowsReleaseAssetURLTests(unittest.TestCase):
+    def test_windows_installer_pins_bundle_and_checksum_to_latest_tag(self):
+        tag = "fast-installer-f5b9fa8-40904841970"
+        bundle_url = win_installer.release_asset_url(tag, "KubeDock-windows-x86_64.zip")
+        checksum_url = win_installer.release_asset_url(tag, "SHA256SUMS")
+
+        self.assertEqual(
+            bundle_url,
+            "https://github.com/HareeshGT/KubeDock/releases/download/"
+            "fast-installer-f5b9fa8-40904841970/KubeDock-windows-x86_64.zip",
+        )
+        self.assertEqual(
+            checksum_url,
+            "https://github.com/HareeshGT/KubeDock/releases/download/"
+            "fast-installer-f5b9fa8-40904841970/SHA256SUMS",
+        )
+        self.assertNotIn("/download/fast-installer/", bundle_url)
+
+    def test_windows_installer_resolves_latest_published_release(self):
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "tag_name": "fast-installer-current-123",
+            "draft": False,
+            "prerelease": False,
+        }).encode("utf-8")
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        with patch.object(win_installer.urllib.request, "urlopen", return_value=response) as urlopen:
+            tag = win_installer.get_latest_release_tag()
+        self.assertEqual(tag, "fast-installer-current-123")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, win_installer.LATEST_RELEASE_API)
+
+    def test_windows_installer_rejects_release_asset_path_traversal(self):
+        with self.assertRaises(ValueError):
+            win_installer.release_asset_url("latest", "../KubeDock.zip")
+        with self.assertRaises(ValueError):
+            win_installer.release_asset_url("latest", "folder\\KubeDock.zip")
 
 class PrebuiltBundleBuilderTests(unittest.TestCase):
     def test_build_arguments_include_core_runtime_and_static_ui(self):
