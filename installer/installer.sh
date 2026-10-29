@@ -13,13 +13,7 @@ set -euo pipefail
 #   KUBEDOCK_ENABLE_QWEN_TTS       1/0: include (or skip) the optional Qwen3-TTS runtime.
 #   KUBEDOCK_KEEP_BUILD            1: keep the temporary build directory (debugging).
 #   KUBEDECK_PKG_MODE              Set by the macOS .pkg wrapper (installer/build_pkg.sh).
-#
-# Environment:
-#   KUBEDECK_BRANCH            Branch to build (same as the positional argument).
-#   KUBEDOCK_ENABLE_QWEN_TTS   1/0: include (or skip) the local Qwen3-TTS runtime.
-#   KUBEDOCK_KEEP_BUILD        1: keep the temporary build directory (debugging).
-#   KUBEDECK_PKG_MODE          Set by the macOS .pkg wrapper (installer/build_pkg.sh).
-
+#\n
 REPO="https://github.com/HareeshGT/KubeDock.git"
 
 OS="$(uname -s)"
