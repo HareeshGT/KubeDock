@@ -122,7 +122,46 @@ class AIIntelligenceDialog(QDialog):
     def _build_rightsizing_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        form = QFormLayout()
+        layout.setSpacing(10)
+
+        live_group = QGroupBox("Live metrics over SSH")
+        live_form = QFormLayout(live_group)
+        self.rightsizing_context = QLineEdit()
+        self.rightsizing_context.setPlaceholderText("kubectl context name")
+        self.rightsizing_namespace = QLineEdit()
+        self.rightsizing_namespace.setPlaceholderText("Namespace")
+        self.rightsizing_pod = QLineEdit()
+        self.rightsizing_pod.setPlaceholderText("Pod name")
+        live_form.addRow("Context", self.rightsizing_context)
+        live_form.addRow("Namespace", self.rightsizing_namespace)
+        live_form.addRow("Pod", self.rightsizing_pod)
+        layout.addWidget(live_group)
+
+        history_group = QGroupBox("Historical Prometheus (optional)")
+        history_form = QFormLayout(history_group)
+        self.prometheus_url = QLineEdit(
+            str(load_settings().get("prometheus_history_url", "") or "")
+        )
+        self.prometheus_url.setPlaceholderText("https://metrics.example.com or http://localhost:9090")
+        self.prometheus_days = QSpinBox()
+        self.prometheus_days.setRange(1, 30)
+        self.prometheus_days.setValue(7)
+        self.prometheus_days.setSuffix(" days")
+        history_form.addRow("Prometheus URL", self.prometheus_url)
+        history_form.addRow("Historical window", self.prometheus_days)
+        history_note = QLabel(
+            "Uses historical P95 CPU and memory measurements. Remote endpoints must use HTTPS; "
+            "plain HTTP is allowed only for localhost. No credentials are embedded in the URL."
+        )
+        history_note.setWordWrap(True)
+        history_group.layout().addWidget(history_note)
+        self.prometheus_history_btn = QPushButton("Collect historical P95")
+        self.prometheus_history_btn.clicked.connect(self._collect_prometheus_history)
+        history_group.layout().addWidget(self.prometheus_history_btn)
+        layout.addWidget(history_group)
+
+        usage_group = QGroupBox("Recommendation inputs")
+        form = QFormLayout(usage_group)
         self.cpu_usage = QDoubleSpinBox()
         self.cpu_usage.setRange(0, 10000000)
         self.cpu_usage.setDecimals(2)
@@ -141,31 +180,75 @@ class AIIntelligenceDialog(QDialog):
         self.memory_request.setRange(0, 1e15)
         self.memory_request.setDecimals(0)
         self.memory_request.setSuffix(" bytes")
-        self.rightsizing_context = QLineEdit()
-        self.rightsizing_context.setPlaceholderText("kubectl context name")
-        self.rightsizing_namespace = QLineEdit()
-        self.rightsizing_namespace.setPlaceholderText("Namespace")
-        self.rightsizing_pod = QLineEdit()
-        self.rightsizing_pod.setPlaceholderText("Pod name")
-        form.addRow("Live context", self.rightsizing_context)
-        form.addRow("Live namespace", self.rightsizing_namespace)
-        form.addRow("Live pod", self.rightsizing_pod)
         form.addRow("Observed CPU usage", self.cpu_usage)
         form.addRow("Observed memory usage", self.memory_usage)
         form.addRow("Number of samples", self.sample_count)
         form.addRow("Current CPU request (optional)", self.cpu_request)
         form.addRow("Current memory request (optional)", self.memory_request)
-        layout.addLayout(form)
+        layout.addWidget(usage_group)
+
+        actions = QHBoxLayout()
         collect = QPushButton("Collect 5 live samples over SSH")
         collect.clicked.connect(self._collect_rightsizing_metrics)
-        layout.addWidget(collect)
+        actions.addWidget(collect)
         run = QPushButton("Calculate conservative recommendation")
         run.clicked.connect(self._recommend_resources)
-        layout.addWidget(run)
-        layout.addWidget(QLabel("Requires at least five samples. Recommendations never apply themselves."))
+        actions.addWidget(run)
+        layout.addLayout(actions)
+        layout.addWidget(QLabel(
+            "At least five valid measurements are required. Prometheus supplies historical P95; "
+            "SSH sampling uses peak observed usage. Recommendations never apply themselves."
+        ))
         self.rightsizing_output = self._output(layout)
         self.tabs.addTab(tab, "Right-sizing")
 
+    def _collect_prometheus_history(self):
+        if self._prometheus_worker is not None:
+            return
+        endpoint = self.prometheus_url.text().strip()
+        namespace = self.rightsizing_namespace.text().strip()
+        pod = self.rightsizing_pod.text().strip()
+        try:
+            ai_incident_workflow.validate_prometheus_base_url(endpoint)
+            ai_incident_workflow.build_prometheus_history_queries(
+                namespace, pod, self.prometheus_days.value()
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Prometheus target", str(exc))
+            return
+        save_settings(prometheus_history_url=endpoint)
+        self.prometheus_history_btn.setEnabled(False)
+        self.rightsizing_output.setPlainText(
+            "Querying historical P95 CPU and memory metrics from Prometheus…"
+        )
+        worker = PrometheusHistoryWorker(
+            endpoint, namespace, pod, self.prometheus_days.value(), parent=self
+        )
+        self._prometheus_worker = worker
+        worker.result_ready.connect(self._on_prometheus_history)
+        worker.error.connect(self._on_prometheus_history_error)
+        worker.finished.connect(self._on_prometheus_history_finished)
+        worker.start()
+
+    def _on_prometheus_history(self, result):
+        self.cpu_usage.setValue(result["cpu_usage_millicores"])
+        self.memory_usage.setValue(result["memory_usage_bytes"])
+        self.sample_count.setValue(min(1000000, result["sample_count"]))
+        self.rightsizing_output.setPlainText(
+            "Historical Prometheus P95 metrics loaded for the selected window. "
+            f"Valid minimum sample count: {result['sample_count']}. "
+            "Current resource requests are unchanged; run the recommendation explicitly to calculate targets."
+        )
+
+    def _on_prometheus_history_error(self, message):
+        self.rightsizing_output.setPlainText(
+            "Prometheus history unavailable. No estimates were substituted.\n"
+            + ai_intelligence.redact_evidence(message)
+        )
+
+    def _on_prometheus_history_finished(self):
+        self._prometheus_worker = None
+        self.prometheus_history_btn.setEnabled(True)
 
     def _collect_rightsizing_metrics(self):
         if self._rightsizing_worker is not None:
