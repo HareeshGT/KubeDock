@@ -19,6 +19,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 MAX_EVIDENCE_ITEMS = 80
 MAX_TEXT_CHARS = 12_000
+MAX_EVIDENCE_NODES = 500
+MAX_EVIDENCE_DEPTH = 8
+MAX_BUNDLE_TEXT_CHARS = 100_000
 MAX_WATCH_SECONDS = 60 * 60
 MAX_WATCH_INTERVAL_SECONDS = 300
 MIN_WATCH_INTERVAL_SECONDS = 15
@@ -55,16 +58,55 @@ def redact_evidence(value: Any) -> str:
     return text[:MAX_TEXT_CHARS]
 
 
-def _safe_evidence_value(value: Any) -> Any:
+def _safe_evidence_value(
+    value: Any,
+    *,
+    _budget: dict[str, int] | None = None,
+    _depth: int = 0,
+) -> Any:
+    """Redact and bound evidence across the whole tree, not just each field."""
+    if _budget is None:
+        _budget = {"nodes": MAX_EVIDENCE_NODES, "chars": MAX_BUNDLE_TEXT_CHARS}
+    if _budget["nodes"] <= 0:
+        return "[TRUNCATED: evidence item limit]"
+    _budget["nodes"] -= 1
+
+    if isinstance(value, (Mapping, list, tuple)) and _depth >= MAX_EVIDENCE_DEPTH:
+        return "[TRUNCATED: evidence nesting limit]"
+
     if isinstance(value, str):
-        return redact_evidence(value)
+        cleaned = redact_evidence(value)
+        remaining = max(0, _budget["chars"])
+        clipped = cleaned[:remaining]
+        _budget["chars"] -= len(clipped)
+        return clipped + ("[TRUNCATED: evidence text limit]" if len(clipped) < len(cleaned) else "")
+
     if isinstance(value, Mapping):
-        return {str(k)[:120]: _safe_evidence_value(v) for k, v in list(value.items())[:MAX_EVIDENCE_ITEMS]}
+        result = {}
+        for key, item in list(value.items())[:MAX_EVIDENCE_ITEMS]:
+            if _budget["nodes"] <= 0 or _budget["chars"] <= 0:
+                result["_truncated"] = "[TRUNCATED: evidence budget]"
+                break
+            safe_key = redact_evidence(str(key))[:120]
+            result[safe_key] = _safe_evidence_value(item, _budget=_budget, _depth=_depth + 1)
+        return result
+
     if isinstance(value, (list, tuple)):
-        return [_safe_evidence_value(v) for v in list(value)[:MAX_EVIDENCE_ITEMS]]
+        result = []
+        for item in list(value)[:MAX_EVIDENCE_ITEMS]:
+            if _budget["nodes"] <= 0 or _budget["chars"] <= 0:
+                result.append("[TRUNCATED: evidence budget]")
+                break
+            result.append(_safe_evidence_value(item, _budget=_budget, _depth=_depth + 1))
+        return result
+
     if value is None or isinstance(value, (int, float, bool)):
         return value
-    return redact_evidence(value)
+    cleaned = redact_evidence(value)
+    remaining = max(0, _budget["chars"])
+    clipped = cleaned[:remaining]
+    _budget["chars"] -= len(clipped)
+    return clipped + ("[TRUNCATED: evidence text limit]" if len(clipped) < len(cleaned) else "")
 
 
 def build_incident_bundle(*, title: str, cluster: str, namespace: str,
