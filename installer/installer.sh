@@ -263,7 +263,7 @@ install_prebuilt_bundle() {
 
   if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     archive_win="$(cygpath -w "$archive")"
-    KUBEDOCK_ARCHIVE_WIN="$archive_win" actual_hash="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$path = $env:KUBEDOCK_ARCHIVE_WIN; (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash' 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+    actual_hash="$(KUBEDOCK_ARCHIVE_WIN="$archive_win" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$path = $env:KUBEDOCK_ARCHIVE_WIN; (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash' 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
   elif command -v sha256sum >/dev/null 2>&1; then
     actual_hash="$(sha256sum "$archive" | awk '{ print $1 }' | tr '[:upper:]' '[:lower:]')"
   elif command -v shasum >/dev/null 2>&1; then
