@@ -543,6 +543,12 @@ class SettingsDialog(QDialog):
         self.auto_escalation_chk.setChecked(bool(ai_settings.get("auto_escalation", False)))
         v.addWidget(self.auto_escalation_chk)
 
+        self.usage_telemetry_chk = QCheckBox(
+            "Enable local aggregate AI usage/latency counters (no prompts, logs, or API keys stored)"
+        )
+        self.usage_telemetry_chk.setChecked(bool(ai_settings.get("usage_telemetry_enabled", False)))
+        v.addWidget(self.usage_telemetry_chk)
+
         self.ai_intelligence_tools_btn = QPushButton("Open AI Intelligence Workspace…")
         self.ai_intelligence_tools_btn.setToolTip(
             "Open incident-adjacent analysis, cluster comparison, watch planning, "
@@ -859,6 +865,7 @@ class SettingsDialog(QDialog):
                 for profile_id, combo in self.task_profile_combos.items()
             },
             auto_escalation=self.auto_escalation_chk.isChecked(),
+            usage_telemetry_enabled=self.usage_telemetry_chk.isChecked(),
         )
         save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),
