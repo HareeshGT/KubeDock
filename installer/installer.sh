@@ -197,7 +197,10 @@ install_prebuilt_bundle() {
       arch="$(uname -m)"
       case "$arch" in
         x86_64|amd64) asset="KubeDock-linux-x86_64.tar.gz" ;;
-        aarch64|arm64) asset="KubeDock-linux-arm64.tar.gz" ;;
+        aarch64|arm64)
+          echo "A prebuilt Linux ARM64 bundle is not published yet; the auto installer can fall back to a source build." >&2
+          return 1
+          ;;
         *) echo "No prebuilt Linux bundle for architecture: $arch" >&2; return 1 ;;
       esac
       ;;
