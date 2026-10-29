@@ -1,44 +1,160 @@
 """SQLite persistence for KubeDock's local application data.
 
-The database is stored in ~/.kubedock/kubedock.db.  SQLite is the active
-store for application settings, recent instances, and dashboard history.
-Legacy JSON/CSV files are read only once for migration and are never written by
-normal application operations.
+KubeDock keeps its existing database in ~/.kubedock when that location is
+available. Frozen installs can run with a different or restricted home
+directory, so the connection layer falls back to the operating system's
+per-user application-data directory if the legacy location cannot be opened.
+Legacy JSON/CSV files remain read-only migration sources.
 """
 from __future__ import annotations
 
 import json
 import os
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 
-APP_DIR = Path.home() / ".kubedock"
+_HOME_DIR = None
+try:
+    _HOME_DIR = Path.home()
+except (OSError, RuntimeError):
+    pass
+
+# Keep the previous location as the first choice so upgrades do not silently
+# start a second, empty profile for users whose existing directory is healthy.
+LEGACY_APP_DIR = _HOME_DIR / ".kubedock" if _HOME_DIR else None
+LEGACY_DB_PATH = LEGACY_APP_DIR / "kubedock.db" if LEGACY_APP_DIR else None
+LEGACY_SETTINGS_PATH = LEGACY_APP_DIR / "settings.json" if LEGACY_APP_DIR else Path(".kubedock/settings.json")
+
+APP_DIR = LEGACY_APP_DIR or Path(".kubedock")
 DB_PATH = APP_DIR / "kubedock.db"
-LEGACY_SETTINGS_PATH = APP_DIR / "settings.json"
 SETTINGS_MIGRATION_MARKER = "migration.settings_json"
 _LOCK = threading.RLock()
 
 
+def _candidate_app_dirs() -> list[Path]:
+    """Return preferred, then platform-native writable locations for app data."""
+    candidates: list[Path] = []
+    override = os.environ.get("KUBEDOCK_DATA_DIR", "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    if LEGACY_APP_DIR is not None:
+        candidates.append(LEGACY_APP_DIR)
+
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            candidates.append(Path(local_app_data) / "KubeDock")
+        if _HOME_DIR is not None:
+            candidates.append(_HOME_DIR / "AppData" / "Local" / "KubeDock")
+    elif sys.platform == "darwin":
+        if _HOME_DIR is not None:
+            candidates.append(_HOME_DIR / "Library" / "Application Support" / "KubeDock")
+    else:
+        xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
+        if xdg_data_home and Path(xdg_data_home).is_absolute():
+            candidates.append(Path(xdg_data_home) / "KubeDock")
+        elif _HOME_DIR is not None:
+            candidates.append(_HOME_DIR / ".local" / "share" / "KubeDock")
+
+    # De-duplicate without changing precedence.
+    return list(dict.fromkeys(candidates))
+
+
+def _is_storage_path_error(exc: sqlite3.OperationalError) -> bool:
+    """Only retry another directory for path/permission failures, not DB locks or corruption."""
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "unable to open database file",
+            "attempt to write a readonly database",
+            "readonly database",
+            "disk i/o error",
+        )
+    )
+
+
+def _restore_legacy_database_if_needed(
+    conn: sqlite3.Connection,
+    directory: Path,
+    database_already_exists: bool,
+) -> None:
+    """Copy the existing SQLite database into a fallback directory if needed."""
+    if database_already_exists or LEGACY_DB_PATH is None or not LEGACY_DB_PATH.is_file():
+        return
+    if LEGACY_APP_DIR is not None and directory == LEGACY_APP_DIR:
+        return
+
+    source = None
+    try:
+        source_uri = LEGACY_DB_PATH.resolve().as_uri() + "?mode=ro"
+        source = sqlite3.connect(source_uri, uri=True, timeout=3)
+        source.backup(conn)
+    except (OSError, sqlite3.Error):
+        # A failed best-effort backup must not prevent a fresh profile from
+        # starting; settings.json migration below still uses its original path.
+        pass
+    finally:
+        if source is not None:
+            source.close()
+
+
 def connect():
-    """Open a short-lived SQLite connection configured for local app use."""
-    APP_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        os.chmod(APP_DIR, 0o700)
-    except OSError:
-        pass
+    """Open a SQLite connection, falling back when the preferred data path is unusable."""
+    global APP_DIR, DB_PATH
 
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 10000")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA synchronous = NORMAL")
+    failures: list[str] = []
+    for directory in _candidate_app_dirs():
+        conn = None
+        try:
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            try:
+                os.chmod(directory, 0o700)
+            except OSError:
+                pass
 
-    try:
-        os.chmod(DB_PATH, 0o600)
-    except OSError:
-        pass
-    return conn
+            database_path = directory / "kubedock.db"
+            try:
+                database_already_exists = database_path.is_file() and database_path.stat().st_size > 0
+            except OSError:
+                database_already_exists = False
+
+            conn = sqlite3.connect(str(database_path), timeout=10)
+            _restore_legacy_database_if_needed(conn, directory, database_already_exists)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 10000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+
+            try:
+                os.chmod(database_path, 0o600)
+            except OSError:
+                pass
+
+            APP_DIR = directory
+            DB_PATH = database_path
+            return conn
+
+        except OSError as exc:
+            failures.append(f"{directory}: {exc}")
+            if conn is not None:
+                conn.close()
+        except sqlite3.OperationalError as exc:
+            if conn is not None:
+                conn.close()
+            if not _is_storage_path_error(exc):
+                raise
+            failures.append(f"{directory}: {exc}")
+
+    tried = "; ".join(failures) if failures else "no usable home or application-data directory was found"
+    raise sqlite3.OperationalError(
+        "KubeDock could not open its SQLite database. Tried the legacy profile and "
+        "platform application-data locations. Check the user's directory permissions "
+        "or set KUBEDOCK_DATA_DIR to a writable folder. Details: " + tried
+    )
 
 
 def _migrate_legacy_settings(db: sqlite3.Connection) -> None:
