@@ -12,6 +12,10 @@ on:
       - "README.md"
       - "tests/test_ai*.py"
       - ".github/workflows/ai-model-tests.yml"
+      - "installer/**"
+      - "docs/FAST_INSTALLER.md"
+      - "tests/test_installer_builder.py"
+      - ".github/workflows/fast-installer-bundles.yml"
   pull_request:
     paths:
       - "ai_assist.py"
@@ -21,6 +25,10 @@ on:
       - "AI_ENHANCEMENT_STATUS.md"
       - "README.md"
       - "tests/test_ai*.py"
+      - "installer/**"
+      - "docs/FAST_INSTALLER.md"
+      - "tests/test_installer_builder.py"
+      - ".github/workflows/fast-installer-bundles.yml"
   workflow_dispatch:
 
 jobs:
@@ -39,6 +47,104 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -p 'test_ai*.py' -v
+
+
+  installer-syntax:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate installer syntax and builder flags
+        run: |
+          bash -n installer/installer.sh
+          bash -n installer/build_pkg.sh
+          python -m py_compile installer/installer-win.py installer/build_prebuilt.py tests/test_installer_builder.py
+          python -m unittest discover -s tests -p "test_installer_builder.py" -v
+
+  prebuilt-installer-validation:
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            asset: KubeDock-linux-x86_64.tar.gz
+            bundle: KubeDock
+            family: linux
+          - runner: ubuntu-22.04-arm
+            asset: KubeDock-linux-arm64.tar.gz
+            bundle: KubeDock
+            family: linux
+          - runner: macos-15
+            asset: KubeDock-macos-arm64.tar.gz
+            bundle: KubeDock.app
+            family: macos
+          - runner: macos-15-intel
+            asset: KubeDock-macos-x86_64.tar.gz
+            bundle: KubeDock.app
+            family: macos
+          - runner: windows-2025
+            asset: KubeDock-windows-x86_64.zip
+            bundle: KubeDock
+            family: windows
+    runs-on: ${{ matrix.runner }}
+    env:
+      ASSET_NAME: ${{ matrix.asset }}
+      BUNDLE_NAME: ${{ matrix.bundle }}
+      BUILD_FAMILY: ${{ matrix.family }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-voice.txt
+      - name: Install Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libasound2-dev libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
+      - name: Install macOS build libraries
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install portaudio
+          PORTAUDIO_PREFIX="$(brew --prefix portaudio)"
+          echo "CPPFLAGS=-I$PORTAUDIO_PREFIX/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$PORTAUDIO_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$PORTAUDIO_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+      - name: Install application requirements
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-voice.txt
+      - name: Build prebuilt bundle
+        run: python installer/build_prebuilt.py
+      - name: Package Linux/macOS bundle
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar -czf "$ASSET_NAME" -C dist "$BUNDLE_NAME"
+          test -s "$ASSET_NAME"
+      - name: Package Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -c "import shutil; shutil.make_archive('KubeDock-windows-x86_64', 'zip', root_dir='dist', base_dir='KubeDock')"
+          if (!(Test-Path "$env:ASSET_NAME")) { throw "Windows bundle archive was not created" }
+      - name: Validate bundle metadata
+        shell: bash
+        run: |
+          if [[ "$BUILD_FAMILY" == "macos" ]]; then
+            test -f "dist/$BUNDLE_NAME/Contents/Resources/KubeDock-BUILD-METADATA.json"
+          else
+            test -f "dist/$BUNDLE_NAME/KubeDock-BUILD-METADATA.json"
+          fi
 
   full-regression-suite:
     runs-on: ubuntu-latest
