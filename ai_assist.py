@@ -52,6 +52,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from themes import load_settings, save_settings
 import ai_intelligence
+import db
 
 MAX_TOKENS = 4096
 
@@ -641,6 +642,7 @@ def get_ai_settings() -> dict:
         "custom_models": custom_models,
         "task_profiles": task_profiles,
         "auto_escalation": bool(stored.get("auto_escalation", False)),
+        "usage_telemetry_enabled": bool(stored.get("usage_telemetry_enabled", False)),
     }
 
 
@@ -662,7 +664,7 @@ def get_model(provider: str = None) -> str:
     )["default_model"]
 
 
-def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None, task_profiles=None, auto_escalation=None):
+def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None, task_profiles=None, auto_escalation=None, usage_telemetry_enabled=None):
     """Save AI settings atomically while retaining current custom models by default."""
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
@@ -691,6 +693,8 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         cleaned_profiles[profile] = {"provider": selected_provider}
     if auto_escalation is None:
         auto_escalation = bool(existing_ai.get("auto_escalation", False))
+    if usage_telemetry_enabled is None:
+        usage_telemetry_enabled = bool(existing_ai.get("usage_telemetry_enabled", False))
     # Replace only the AI sub-setting. API keys, selections and custom model
     # definitions stay together inside SQLite app_settings.
     save_settings(ai={
@@ -700,6 +704,7 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         "custom_models": cleaned_custom_models,
         "task_profiles": cleaned_profiles,
         "auto_escalation": bool(auto_escalation),
+        "usage_telemetry_enabled": bool(usage_telemetry_enabled),
     })
 
 
@@ -1054,7 +1059,7 @@ def _build_followup_prompt(source_context: str, conversation: list, question: st
     )
 
 # ─── Shared provider call ────────────────────────────────────────
-def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
+def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str):
     """Send bounded, redacted prompt data to the explicitly selected provider."""
     provider = PROVIDERS.get(provider_id)
     if provider is None:
@@ -1151,6 +1156,31 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
             "the diagnosis above may be incomplete.)*"
         )
     return text, None
+
+def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
+    """Call the selected provider and optionally record aggregate local telemetry."""
+    started = time.monotonic()
+    answer, error = _call_provider_impl(provider_id, api_key, model, prompt)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    try:
+        stored = load_settings().get("ai") or {}
+        if stored.get("usage_telemetry_enabled"):
+            profiles = stored.get("task_profiles") or {}
+            profile = next(
+                (name for name, item in profiles.items()
+                 if isinstance(item, dict) and item.get("provider") == provider_id),
+                "manual",
+            )
+            from ai_intelligence import UsageLedger
+            UsageLedger(str(db.DB_PATH)).record(
+                provider_id, profile, success=error is None,
+                latency_ms=elapsed_ms, enabled=True,
+            )
+    except Exception:
+        # Telemetry is best-effort and must never break an AI response.
+        pass
+    return answer, error
+
 
 # ─── Task-aware provider selection ─────────────────────────────────
 
