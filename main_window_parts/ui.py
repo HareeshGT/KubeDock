@@ -499,6 +499,8 @@ class UIMixin:
         self.main_tabs.setCurrentWidget(self.k8s_tab)
       elif key == "ai":
         self.main_tabs.setCurrentWidget(self.k8s_tab)
+        section = self.k8s_tab.tab_group_combo
+        section.setCurrentIndex(section.findData("ai"))
         subs = self.k8s_tab.sub_tabs
         for i in range(subs.count()):
           if "Ops Mind" in subs.tabText(i):
