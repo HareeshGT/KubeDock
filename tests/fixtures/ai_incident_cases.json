@@ -1,0 +1,56 @@
+[
+  {
+    "id": "oom_kill",
+    "logs": ["Container last state: OOMKilled", "memory cgroup out of memory"],
+    "events": [],
+    "expected": ["oom"]
+  },
+  {
+    "id": "probe_failure",
+    "logs": [],
+    "events": [{"reason": "Unhealthy", "message": "Readiness probe failed: HTTP probe failed with statuscode: 500"}],
+    "expected": ["probe_failure"]
+  },
+  {
+    "id": "registry_auth",
+    "logs": ["Failed to pull image: unauthorized: authentication required", "ImagePullBackOff"],
+    "events": [],
+    "expected": ["image_pull"]
+  },
+  {
+    "id": "scheduler_capacity",
+    "logs": [],
+    "events": [{"reason": "FailedScheduling", "message": "0/4 nodes are available: Insufficient memory"}],
+    "expected": ["scheduling"]
+  },
+  {
+    "id": "dependency_dns",
+    "logs": ["connect ECONNREFUSED database.apps.svc", "temporary failure: no such host"],
+    "events": [],
+    "expected": ["dependency_network"]
+  },
+  {
+    "id": "rbac_denial",
+    "logs": ["Error from server (Forbidden): pods is forbidden"],
+    "events": [],
+    "expected": ["permission"]
+  },
+  {
+    "id": "volume_mount",
+    "logs": [],
+    "events": [{"reason": "FailedMount", "message": "MountVolume.SetUp failed for volume data"}],
+    "expected": ["storage_volume"]
+  },
+  {
+    "id": "node_pressure",
+    "logs": [],
+    "events": [{"reason": "Evicted", "message": "The node was low on resource: memory. eviction threshold crossed."}],
+    "expected": ["node_pressure"]
+  },
+  {
+    "id": "healthy_baseline",
+    "logs": ["server started", "GET /health 200"],
+    "events": [],
+    "expected": []
+  }
+]
