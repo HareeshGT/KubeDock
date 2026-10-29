@@ -394,7 +394,12 @@ EOF
   return 0
 }
 
-if [[ "$KUBEDOCK_INSTALL_MODE" != "source" ]] && { [ -z "$SELECTED_BRANCH" ] || [[ "$KUBEDOCK_INSTALL_MODE" == "release" ]]; }; then
+if [[ "$KUBEDOCK_INSTALL_MODE" == "release" && -n "$SELECTED_BRANCH" ]]; then
+  echo "ERROR: KUBEDOCK_INSTALL_MODE=release cannot be combined with an explicit branch. Omit the branch for a fast install or use KUBEDOCK_INSTALL_MODE=source." >&2
+  exit 1
+fi
+
+if [[ "$KUBEDOCK_INSTALL_MODE" != "source" && -z "$SELECTED_BRANCH" ]]; then
   if install_prebuilt_bundle; then
     exit 0
   else
