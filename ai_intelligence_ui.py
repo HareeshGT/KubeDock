@@ -1780,11 +1780,23 @@ class AIIntelligenceDialog(QDialog):
 
 
 
-def open_ai_intelligence_workspace(parent=None):
-    """Open the shared advisory workspace from Settings, Ops Mind, or other UI entry points."""
+def open_ai_intelligence_workspace(parent=None, initial_incident_target=None, start_live_incident=False):
+    """Open the workspace, optionally prefill and start a read-only live incident collection."""
+    from PyQt5.QtCore import QTimer
     from PyQt5.QtWidgets import QMessageBox
     try:
         dialog = AIIntelligenceDialog(parent)
+        if isinstance(initial_incident_target, dict):
+            target = initial_incident_target
+            dialog.incident_context.setText(str(target.get("context") or ""))
+            dialog.incident_namespace.setText(str(target.get("namespace") or ""))
+            kind = str(target.get("resource_kind") or "pod")
+            if dialog.incident_resource_kind.findText(kind) >= 0:
+                dialog.incident_resource_kind.setCurrentText(kind)
+            dialog.incident_resource_name.setText(str(target.get("resource_name") or ""))
+            dialog._select_workspace_tab("Incident investigator")
+            if start_live_incident:
+                QTimer.singleShot(0, lambda: dialog._collect_live_incident(also_analyze=False))
         return dialog.exec_()
     except Exception as exc:
         QMessageBox.warning(

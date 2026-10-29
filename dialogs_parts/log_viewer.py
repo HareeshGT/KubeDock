@@ -82,6 +82,14 @@ class LogViewerDialog(QDialog):
     self.local_explain_btn.clicked.connect(lambda: self._on_explain("local_private"))
     ctrl.addWidget(self.local_explain_btn)
 
+    self.investigate_live_btn = QPushButton("Investigate Live")
+    self.investigate_live_btn.setToolTip(
+      "Open the AI Operations Centre, collect fresh read-only evidence for this pod, "
+      "and investigate only after you explicitly start the analysis."
+    )
+    self.investigate_live_btn.clicked.connect(self._open_live_incident_workspace)
+    ctrl.addWidget(self.investigate_live_btn)
+
     self.export_incident_btn = QPushButton("Export Incident")
     self.export_incident_btn.setToolTip("Save a redacted, timestamped incident evidence bundle as JSON")
     self.export_incident_btn.clicked.connect(self._export_incident_bundle)
@@ -168,6 +176,26 @@ class LogViewerDialog(QDialog):
       self.status_lbl.setText("○ stream ended")
       self.status_lbl.setStyleSheet(f"color: {T['TEXT_DIM']};")
 
+
+  def _open_live_incident_workspace(self):
+    """Launch the shared workspace with this pod prefilled for live collection."""
+    try:
+      from ai_intelligence_ui import open_ai_intelligence_workspace
+      open_ai_intelligence_workspace(
+        self,
+        initial_incident_target={
+          "context": str(self._context or ""),
+          "namespace": str(self._ns or ""),
+          "resource_kind": "pod",
+          "resource_name": str(self._pod or ""),
+        },
+        start_live_incident=True,
+      )
+    except Exception as exc:
+      QMessageBox.warning(
+        self, "AI Incident Investigator unavailable",
+        "Could not open the live incident workflow: " + ai_intelligence.redact_evidence(str(exc))
+      )
 
   def _export_incident_bundle(self):
     """Export a redacted evidence snapshot without sending it to an AI provider."""
