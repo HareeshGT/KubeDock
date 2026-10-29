@@ -1,25 +1,49 @@
-# AI Intelligence Implementation — Branch Scope
+# KubeDock AI Intelligence Workspace
 
-Branch: feat/ai-infrastructure-intelligence
+Branch: `feat/ai-infrastructure-intelligence`
+Pull request: https://github.com/HareeshGT/KubeDock/pull/41
 
-## First implementation slice
+## Implemented
 
-This branch introduces a deterministic, dependency-free task-profile resolver and unit tests for the routing rules. It is a foundation only: the resolver does not itself modify provider settings or dispatch AI requests, and it must be wired into the existing Settings / AI request path before task-aware routing is user-visible.
+- Independent provider and model selection for Quick, Deep Diagnosis, Voice/Conversation, and Local/Private task profiles in Settings → AI.
+- Optional escalation from quick command explanations to the configured Deep Diagnosis model when the command fails or the evidence is large.
+- Ollama local inference using the fixed loopback endpoint `http://127.0.0.1:11434/v1/chat/completions`, with no API key and no silent cloud fallback.
+- Explicit Analyze Locally action from the pod log viewer.
+- Redacted incident bundle export with timestamp, target metadata, collected logs/resource evidence, candidate signals, and SHA-256 digest.
+- Incident Investigator tab to analyze an explicitly selected bundle with the configured Deep Diagnosis profile.
+- Deterministic candidate signal correlation for OOM, probe failures, image pull failures, scheduling constraints, dependency networking/DNS, and permission failures.
+- AI Intelligence Workspace tabs for:
+  - Live read-only capture and comparison of two kubectl contexts.
+  - Imported JSON snapshot comparison.
+  - Explicit, finite, read-only resource watch over the existing SSH session.
+  - Conservative right-sizing recommendations from user-supplied usage and sample count.
+  - Remediation proposal validation with an action allowlist, protected namespaces, explicit delete confirmation, human approval requirement, and required verification.
+  - Live searchable service discovery over SSH or imported service inventory.
+  - Cross-system signal correlation from supplied host, Docker, application, Kubernetes, and metrics evidence.
+  - Opt-in local aggregate usage/error/latency counters.
+- AI regression CI compiles the new modules, runs AI-focused tests, and runs the full pytest suite.
+- README and AI enhancement status documentation updated.
 
-## Invariants
+## Safety invariants
 
-- No model is selected based on a guessed capability inferred from its display name.
-- Missing or incomplete assignments raise an explicit error instead of silently substituting another model.
-- Automatic escalation is disabled unless the caller explicitly enables it and marks the task as complex.
-- A local/private profile accepts only explicitly configured local or compatible endpoint identifiers.
-- A single-model override is explicit and observable in the returned reason.
+- The workspace never executes a remediation plan. Existing Ops Mind confirmation, RBAC, protected namespace checks, and post-mutation verification remain required.
+- Watch mode requires an explicit start, caps duration at one hour, validates polling intervals, and performs only read-only `kubectl get` requests.
+- Cluster inventory capture omits Secret values and normalizes only resource identity, phase, replica state, images, ports, and restart counts.
+- Incident evidence is redacted before export and again before AI provider submission. Captured evidence is untrusted data and is not treated as instructions.
+- Ollama is called only at loopback; a local failure is shown to the user rather than switching to a cloud provider.
+- Usage telemetry is disabled by default and records provider/profile, call count, error count, and aggregate latency only. It does not store prompts, logs, responses, or API keys.
 
 ## Validation
 
-Run: python -m unittest discover -s tests -p 'test_ai_task_profiles.py' -v
+- AI-focused regression tests: passed in GitHub Actions.
+- Full pytest suite on Python 3.12: latest confirmed successful run reported **214 passed, 2 skipped, 2 warnings, 7 subtests passed**. Re-run after the latest commit before merging.
+- Full module compilation: passed in GitHub Actions.
+- Live cluster behavior, real provider connectivity, Ollama installation/model availability, voice hardware, and packaged application smoke tests require validation on the target environment.
 
-## Remaining work from the full enhancement specification
+## Known limitations
 
-This branch does not yet complete the full enhancement program. Before merging as a complete implementation, the remaining phases must be integrated and validated against the actual UI and infrastructure paths: secret-flow regression coverage; incident evidence collection and report UI; safe remediation plan integration; profile persistence/UI/provider dispatch; telemetry; cross-system diagnosis; scoped watch mode; multi-cluster comparison; right-sizing recommendations; voice lifecycle improvements; service navigation; comprehensive CI and updated AI_ENHANCEMENT_STATUS.md.
-
-No real-cluster, API-key, hardware, or packaging validation is claimed by this foundation slice.
+- Right-sizing is advisory and currently uses the measured usage/sample values supplied in the UI; it does not automatically query historical Prometheus/metrics data or write resource requests.
+- The watch tab polls a single named resource and correlates its observations; it does not automatically remediate or continuously scan the cluster.
+- Cross-system correlation is deterministic signal matching over evidence supplied by the user or collected for an incident; it does not prove causality.
+- Multi-cluster comparison is based on selected kubectl contexts available through the current SSH session, or user-provided JSON snapshots. It does not create or configure cluster credentials.
+- Service navigation discovers and filters service records and displays a safe read-only inspection command; it does not expose a service or automatically change cluster state.
