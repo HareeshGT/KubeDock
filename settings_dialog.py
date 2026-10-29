@@ -543,6 +543,14 @@ class SettingsDialog(QDialog):
         self.auto_escalation_chk.setChecked(bool(ai_settings.get("auto_escalation", False)))
         v.addWidget(self.auto_escalation_chk)
 
+        self.ai_intelligence_tools_btn = QPushButton("Open AI Intelligence Workspace…")
+        self.ai_intelligence_tools_btn.setToolTip(
+            "Open incident-adjacent analysis, cluster comparison, watch planning, "
+            "resource recommendations, remediation validation, and service indexing tools."
+        )
+        self.ai_intelligence_tools_btn.clicked.connect(self._open_ai_intelligence_workspace)
+        v.addWidget(self.ai_intelligence_tools_btn)
+
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.add_model_btn.clicked.connect(self._add_custom_model)
         self.manage_models_btn.clicked.connect(self._manage_custom_models)
@@ -553,6 +561,17 @@ class SettingsDialog(QDialog):
             self._on_provider_changed(self.provider_combo.currentIndex())
         v.addStretch()
         return w
+
+    def _open_ai_intelligence_workspace(self):
+        try:
+            from ai_intelligence_ui import AIIntelligenceDialog
+            dialog = AIIntelligenceDialog(self)
+            dialog.exec_()
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "AI Intelligence Workspace Unavailable",
+                f"Could not open the workspace: {exc}"
+            )
 
     def _selected_model_id(self):
         index = self.model_combo.currentIndex()
