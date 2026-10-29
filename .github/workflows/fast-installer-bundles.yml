@@ -98,8 +98,8 @@ jobs:
           if [[ "${RUNNER_OS:-}" == "macOS" && "${RUNNER_ARCH:-}" == "X64" ]]; then
             export OPENSSL_DIR="$(brew --prefix openssl@3)"
             export OPENSSL_STATIC=1
-            export PIP_NO_CACHE_DIR=1
             python -m pip cache purge
+            export PIP_NO_CACHE_DIR=1
           fi
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-voice.txt -r requirements-build.txt
