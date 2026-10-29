@@ -1180,9 +1180,9 @@ class AIIntelligenceDialog(QDialog):
             "Required for hosted providers. Select Local / Private for local Ollama inference."
         )
         layout.addWidget(self.incident_cloud_consent_chk)
-        investigate = QPushButton("Investigate current evidence with AI")
-        investigate.clicked.connect(self._investigate_incident_bundle)
-        layout.addWidget(investigate)
+        self.incident_analyze_btn = QPushButton("Investigate current evidence with AI")
+        self.incident_analyze_btn.clicked.connect(self._investigate_incident_bundle)
+        layout.addWidget(self.incident_analyze_btn)
         self.incident_output = self._output(layout)
         self.tabs.addTab(tab, "Incident investigator")
 
@@ -1397,6 +1397,10 @@ class AIIntelligenceDialog(QDialog):
         return ai_incident_workflow.compact_evidence_text(context, max_chars=16000), matches
 
     def _investigate_incident_payload(self, payload):
+        active_worker = getattr(self, "_incident_worker", None)
+        if active_worker is not None and active_worker.isRunning():
+            QMessageBox.information(self, "Investigation in progress", "Wait for the current AI investigation to finish before starting another.")
+            return
         if not isinstance(payload, dict):
             QMessageBox.warning(self, "Invalid incident bundle", "Incident bundle root must be an object.")
             return
@@ -1474,11 +1478,19 @@ class AIIntelligenceDialog(QDialog):
             resource_context=resource_context,
             task_profile=task_profile,
         )
+        self.incident_analyze_btn.setEnabled(False)
         self._incident_worker.done.connect(self._on_incident_analysis_done)
-        self._incident_worker.error.connect(
-            lambda message: self.incident_output.setPlainText("Investigation failed: " + ai_intelligence.redact_evidence(message))
-        )
+        self._incident_worker.error.connect(self._on_incident_analysis_error)
+        self._incident_worker.finished.connect(self._on_incident_worker_finished)
         self._incident_worker.start()
+
+    def _on_incident_analysis_error(self, message):
+        self.incident_output.setPlainText("Investigation failed: " + ai_intelligence.redact_evidence(message))
+
+    def _on_incident_worker_finished(self):
+        self._incident_worker = None
+        if hasattr(self, "incident_analyze_btn"):
+            self.incident_analyze_btn.setEnabled(True)
 
     def _on_incident_analysis_done(self, answer):
         sources = getattr(self, "_active_runbook_matches", [])
@@ -1626,11 +1638,12 @@ class AIIntelligenceDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid service target", str(exc))
             return
-        open_ai_intelligence_workspace(
-            self,
-            initial_incident_target=target,
-            start_live_incident=True,
-        )
+        self.incident_context.setText(target["context"])
+        self.incident_namespace.setText(target["namespace"])
+        self.incident_resource_kind.setCurrentText(target["resource_kind"])
+        self.incident_resource_name.setText(target["resource_name"])
+        self._select_workspace_tab("Incident investigator")
+        self._collect_live_incident(also_analyze=False)
 
     def _build_service_index(self):
         try:
