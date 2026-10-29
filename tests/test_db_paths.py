@@ -42,6 +42,37 @@ class DatabasePathFallbackTests(unittest.TestCase):
                     connection.close()
 
 
+
+    def test_connect_retries_when_sqlite_reports_windows_access_denied(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            denied = root / "denied-profile"
+            fallback = root / "writable-profile"
+            real_connect = sqlite3.connect
+
+            def connect_with_denied_first_path(database, *args, **kwargs):
+                if Path(database) == denied / "kubedock.db":
+                    raise sqlite3.OperationalError(
+                        "[WinError 5] Access is denied: database file"
+                    )
+                return real_connect(database, *args, **kwargs)
+
+            with (
+                patch.object(db, "_candidate_app_dirs", return_value=[denied, fallback]),
+                patch.object(db, "LEGACY_APP_DIR", denied),
+                patch.object(db, "LEGACY_DB_PATH", root / "missing-legacy.db"),
+                patch.object(db, "APP_DIR", denied),
+                patch.object(db, "DB_PATH", denied / "kubedock.db"),
+                patch.object(db.sqlite3, "connect", side_effect=connect_with_denied_first_path),
+            ):
+                connection = db.connect()
+                try:
+                    self.assertEqual(db.APP_DIR, fallback)
+                    self.assertEqual(db.DB_PATH, fallback / "kubedock.db")
+                    connection.execute("CREATE TABLE access_check (value INTEGER)")
+                finally:
+                    connection.close()
+
     def test_windows_candidates_include_independent_writable_fallbacks(self):
         with (
             patch.object(db.sys, "platform", "win32"),
