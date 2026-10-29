@@ -1335,12 +1335,13 @@ class K8sAIInterpretWorker(QThread):
       self._history,
       self._conversation,
     )
-    text, err = ai_assist._call_provider(
-      self._provider,
-      self._api_key,
-      self._model,
-      prompt,
+    provider, api_key, model, selection_error = ai_assist._task_provider_selection(
+      "voice", self._provider, self._api_key, self._model
     )
+    if selection_error:
+      self.error.emit(selection_error)
+      return
+    text, err = ai_assist._call_provider(provider, api_key, model, prompt)
     if err:
       self.error.emit(err)
     else:
