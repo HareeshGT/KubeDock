@@ -528,8 +528,15 @@ class SettingsDialog(QDialog):
         ):
             v.addWidget(QLabel(label))
             provider_combo = QComboBox()
-            for provider_id, provider_info in ai_assist.PROVIDERS.items():
+            provider_choices = (
+                [("ollama", ai_assist.PROVIDERS["ollama"])]
+                if profile_id == "local_private"
+                else list(ai_assist.PROVIDERS.items())
+            )
+            for provider_id, provider_info in provider_choices:
                 provider_combo.addItem(provider_info["label"], provider_id)
+            if profile_id == "local_private":
+                provider_combo.setEnabled(False)
             profile_settings = ai_settings.get("task_profiles", {}).get(profile_id, {})
             selected = profile_settings.get(
                 "provider", "ollama" if profile_id == "local_private" else ai_settings["provider"]
