@@ -27,6 +27,26 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         self.assertNotIn("--collect-all=torch", joined)
         self.assertNotIn("--collect-all=qwen_tts", joined)
 
+    def test_build_metadata_records_source_and_optional_features(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {"GITHUB_SHA": "test-source-sha", "GITHUB_REF_NAME": "test-branch"},
+        ):
+            bundle = Path(directory) / "KubeDock"
+            bundle.mkdir()
+            builder.write_build_metadata(bundle, include_qwen=False)
+            metadata_path = bundle / "KubeDock-BUILD-METADATA.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(metadata["application"], "KubeDock")
+        self.assertEqual(metadata["source_sha"], "test-source-sha")
+        self.assertEqual(metadata["source_branch"], "test-branch")
+        self.assertFalse(metadata["qwen_tts"])
+        self.assertEqual(metadata["bundle_format"], "onedir")
+        self.assertTrue(metadata["platform"])
+        self.assertTrue(metadata["architecture"])
+        self.assertTrue(metadata["python"])
+
     def test_runtime_requirements_keep_build_and_webengine_optional(self):
         core = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
         build = (ROOT / "requirements-build.txt").read_text(encoding="utf-8").lower()
