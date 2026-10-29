@@ -43,6 +43,8 @@ class AIIntelligenceDialog(QDialog):
         self._watch_deadline = 0.0
         self._watch_observations = 0
         self._watch_config = None
+        self._cluster_snapshots = {}
+        self._capture_workers = {}
         self._build_watch_tab()
         self._build_remediation_tab()
         self._build_services_tab()
@@ -110,23 +112,115 @@ class AIIntelligenceDialog(QDialog):
     def _build_compare_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        form = QFormLayout()
+        self.left_cluster_name = QLineEdit("cluster-a")
+        self.left_cluster_context = QLineEdit()
+        self.left_cluster_context.setPlaceholderText("kubectl context name")
+        self.right_cluster_name = QLineEdit("cluster-b")
+        self.right_cluster_context = QLineEdit()
+        self.right_cluster_context.setPlaceholderText("kubectl context name")
+        form.addRow("Left cluster label", self.left_cluster_name)
+        form.addRow("Left kubectl context", self.left_cluster_context)
+        form.addRow("Right cluster label", self.right_cluster_name)
+        form.addRow("Right kubectl context", self.right_cluster_context)
+        layout.addLayout(form)
+        actions = QHBoxLayout()
+        left_capture = QPushButton("Capture left cluster")
+        left_capture.clicked.connect(lambda: self._capture_cluster_snapshot("left"))
+        right_capture = QPushButton("Capture right cluster")
+        right_capture.clicked.connect(lambda: self._capture_cluster_snapshot("right"))
+        actions.addWidget(left_capture)
+        actions.addWidget(right_capture)
+        layout.addLayout(actions)
+        compare_live = QPushButton("Compare captured clusters")
+        compare_live.clicked.connect(self._compare_captured_snapshots)
+        layout.addWidget(compare_live)
+        layout.addWidget(QLabel("Capture uses read-only kubectl inventory queries over the existing SSH connection. It omits Secret values and compares normalized resource status/configuration only."))
+        self.compare_output = self._output(layout)
+        layout.addWidget(QLabel("Alternatively compare exported JSON snapshots:"))
         row = QHBoxLayout()
         self.left_snapshot = QLineEdit()
-        self.left_snapshot.setPlaceholderText("First cluster snapshot JSON")
+        self.left_snapshot.setPlaceholderText("First snapshot JSON")
         self.right_snapshot = QLineEdit()
-        self.right_snapshot.setPlaceholderText("Second cluster snapshot JSON")
+        self.right_snapshot.setPlaceholderText("Second snapshot JSON")
         for field, label in ((self.left_snapshot, "Choose left"), (self.right_snapshot, "Choose right")):
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, target=field: self._choose_json(target))
             row.addWidget(button)
             row.addWidget(field, 1)
         layout.addLayout(row)
-        compare = QPushButton("Compare snapshots")
+        compare = QPushButton("Compare JSON files")
         compare.clicked.connect(self._compare_snapshots)
         layout.addWidget(compare)
-        self.compare_output = self._output(layout)
         layout.addWidget(QLabel('Expected JSON shape: {"cluster":"dev","resources":[{"kind":"Pod","namespace":"apps","name":"api","phase":"Running"}]}'))
         self.tabs.addTab(tab, "Cluster comparison")
+
+    def _capture_cluster_snapshot(self, side):
+        if side in self._capture_workers:
+            return
+        ssh = self._find_ssh_connection()
+        if ssh is None:
+            QMessageBox.warning(self, "SSH not connected", "Connect to a VM in KubeDock before capturing cluster snapshots.")
+            return
+        context_field = self.left_cluster_context if side == "left" else self.right_cluster_context
+        label_field = self.left_cluster_name if side == "left" else self.right_cluster_name
+        context = context_field.text().strip()
+        if not context:
+            QMessageBox.information(self, "Context required", f"Enter the kubectl context for the {side} cluster.")
+            return
+        inner = "kubectl --context " + shlex.quote(context) + " get pods,deployments,services,statefulsets,daemonsets,jobs -A -o json 2>&1"
+        worker = CommandWorker(ssh, "bash -lc " + shlex.quote(inner), timeout=45)
+        self._capture_workers[side] = worker
+        worker.result.connect(lambda output, error, code, selected=side, label=label_field.text().strip(), ctx=context: self._on_cluster_snapshot(selected, label, ctx, output, error, code))
+        worker.error.connect(lambda error, selected=side: self.compare_output.append("Capture error (" + selected + "): " + ai_intelligence.redact_evidence(error)))
+        worker.finished.connect(lambda selected=side: self._capture_workers.pop(selected, None))
+        worker.start()
+
+    def _on_cluster_snapshot(self, side, label, context, output, error, exit_code):
+        if exit_code != 0:
+            QMessageBox.warning(self, "Cluster capture failed", ai_intelligence.redact_evidence(error or output or f"kubectl exited with {exit_code}"))
+            return
+        try:
+            payload = json.loads(output)
+            items = payload.get("items")
+            if not isinstance(items, list):
+                raise ValueError("kubectl did not return a Kubernetes resource list.")
+            resources = []
+            for item in items[:5000]:
+                if not isinstance(item, dict):
+                    continue
+                metadata = item.get("metadata") or {}
+                spec = item.get("spec") or {}
+                status = item.get("status") or {}
+                pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec.get("template"), dict) else spec.get("spec", {})
+                containers = pod_spec.get("containers", []) if isinstance(pod_spec, dict) else []
+                container_statuses = status.get("containerStatuses", []) if isinstance(status, list) else status.get("containerStatuses", [])
+                normalized = {
+                    "kind": str(item.get("kind") or "").lower(),
+                    "namespace": str(metadata.get("namespace") or "default"),
+                    "name": str(metadata.get("name") or ""),
+                    "phase": status.get("phase") if isinstance(status, dict) else None,
+                    "replicas": spec.get("replicas"),
+                    "ready_replicas": status.get("readyReplicas") if isinstance(status, dict) else None,
+                    "images": sorted(str(c.get("image")) for c in containers if isinstance(c, dict) and c.get("image")),
+                    "ports": sorted(str(p.get("port")) for p in (spec.get("ports") or []) if isinstance(p, dict) and p.get("port")),
+                    "restarts": sum(int(c.get("restartCount") or 0) for c in container_statuses if isinstance(c, dict)),
+                }
+                if normalized["kind"] and normalized["name"]:
+                    resources.append(normalized)
+            self._cluster_snapshots[side] = {"cluster": label or context, "context": context, "resources": resources}
+            self.compare_output.append(f"Captured {side} cluster {label or context}: {len(resources)} resource(s).")
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Invalid cluster snapshot", str(exc))
+
+    def _compare_captured_snapshots(self):
+        if "left" not in self._cluster_snapshots or "right" not in self._cluster_snapshots:
+            QMessageBox.information(self, "Two snapshots required", "Capture both left and right cluster snapshots first.")
+            return
+        result = ai_intelligence.compare_cluster_snapshots(
+            self._cluster_snapshots["left"], self._cluster_snapshots["right"]
+        )
+        self._show_result(self.compare_output, result)
 
     def _choose_json(self, field):
         path, _ = QFileDialog.getOpenFileName(self, "Choose JSON snapshot", "", "JSON files (*.json)")
