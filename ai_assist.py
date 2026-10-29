@@ -1216,18 +1216,19 @@ class AIConversationWorker(QThread):
 
 
 class AIExplainWorker(QThread):
-    """Send bounded pod logs plus optional live resource evidence to the selected provider."""
+    """Send bounded pod logs plus optional live resource evidence to a task-profile provider."""
 
     done  = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, provider: str, api_key: str, model: str, pod: str,
                  namespace: str, container: str, log_text: str, parent=None,
-                 resource_context: str = ""):
+                 resource_context: str = "", task_profile: str = "deep_diagnosis"):
         super().__init__(parent)
         self._provider = provider
         self._api_key = api_key
         self._model = model
+        self._task_profile = task_profile if task_profile in {"quick", "deep_diagnosis", "voice", "local_private"} else "deep_diagnosis"
         self._pod = pod
         self._namespace = namespace
         self._container = container
@@ -1258,7 +1259,7 @@ class AIExplainWorker(QThread):
             resource_context=(self._resource_context or "") + signal_context,
         )
         provider, api_key, model, selection_error = _task_provider_selection(
-            "deep_diagnosis", self._provider, self._api_key, self._model
+            self._task_profile, self._provider, self._api_key, self._model
         )
         if selection_error:
             self.error.emit(selection_error)
