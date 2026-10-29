@@ -1,6 +1,9 @@
 from .file_exec import _ExecStreamWorker
 from .common import *
 
+import json
+from PyQt5.QtWidgets import QFileDialog
+import ai_intelligence
 from .ai_explain import AIExplainDialog
 
 class LogViewerDialog(QDialog):
@@ -22,6 +25,7 @@ class LogViewerDialog(QDialog):
     self._evidence_worker = None  # read-only live pod evidence collection
     self._pending_ai_explain = None
     self._ai_dialog   = None
+    self._last_resource_evidence = ""
 
     self.setWindowTitle(f"Logs — {pod}")
     self.resize(900, 600)
@@ -72,6 +76,11 @@ class LogViewerDialog(QDialog):
     self.explain_btn.setToolTip("Ask AI to diagnose this log output")
     self.explain_btn.clicked.connect(self._on_explain)
     ctrl.addWidget(self.explain_btn)
+
+    self.export_incident_btn = QPushButton("Export Incident")
+    self.export_incident_btn.setToolTip("Save a redacted, timestamped incident evidence bundle as JSON")
+    self.export_incident_btn.clicked.connect(self._export_incident_bundle)
+    ctrl.addWidget(self.export_incident_btn)
     layout.addLayout(ctrl)
 
     self.log_view = QTextEdit()
@@ -153,6 +162,40 @@ class LogViewerDialog(QDialog):
     if "error" not in self.status_lbl.text():
       self.status_lbl.setText("○ stream ended")
       self.status_lbl.setStyleSheet(f"color: {T['TEXT_DIM']};")
+
+
+  def _export_incident_bundle(self):
+    """Export a redacted evidence snapshot without sending it to an AI provider."""
+    log_text = self.log_view.toPlainText().strip()
+    if not log_text or log_text == "Loading…":
+      QMessageBox.information(self, "No incident evidence", "Wait for log output before exporting an incident bundle.")
+      return
+    bundle = ai_intelligence.build_incident_bundle(
+      title=f"Pod incident: {self._pod}",
+      cluster=str(self._context or "current context"),
+      namespace=str(self._ns or ""),
+      resource=f"pod/{self._pod}",
+      evidence={
+        "container": self._container or "default",
+        "previous_container_logs": bool(self.prev_chk.isChecked()),
+        "logs": log_text,
+        "live_resource_evidence": self._last_resource_evidence or "not collected",
+      },
+    )
+    path, _ = QFileDialog.getSaveFileName(
+      self, "Export Incident Bundle", f"{self._pod}-incident.json",
+      "JSON files (*.json)"
+    )
+    if not path:
+      return
+    try:
+      with open(path, "w", encoding="utf-8") as handle:
+        json.dump(bundle, handle, indent=2, ensure_ascii=False)
+        handle.write(chr(10))
+    except OSError as exc:
+      QMessageBox.warning(self, "Incident Export Failed", str(exc))
+      return
+    QMessageBox.information(self, "Incident Exported", f"Redacted incident evidence saved to: {path}")
 
   # ── AI diagnosis ──────────────────────────────────────────
   def _on_explain(self):
@@ -242,11 +285,13 @@ class LogViewerDialog(QDialog):
         f"\n\nEvidence command exit code: {exit_code}. Some sections may be unavailable; "
         "do not infer missing status or metrics."
       )
+    self._last_resource_evidence = ai_intelligence.redact_evidence(evidence)
     self._start_ai_explain(evidence)
 
   def _on_resource_evidence_error(self, error: str):
     self._evidence_worker = None
     safe_error = ai_assist._redact_sensitive_text(str(error or "unknown error"))
+    self._last_resource_evidence = "collection failed: " + safe_error
     self._start_ai_explain(
       "Live Kubernetes status/events/metrics collection failed: " + safe_error
     )
