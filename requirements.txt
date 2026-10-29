@@ -13,6 +13,7 @@
 
 PyQt5>=5.15,<6
 paramiko>=3.0
+certifi>=2024.2.2
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-dotenv>=1.0

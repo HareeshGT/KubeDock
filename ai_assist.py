@@ -44,9 +44,12 @@ Google's `x-goog-api-key`, OpenAI's/DeepSeek's `Authorization: Bearer`).
 
 import json
 import re
+import ssl
 import time
 import urllib.request
 import urllib.error
+
+import certifi
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -68,6 +71,24 @@ MAX_CONTEXT_CHARS = 12_000
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_ERROR_BODY_BYTES = 65_536
 PROVIDER_TIMEOUT_SECONDS = 45
+
+
+def _provider_ssl_context():
+    """Build a verified TLS context with system and certifi trust roots.
+
+    System roots support enterprise-managed certificates. The certifi bundle
+    supplies a current public CA set in Python/packaged builds that do not
+    expose the platform trust store correctly. Certificate verification is
+    always enabled; custom corporate roots can be supplied through the usual
+    SSL_CERT_FILE / SSL_CERT_DIR environment variables before launch.
+    """
+    context = ssl.create_default_context()
+    try:
+        context.load_verify_locations(cafile=certifi.where())
+    except (OSError, ssl.SSLError):
+        # Retain platform roots if the bundled CA file is not available.
+        pass
+    return context
 
 _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?"
@@ -1116,7 +1137,11 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str)
     raw_bytes = None
     for attempt in range(2):
         try:
-            with urllib.request.urlopen(req, timeout=PROVIDER_TIMEOUT_SECONDS) as resp:
+            with urllib.request.urlopen(
+                req,
+                timeout=PROVIDER_TIMEOUT_SECONDS,
+                context=_provider_ssl_context(),
+            ) as resp:
                 raw_bytes = resp.read(MAX_RESPONSE_BYTES + 1)
             break
         except urllib.error.HTTPError as e:
@@ -1143,6 +1168,18 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str)
         except (TimeoutError, urllib.error.URLError) as e:
             reason = getattr(e, "reason", e)
             safe_reason = _redact_sensitive_text(str(reason), secrets=(api_key,))
+            is_certificate_error = (
+                isinstance(reason, ssl.SSLCertVerificationError)
+                or "CERTIFICATE_VERIFY_FAILED" in safe_reason
+            )
+            if is_certificate_error:
+                return None, (
+                    "TLS certificate verification failed while contacting the selected AI provider. "
+                    "KubeDock now uses the system trust store plus its bundled CA certificates. "
+                    "Update/reinstall KubeDock if this persists. On a corporate proxy/VPN, "
+                    "configure SSL_CERT_FILE to the trusted company CA PEM and restart KubeDock. "
+                    "Certificate verification remains enabled."
+                )
             is_timeout = isinstance(e, TimeoutError) or "timed out" in safe_reason.lower()
             if attempt == 0 and not is_timeout:
                 time.sleep(0.25)
