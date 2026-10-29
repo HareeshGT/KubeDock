@@ -93,5 +93,6 @@ class KubernetesTab(KubernetesCoreMixin, KubernetesUiMixin, KubernetesWorkloadsM
     # default. Persisted across restarts via themes.save_settings.
     self._tunnel_csv_path = load_settings().get("tunnel_csv_path") or REMOTE_TUNNEL_CSV_PATH
     self._build_ui()
+    self.apply_refresh_settings()
 
   # ── Kubernetes context helpers ───────────────────────────

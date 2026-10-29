@@ -976,6 +976,20 @@ def _clip_resource_evidence(text: str, limit: int = 4_000) -> str:
     return head.rstrip() + marker + tail.lstrip()
 
 
+def _response_detail_instruction() -> str:
+    """Read the AI response detail preference with a safe balanced fallback."""
+    try:
+        detail = str(load_settings().get("ai_response_detail", "balanced") or "balanced").lower()
+    except Exception:
+        detail = "balanced"
+    instructions = {
+        "concise": "Response detail preference: Be concise; lead with the finding and one useful next step.",
+        "balanced": "Response detail preference: Give a practical explanation with evidence and verification detail.",
+        "detailed": "Response detail preference: Explain evidence and reasoning in more depth, including caveats and verification steps, while staying focused.",
+    }
+    return instructions.get(detail, instructions["balanced"])
+
+
 def _build_prompt(
     pod: str, namespace: str, container: str, log_text: str,
     resource_context: str = "",
@@ -1001,6 +1015,7 @@ def _build_prompt(
 
     return (
         f"{_LOG_GUIDE}\n\n"
+        f"{_response_detail_instruction()}\n"
         f"{_UNTRUSTED_DATA_RULE}\n{_SECRETS_RULE}\n\n"
         f"{_DIAGNOSIS_FORMAT}\n\n"
         f"{_LOG_OUTPUT}\n\n"
@@ -1029,6 +1044,7 @@ def _build_command_prompt(command: str, exit_code, stderr_text: str, stdout_text
 
     return (
         f"{_COMMAND_GUIDE}\n\n"
+        f"{_response_detail_instruction()}\n"
         f"{_UNTRUSTED_DATA_RULE}\n{_SECRETS_RULE}\n\n"
         f"{_DIAGNOSIS_FORMAT}\n\n"
         f"{_COMMAND_OUTPUT}\n\n"
@@ -1064,6 +1080,7 @@ def _build_followup_prompt(source_context: str, conversation: list, question: st
 
     return (
         f"{_FOLLOWUP_GUIDE}\n\n"
+        f"{_response_detail_instruction()}\n"
         f"{_UNTRUSTED_DATA_RULE}\n{_SECRETS_RULE}\n\n"
         f"{_FOLLOWUP_FORMAT}\n\n"
         f"{_wrap('evidence', evidence)}\n\n"

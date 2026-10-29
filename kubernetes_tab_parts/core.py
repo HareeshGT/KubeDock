@@ -1,6 +1,8 @@
 from .common import *
 import logging
 from command_utils import command_operation_label
+from themes import load_settings, save_settings
+from app_preferences import normalize_performance_settings, k8s_connection_profile_key
 
 _LOG = logging.getLogger(__name__)
 
@@ -18,6 +20,48 @@ K8S_TAB_GROUPS = {
 
 
 class KubernetesCoreMixin:
+  def _saved_k8s_selection(self):
+    settings = load_settings()
+    if not settings.get("remember_k8s_context", True):
+      return {}
+    key = k8s_connection_profile_key(getattr(self, "_conn_host", None), getattr(self, "_conn_port", 22), getattr(self, "_conn_user", None))
+    profiles = settings.get("k8s_connection_preferences", {})
+    record = profiles.get(key, {}) if key and isinstance(profiles, dict) else {}
+    return record if isinstance(record, dict) else {}
+
+  def _save_k8s_selection(self, save_namespace=True):
+    settings = load_settings()
+    if not settings.get("remember_k8s_context", True):
+      return
+    key = k8s_connection_profile_key(getattr(self, "_conn_host", None), getattr(self, "_conn_port", 22), getattr(self, "_conn_user", None))
+    if not key or not self._current_context:
+      return
+    profiles = settings.get("k8s_connection_preferences", {})
+    profiles = dict(profiles) if isinstance(profiles, dict) else {}
+    record = dict(profiles.get(key, {}))
+    record["context"] = self._current_context
+    if save_namespace and self._current_ns:
+      namespaces = record.get("namespaces", {})
+      namespaces = dict(namespaces) if isinstance(namespaces, dict) else {}
+      namespaces[self._current_context] = self._current_ns
+      record["namespaces"] = namespaces
+    profiles[key] = record
+    if len(profiles) > 100:
+      profiles = dict(list(profiles.items())[-100:])
+    save_settings(k8s_connection_preferences=profiles)
+
+  def apply_refresh_settings(self):
+    perf = normalize_performance_settings(load_settings())
+    interval = perf["kubernetes_refresh_seconds"]
+    self._auto_refresh_timer.setInterval(interval * 1000)
+    if hasattr(self, "auto_btn"):
+      self.auto_btn.setText("⏱ Auto ON" if self.auto_btn.isChecked() else f"⏱ Auto ({interval} s)")
+    tunnel_timer = getattr(self, "_tunnel_status_timer", None)
+    if tunnel_timer is not None:
+      tunnel_timer.setInterval(perf["tunnel_refresh_seconds"] * 1000)
+      if tunnel_timer.isActive():
+        tunnel_timer.start()
+
   def _context_flag(self) -> str:
     context = (self._current_context or "").strip()
     return f"--context={shlex.quote(context)}" if context else ""
@@ -57,14 +101,18 @@ class KubernetesCoreMixin:
     contexts = [x.strip() for x in (out or "").splitlines() if x.strip()]
     self._contexts = contexts
     current = self._current_context
+    saved = self._saved_k8s_selection()
+    saved_context = str(saved.get("context") or "")
+    preferred_context = saved_context if saved_context in contexts else current
 
     self.context_combo.blockSignals(True)
     self.context_combo.clear()
     self.context_combo.addItems(contexts)
-    chosen = current if current in contexts else (contexts[0] if contexts else "")
+    chosen = preferred_context if preferred_context in contexts else (contexts[0] if contexts else "")
     if chosen:
       self.context_combo.setCurrentText(chosen)
       self._current_context = chosen
+      self._current_ns = ""
       # setCurrentText() above is wrapped in blockSignals(), so
       # currentTextChanged (and therefore _on_context_change /
       # context_changed) never fires for this initial pick — only for a
@@ -101,6 +149,7 @@ class KubernetesCoreMixin:
     self._current_context = context
     self.context_changed.emit(context)
     self._current_ns = "default"
+    self._save_k8s_selection(save_namespace=False)
     self.ns_combo.blockSignals(True)
     self.ns_combo.clear()
     self.ns_combo.addItem("Loading…")
@@ -112,6 +161,20 @@ class KubernetesCoreMixin:
   # ── Local connection info (for tunnelling) ────────────────
 
   def set_connection_info(self, host, port, user, pem):
+    new_identity = k8s_connection_profile_key(host, port or 22, user)
+    old_identity = getattr(self, "_conn_profile_identity", None)
+    if old_identity != new_identity:
+      self._current_context = ""
+      self._current_ns = "default"
+      if hasattr(self, "context_combo"):
+        self.context_combo.blockSignals(True)
+        self.context_combo.clear()
+        self.context_combo.blockSignals(False)
+      if hasattr(self, "ns_combo"):
+        self.ns_combo.blockSignals(True)
+        self.ns_combo.clear()
+        self.ns_combo.blockSignals(False)
+    self._conn_profile_identity = new_identity
     self._conn_host = host
     self._conn_port = port or 22
     self._conn_user = user
@@ -124,6 +187,7 @@ class KubernetesCoreMixin:
     self._conn_port = 22
     self._conn_user = None
     self._conn_pem = None
+    self._conn_profile_identity = None
     self._tunnel_services = []
     self.tunnel_list.clear()
     self.tunnel_list.set_empty_text("Connect to a VM to see its tunnel services")
@@ -173,20 +237,27 @@ class KubernetesCoreMixin:
     self.ns_combo.clear()
     self.ns_combo.addItem("(all namespaces)")
     self.ns_combo.addItems(names)
+    saved = self._saved_k8s_selection()
+    saved_namespaces = saved.get("namespaces", {})
+    saved_ns = saved_namespaces.get(self._current_context) if isinstance(saved_namespaces, dict) else None
     if pending and pending in names:
       self.ns_combo.setCurrentText(pending)
+    elif saved_ns in names:
+      self.ns_combo.setCurrentText(saved_ns)
     elif current in names:
       self.ns_combo.setCurrentText(current)
     elif "default" in names:
       self.ns_combo.setCurrentText("default")
     self.ns_combo.blockSignals(False)
     self._current_ns = self.ns_combo.currentText()
+    self._save_k8s_selection(save_namespace=True)
     if self._cluster_available:
       self._refresh_current_tab()
 
 
   def _on_ns_change(self, ns: str):
     self._current_ns = ns
+    self._save_k8s_selection(save_namespace=True)
     self._refresh_current_tab()
 
 
@@ -265,7 +336,8 @@ class KubernetesCoreMixin:
     else:
       self._auto_refresh_timer.stop()
       self.auto_btn.setChecked(False)
-      self.auto_btn.setText("⏱ Auto (30 s)")
+      interval = normalize_performance_settings(load_settings())["kubernetes_refresh_seconds"]
+      self.auto_btn.setText(f"⏱ Auto ({interval} s)")
       self.health_lbl.setText("● Cluster unavailable")
       self.health_lbl.setStyleSheet(f"color: {T['DANGER']}; font-size: 12px;")
       self._clear_all(keep_context=True)
@@ -273,18 +345,21 @@ class KubernetesCoreMixin:
 
   def _toggle_auto_refresh(self, on: bool):
     if on:
-      self._auto_refresh_timer.start(30000)
+      self.apply_refresh_settings()
+      self._auto_refresh_timer.start()
       self.auto_btn.setText("⏱ Auto ON")
     else:
       self._auto_refresh_timer.stop()
-      self.auto_btn.setText("⏱ Auto (30 s)")
+      interval = normalize_performance_settings(load_settings())["kubernetes_refresh_seconds"]
+      self.auto_btn.setText(f"⏱ Auto ({interval} s)")
 
 
   def _auto_refresh(self):
     if not self.ssh or not self._cluster_available or not self._current_context:
       self._auto_refresh_timer.stop()
       self.auto_btn.setChecked(False)
-      self.auto_btn.setText("⏱ Auto (30 s)")
+      interval = normalize_performance_settings(load_settings())["kubernetes_refresh_seconds"]
+      self.auto_btn.setText(f"⏱ Auto ({interval} s)")
       return
     self._refresh_current_tab()
 
