@@ -1,3 +1,4 @@
+import hashlib
 import os
 import platform
 import shutil
@@ -481,6 +482,25 @@ def install_prebuilt_release() -> Path:
                     print(f"  Downloaded {downloaded / (1024 * 1024):.0f} MiB")
         if not archive.is_file() or archive.stat().st_size == 0:
             raise RuntimeError("The downloaded KubeDock bundle is empty.")
+
+        checksum_url = "https://github.com/HareeshGT/KubeDock/releases/download/fast-installer/SHA256SUMS"
+        checksum_request = urllib.request.Request(checksum_url, headers={"User-Agent": "KubeDock-Installer"})
+        with urllib.request.urlopen(checksum_request, timeout=30) as response:
+            checksum_lines = response.read().decode("utf-8").splitlines()
+        expected_hash = next(
+            (line.split()[0].lower() for line in checksum_lines
+             if len(line.split()) >= 2 and line.split()[1].lstrip("*") == asset),
+            None,
+        )
+        if not expected_hash or len(expected_hash) != 64:
+            raise RuntimeError("The release checksum file has no valid hash for the Windows bundle.")
+        digest = hashlib.sha256()
+        with archive.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            raise RuntimeError("SHA-256 verification failed for the downloaded Windows bundle.")
+        print("[OK] SHA-256 checksum verified.")
 
         extract_root = temp_dir / "extracted"
         extract_root.mkdir()
