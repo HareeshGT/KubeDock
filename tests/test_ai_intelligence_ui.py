@@ -27,7 +27,7 @@ class AIIntelligenceWorkspaceUITests(unittest.TestCase):
                 lines.extend([f"__SAMPLE_{number}__", f"api-pod api-container {cpu} {memory}"])
             lines.extend(["__REQUESTS__", "CPU=250m;MEM=256Mi"])
             dialog._on_rightsizing_metrics("\n".join(lines), "", 0)
-            self.assertEqual(dialog.sample_count.value(), 5)
+            self.assertEqual(dialog.sample_count.value(), 5, dialog.rightsizing_output.toPlainText())
             self.assertEqual(dialog.cpu_usage.value(), 500)
             self.assertEqual(dialog.memory_usage.value(), 500 * 1024 * 1024)
             self.assertEqual(dialog.cpu_request.value(), 250)
