@@ -36,9 +36,24 @@ assets on the rolling GitHub prerelease `fast-installer`. The tag is moved to
 the commit used for the latest assets. Pull requests build and validate the
 platform bundles but do not publish or update the release.
 
-Linux ARM64 does not currently have a prebuilt bundle because PyQt5 falls back to a source build without an available wheel. In `auto` mode, Linux ARM64 therefore uses the existing source-build fallback; `release` mode exits with an explanatory message.\n\nAssets include build metadata and a checksum file. These are application
+Linux ARM64 does not currently have a prebuilt bundle because PyQt5 falls back to a source build without an available wheel. In `auto` mode, Linux ARM64 therefore uses the existing source-build fallback; `release` mode exits with an explanatory message.
+
+Assets include build metadata and a checksum file. These are application
 bundles, not signed/notarized consumer installers. macOS bundles are ad-hoc
 signed, not Developer ID signed/notarized.
+
+## SQLite data directory
+
+KubeDock continues to use the existing `~/.kubedock/kubedock.db` location when
+it can be opened. If that directory is unavailable or read-only in a frozen
+install, the application tries the platform's per-user application-data path.
+When possible, it copies the existing SQLite database to the fallback location
+before continuing. Legacy `settings.json` migration continues to read from the
+original profile.
+
+To choose an explicit writable directory, set `KUBEDOCK_DATA_DIR` before
+launching KubeDock. The directory should belong to the current user; do not
+point multiple users at the same database.
 
 ## Optional features
 
