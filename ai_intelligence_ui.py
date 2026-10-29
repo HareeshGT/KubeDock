@@ -5,19 +5,55 @@ import shlex
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import urllib.error
+import urllib.request
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget, QListWidget, QListWidgetItem,
+    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout,
+    QWidget, QListWidget, QListWidgetItem, QSystemTrayIcon,
 )
 
+import ai_incident_workflow
 import ai_intelligence
 import db
 import ai_assist
-from themes import load_settings
+from themes import load_settings, save_settings
 from workers import CommandWorker
+
+
+class PrometheusHistoryWorker(QThread):
+    result_ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, base_url, namespace, pod, days, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.namespace = namespace
+        self.pod = pod
+        self.days = days
+
+    def run(self):
+        try:
+            queries = ai_incident_workflow.build_prometheus_history_queries(
+                self.namespace, self.pod, self.days
+            )
+            responses = {}
+            for key, query in queries.items():
+                url = ai_incident_workflow.prometheus_query_url(self.base_url, query)
+                request = urllib.request.Request(
+                    url, headers={"Accept": "application/json", "User-Agent": "KubeDock/AI-Workspace"}
+                )
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    body = response.read(2 * 1024 * 1024 + 1)
+                if len(body) > 2 * 1024 * 1024:
+                    raise ValueError("Prometheus response exceeded the 2 MiB limit.")
+                responses[key] = json.loads(body.decode("utf-8"))
+            self.result_ready.emit(ai_incident_workflow.parse_prometheus_history_results(responses))
+        except Exception as exc:
+            self.error.emit(ai_intelligence.redact_evidence(str(exc))[:1000])
 
 
 class AIIntelligenceDialog(QDialog):
@@ -36,6 +72,16 @@ class AIIntelligenceDialog(QDialog):
         root.addWidget(intro)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
+        self._rightsizing_worker = None
+        self._prometheus_worker = None
+        self._live_incident_worker = None
+        self._pending_live_analysis = False
+        self._active_incident_bundle = None
+        self._runbook_docs = []
+        self._runbook_folder = str(load_settings().get("ai_runbook_directory", "") or "")
+        self._validated_remediation_plan = None
+        self._last_watch_observation = None
+        self._watch_tray = None
         self._build_rightsizing_tab()
         self._build_compare_tab()
         self._watch_timer = QTimer(self)
@@ -56,6 +102,9 @@ class AIIntelligenceDialog(QDialog):
         self._build_services_tab()
         self._build_cross_system_tab()
         self._build_usage_tab()
+        self._build_runbooks_tab()
+        self._build_overview_tab()
+        self.tabs.insertTab(0, self._overview_tab, "Overview")
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         root.addWidget(close)
