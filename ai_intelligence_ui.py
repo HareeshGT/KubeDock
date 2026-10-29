@@ -873,21 +873,153 @@ class AIIntelligenceDialog(QDialog):
     def _build_cross_system_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        live_group = QGroupBox("Live cross-system collection")
+        live_layout = QVBoxLayout(live_group)
+        live_layout.addWidget(QLabel(
+            "Collect a read-only host snapshot, Docker container inventory, and targeted Kubernetes evidence "
+            "over the current SSH session. Secret values, container environment values, and Docker logs are not queried."
+        ))
+        collect = QPushButton("Collect host + Docker + Kubernetes evidence")
+        collect.clicked.connect(self._collect_cross_system_live)
+        live_layout.addWidget(collect)
+        use_bundle = QPushButton("Use collected bundle in Incident Investigator")
+        use_bundle.clicked.connect(self._load_cross_system_into_incident)
+        live_layout.addWidget(use_bundle)
+        layout.addWidget(live_group)
+
+        file_group = QGroupBox("Correlate an existing evidence bundle")
+        file_layout = QVBoxLayout(file_group)
         self.cross_system_path = QLineEdit()
         self.cross_system_path.setPlaceholderText("Incident/evidence bundle JSON")
-        choose = QPushButton("Choose evidence JSON")
+        choose = QPushButton("Choose evidence JSON…")
         choose.clicked.connect(lambda: self._choose_json(self.cross_system_path))
-        layout.addWidget(self.cross_system_path)
-        layout.addWidget(choose)
-        layout.addWidget(QLabel(
-            "Correlates recognizable failure signals across supplied host, Docker, Kubernetes, "
-            "application-log and metrics evidence. Results are hypotheses, not causal proof."
+        file_layout.addWidget(self.cross_system_path)
+        file_layout.addWidget(choose)
+        file_layout.addWidget(QLabel(
+            "Recognizable failure signals are hypotheses, not proof of causality."
         ))
         analyze = QPushButton("Correlate evidence signals")
         analyze.clicked.connect(self._correlate_evidence_file)
-        layout.addWidget(analyze)
+        file_layout.addWidget(analyze)
+        layout.addWidget(file_group)
         self.cross_system_output = self._output(layout)
+        self._cross_system_worker = None
+        self._active_cross_system_bundle = None
         self.tabs.addTab(tab, "Cross-system diagnosis")
+
+    def _collect_cross_system_live(self):
+        if self._cross_system_worker is not None:
+            return
+        try:
+            target = ai_incident_workflow.validate_incident_target(
+                self.incident_context.text(), self.incident_namespace.text(),
+                self.incident_resource_kind.currentText(), self.incident_resource_name.text(),
+            )
+            command = ai_incident_workflow.build_cross_system_collection_command(
+                target["context"], target["namespace"], target["resource_kind"], target["resource_name"]
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid cross-system target", str(exc))
+            return
+        ssh = self._find_ssh_connection()
+        if ssh is None:
+            QMessageBox.warning(self, "SSH not connected", "Connect to a VM in KubeDock before collecting cross-system evidence.")
+            return
+        self.cross_system_output.setPlainText("Collecting read-only host, Docker, and Kubernetes evidence…")
+        worker = CommandWorker(ssh, command, timeout=45)
+        self._cross_system_worker = worker
+        worker.result.connect(self._on_cross_system_live_result)
+        worker.error.connect(
+            lambda message: self.cross_system_output.setPlainText(
+                "Cross-system collection failed: " + ai_intelligence.redact_evidence(message)
+            )
+        )
+        worker.finished.connect(self._on_cross_system_worker_finished)
+        worker.start()
+
+    def _on_cross_system_live_result(self, output, error, exit_code):
+        try:
+            target = ai_incident_workflow.validate_incident_target(
+                self.incident_context.text(), self.incident_namespace.text(),
+                self.incident_resource_kind.currentText(), self.incident_resource_name.text(),
+            )
+            sections = ai_incident_workflow.parse_live_incident_output(
+                (output or "") + (("\n" + error) if error else "")
+            )
+            logs = str(sections.get("logs", "") or "")
+            events = "\n".join((
+                str(sections.get("target_events", "") or ""),
+                str(sections.get("namespace_warnings", "") or ""),
+            ))
+            combined = "\n\n".join(
+                str(sections.get(key, "") or "")
+                for key in ("host_summary", "docker_inventory", "resource_summary", "target_events",
+                            "namespace_warnings", "metrics", "endpoints")
+            )
+            signals = ai_intelligence.correlate_incident_signals(
+                logs=(logs + "\n" + combined).splitlines(),
+                events=events.splitlines(),
+                metrics={"metrics": sections.get("metrics", "")},
+            )
+            evidence = {
+                "logs": ai_incident_workflow.compact_evidence_text(logs, max_chars=9000),
+                "host_summary": sections.get("host_summary", ""),
+                "docker_inventory": sections.get("docker_inventory", ""),
+                "live_resource_evidence": ai_incident_workflow.compact_evidence_text(combined, max_chars=12000),
+                "target_events": sections.get("target_events", ""),
+                "namespace_warnings": sections.get("namespace_warnings", ""),
+                "metrics": sections.get("metrics", ""),
+                "endpoints": sections.get("endpoints", ""),
+                "candidate_signals": signals,
+                "collector_exit_code": int(exit_code),
+                "collection_note": "Read-only SSH host snapshot, Docker inventory, and targeted Kubernetes evidence. Missing data remains unknown.",
+            }
+            self._active_cross_system_bundle = ai_intelligence.build_incident_bundle(
+                title="Cross-system incident: " + target["resource_kind"] + "/" + target["resource_name"],
+                cluster=target["context"] or "current context",
+                namespace=target["namespace"],
+                resource=target["resource_kind"] + "/" + target["resource_name"],
+                evidence=evidence,
+            )
+            self._active_incident_bundle = self._active_cross_system_bundle
+            self._show_result(self.cross_system_output, {
+                "target": target,
+                "collector_exit_code": int(exit_code),
+                "sources_collected": [
+                    key for key in ("host_summary", "docker_inventory", "resource_summary",
+                                    "target_events", "namespace_warnings", "logs", "metrics", "endpoints")
+                    if str(sections.get(key, "") or "").strip()
+                ],
+                "candidate_signals": signals,
+                "limitations": [
+                    "No Docker logs or environment variables were collected.",
+                    "No Kubernetes Secret or ConfigMap values were queried.",
+                    "Correlation is hypothesis generation, not proof of causality.",
+                ],
+            })
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Cross-system collection error", str(exc))
+
+    def _on_cross_system_worker_finished(self):
+        self._cross_system_worker = None
+
+    def _load_cross_system_into_incident(self):
+        bundle = self._active_cross_system_bundle
+        if not isinstance(bundle, dict):
+            QMessageBox.information(self, "No live bundle", "Collect live cross-system evidence first.")
+            return
+        self._active_incident_bundle = bundle
+        self.incident_context.setText("" if bundle.get("cluster") == "current context" else str(bundle.get("cluster") or ""))
+        self.incident_namespace.setText(str(bundle.get("namespace") or ""))
+        resource = str(bundle.get("resource") or "")
+        kind, _, name = resource.partition("/")
+        if self.incident_resource_kind.findText(kind) >= 0:
+            self.incident_resource_kind.setCurrentText(kind)
+        self.incident_resource_name.setText(name)
+        self._select_workspace_tab("Incident investigator")
+        self.incident_output.setPlainText(
+            "Cross-system bundle loaded. Choose Local / Private or confirm hosted-provider consent, then investigate."
+        )
 
     def _correlate_evidence_file(self):
         try:
