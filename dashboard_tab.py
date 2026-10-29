@@ -1080,6 +1080,7 @@ class DashboardTab(DashboardConnectionMixin, DashboardUIMixin, DashboardRefreshM
         self._process_timer.setInterval(1000)
         self._process_timer.timeout.connect(self._refresh_processes)
         self._build_ui()
+        self.apply_refresh_settings()
         self._show_disconnected()
     NODE_GRID_COLS = 3
     NODE_CARD_MIN_SIDE = 320

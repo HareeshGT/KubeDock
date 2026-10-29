@@ -17,7 +17,8 @@ from PyQt5.QtWidgets import (
 
 import docker_utils as du
 from docker_dialogs import DockerLogDialog, DockerTextDialog
-from themes import T
+from themes import T, load_settings
+from app_preferences import normalize_performance_settings
 from ui_kit import ResourceCard, pill_qss, RADIUS_CARD
 from utils import monospace_font
 from ui_icons import set_icon
@@ -271,9 +272,18 @@ class DockerTab(QWidget):
     self._timer = QTimer(self)
     self._timer.timeout.connect(self._auto_refresh)
     self._build_ui()
+    self.apply_refresh_settings()
     self._set_banner("Connect to a VM to manage its Docker containers.", error=False)
 
   # ── public API (mirrors KubernetesTab) ─────────────────────
+  def apply_refresh_settings(self):
+    perf = normalize_performance_settings(load_settings())
+    self._timer.setInterval(perf["docker_refresh_seconds"] * 1000)
+    if self.auto_chk.isChecked() and self.ssh is not None and self.isVisible():
+      self._timer.start()
+    elif not self.auto_chk.isChecked():
+      self._timer.stop()
+
   def set_ssh(self, ssh):
     self.ssh = ssh
     self._connection_generation += 1
@@ -463,7 +473,7 @@ class DockerTab(QWidget):
     if self.ssh is not None and self._dirty:
       self.refresh_all()
     if self.auto_chk.isChecked() and self.ssh is not None:
-      self._timer.start(_AUTO_REFRESH_MS)
+      self._timer.start()
 
   def hideEvent(self, event):
     super().hideEvent(event)
@@ -471,7 +481,7 @@ class DockerTab(QWidget):
 
   def _on_auto_toggled(self, on):
     if on and self.ssh is not None and self.isVisible():
-      self._timer.start(_AUTO_REFRESH_MS)
+      self._timer.start()
     else:
       self._timer.stop()
 

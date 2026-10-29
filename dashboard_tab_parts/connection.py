@@ -1,5 +1,7 @@
 from dashboard_tab import *
 from dashboard_tab import REFRESH_MS, BACKGROUND_REFRESH_MS, _FTPDashboardWorker, QEvent, size_fmt
+from themes import load_settings
+from app_preferences import normalize_performance_settings
 
 """DashboardTab implementation mixin.
 
@@ -8,6 +10,18 @@ contains logically grouped DashboardTab methods.
 """
 
 class DashboardConnectionMixin:
+  def apply_refresh_settings(self):
+      perf = normalize_performance_settings(load_settings())
+      self._timer.setInterval(perf["dashboard_refresh_seconds"] * 1000)
+      self._bg_timer.setInterval(perf["background_refresh_seconds"] * 1000)
+      if self._active and (self.ssh or self.ftp):
+        self._timer.start()
+      elif self.ssh:
+        if perf["pause_dashboard_when_inactive"]:
+          self._bg_timer.stop()
+        else:
+          self._bg_timer.start()
+
   def set_kube_context(self, context):
       """Follow the Kubernetes tab's selected context without changing
       the jump host's global kubectl current-context."""
@@ -46,7 +60,7 @@ class DashboardConnectionMixin:
         self._show_ftp_placeholder()
         if self._active:
           self._refresh_ftp()
-          self._timer.start(REFRESH_MS)
+          self._timer.start()
       else:
         self._timer.stop()
         self._process_timer.stop()
@@ -167,10 +181,10 @@ class DashboardConnectionMixin:
         self._show_connected_placeholder()
         if self._active:
           self._refresh()
-          self._timer.start(REFRESH_MS)
+          self._timer.start()
           self._process_timer.start()
         else:
-          self._bg_timer.start(BACKGROUND_REFRESH_MS)
+          self._bg_timer.start()
       else:
         self._timer.stop()
         self._bg_timer.stop()
@@ -227,11 +241,11 @@ class DashboardConnectionMixin:
       if active and self.ssh:
         self._bg_timer.stop()
         self._resume_focused()
-        self._timer.start(REFRESH_MS)
+        self._timer.start()
         self._process_timer.start()
       elif active and self.ftp:
         self._refresh_ftp()
-        self._timer.start(REFRESH_MS)
+        self._timer.start()
       else:
         self._timer.stop()
         self._process_timer.stop()
@@ -243,7 +257,11 @@ class DashboardConnectionMixin:
         self._busy = False
         self._cycle_background = False
         if self.ssh:
-          self._bg_timer.start(BACKGROUND_REFRESH_MS)
+          perf = normalize_performance_settings(load_settings())
+          if perf["pause_dashboard_when_inactive"]:
+            self._bg_timer.stop()
+          else:
+            self._bg_timer.start()
         else:
           self._bg_timer.stop()
 
@@ -255,7 +273,7 @@ class DashboardConnectionMixin:
       fresh = False
       if cache and cache["kube_context"] == self._kube_context:
         self._publish_snapshot(cache["host"], cache["k8s"], cache["k8s_error"], cache["elapsed"])
-        fresh = (time.monotonic() - cache["at"]) * 1000 < REFRESH_MS
+        fresh = (time.monotonic() - cache["at"]) * 1000 < self._timer.interval()
       if self._busy and self._cycle_background:
         # A background cycle is already running: adopt it instead of
         # starting a second one; it will render when it completes.

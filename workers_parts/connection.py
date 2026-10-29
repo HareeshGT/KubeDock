@@ -43,10 +43,20 @@ class ConnectWorker(QThread):
     def run(self):
         import paramiko
         try:
+            from themes import load_settings
+            from app_preferences import normalize_connection_preferences
+            connection_preferences = normalize_connection_preferences(load_settings())
+            connect_timeout = connection_preferences["ssh_connect_timeout_seconds"]
+            keepalive_seconds = connection_preferences["ssh_keepalive_seconds"]
+        except Exception:
+            connect_timeout = 10
+            keepalive_seconds = 15
+        try:
             ssh = paramiko.SSHClient()
             _configure_host_key_policy(ssh)
             kw = dict(hostname=self.host, port=self.port, username=self.user,
-                      timeout=10, banner_timeout=10, auth_timeout=10)
+                      timeout=connect_timeout, banner_timeout=connect_timeout,
+                      auth_timeout=connect_timeout)
             if self.password:
                 # A real password was typed in — force straight password
                 # auth. Left at paramiko's defaults, look_for_keys/
@@ -132,7 +142,8 @@ class ConnectWorker(QThread):
                 # SSH-level keepalive (a lightweight global request every
                 # 15s) keeps NAT/firewall mappings alive and lets a truly
                 # dead connection be detected quickly instead of silently.
-                transport.set_keepalive(15)
+                if keepalive_seconds > 0:
+                    transport.set_keepalive(keepalive_seconds)
             except Exception:
                 pass
 
