@@ -4,13 +4,21 @@ on:
   push:
     paths:
       - "ai_assist.py"
+      - "ai_intelligence*.py"
+      - "dialogs_parts/log_viewer.py"
       - "settings_dialog.py"
+      - "AI_ENHANCEMENT_STATUS.md"
+      - "README.md"
       - "tests/test_ai*.py"
       - ".github/workflows/ai-model-tests.yml"
   pull_request:
     paths:
       - "ai_assist.py"
+      - "ai_intelligence*.py"
+      - "dialogs_parts/log_viewer.py"
       - "settings_dialog.py"
+      - "AI_ENHANCEMENT_STATUS.md"
+      - "README.md"
       - "tests/test_ai*.py"
   workflow_dispatch:
 
