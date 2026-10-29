@@ -208,7 +208,7 @@ jobs:
               "note": "Rolling prebuilt bundles for main. Optional Qwen3-TTS is not included.",
           }
           (root / "KubeDock-fast-installer.json").write_text(
-              json.dumps(manifest, indent=2) + "\\n", encoding="utf-8"
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
           )
           PY
           cat KubeDock-fast-installer.json
