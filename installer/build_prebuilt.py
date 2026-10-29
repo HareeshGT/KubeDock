@@ -132,15 +132,18 @@ def repair_macos_openssl(bundle: Path, *, source_dir: Path | None = None) -> Non
             linked_libraries = subprocess.check_output(
                 ["otool", "-L", rust_spec.origin], text=True, stderr=subprocess.STDOUT
             )
-            ssl_line = next(
+            ssl_lines = [
                 line.strip().split(" (", 1)[0]
                 for line in linked_libraries.splitlines()
                 if "/libssl.3.dylib" in line and line.strip().startswith("/")
-            )
-            source_dir = Path(ssl_line).parent
-        except (OSError, subprocess.CalledProcessError, StopIteration, RuntimeError) as exc:
+            ]
+            if not ssl_lines:
+                print("[OK] cryptography uses static OpenSSL; no runtime library repair needed")
+                return
+            source_dir = Path(ssl_lines[0]).parent
+        except (OSError, subprocess.CalledProcessError, RuntimeError) as exc:
             raise RuntimeError(
-                "Unable to locate the OpenSSL libraries linked by cryptography on macOS."
+                "Unable to inspect the OpenSSL libraries linked by cryptography on macOS."
             ) from exc
 
     source_dir = Path(source_dir)
