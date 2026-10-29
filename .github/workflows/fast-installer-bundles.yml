@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "0 0 * * *"   # 5:30 AM IST
     - cron: "0 8 * * *"   # 1:30 PM IST
-    - cron: "5 15 * * *"  # 5:30 PM IST
+    - cron: "9 15 * * *" # 8:39 PM IST  # 5:30 PM IST
   workflow_dispatch:
 
 permissions:
