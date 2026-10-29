@@ -137,7 +137,7 @@ class AIIntelligenceDialog(QDialog):
             + "kubectl --context " + context_q + " -n " + namespace_q
             + " top pod " + pod_q + " --containers --no-headers 2>&1; sleep 5; done"
         )
-        request_expr = r'{range .spec.containers[*]}{.resources.requests.cpu}{" "}{.resources.requests.memory}{"\\n"}{end}'
+        request_expr = r'{range .spec.containers[*]}{.resources.requests.cpu}{" "}{.resources.requests.memory}{"\n"}{end}'
         request_command = (
             "printf '\\n__REQUESTS__\\n'; kubectl --context " + context_q
             + " -n " + namespace_q + " get pod " + pod_q
@@ -164,7 +164,7 @@ class AIIntelligenceDialog(QDialog):
         current_sample = None
         in_requests = False
         for line in (output or "").splitlines():
-            match = re.match(r"__SAMPLE_(\\d+)__", line.strip())
+            match = re.match(r"__SAMPLE_(\d+)__", line.strip())
             if match:
                 current_sample = int(match.group(1))
                 samples.setdefault(current_sample, [])
