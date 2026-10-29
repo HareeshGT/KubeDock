@@ -275,4 +275,4 @@ echo
 echo "Version : $VERSION"
 echo "Package : $OUTPUT"
 echo
-echo "Available branches are fetched at install time."
+echo "Fast install uses the latest rolling prebuilt bundle; source mode fetches branches at install time."
