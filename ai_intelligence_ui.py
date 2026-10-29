@@ -553,9 +553,12 @@ class AIIntelligenceDialog(QDialog):
         form.addRow("Maximum observations", self.watch_max)
         layout.addLayout(form)
         layout.addWidget(QLabel(
-            "Starts an explicit, bounded, read-only kubectl get watch over the current SSH session. "
-            "No automated remediation is performed. Requires an active KubeDock SSH connection."
+            "Starts an explicit, bounded, read-only kubectl poll. KubeDock compares observations, "
+            "flags meaningful changes and never remediates automatically."
         ))
+        self.watch_notify_chk = QCheckBox("Show a desktop notification for meaningful changes")
+        self.watch_notify_chk.setChecked(True)
+        layout.addWidget(self.watch_notify_chk)
         actions = QHBoxLayout()
         self.watch_start_btn = QPushButton("Start Watch")
         self.watch_start_btn.clicked.connect(self._start_watch)
@@ -564,7 +567,10 @@ class AIIntelligenceDialog(QDialog):
         self.watch_stop_btn.clicked.connect(self._stop_watch)
         self.watch_correlate_btn = QPushButton("Correlate observations")
         self.watch_correlate_btn.clicked.connect(self._correlate_watch_observations)
+        self.watch_investigate_btn = QPushButton("Investigate watch results")
+        self.watch_investigate_btn.clicked.connect(self._investigate_watch_observations)
         actions.addWidget(self.watch_correlate_btn)
+        actions.addWidget(self.watch_investigate_btn)
         actions.addWidget(self.watch_start_btn)
         actions.addWidget(self.watch_stop_btn)
         layout.addLayout(actions)
@@ -590,13 +596,21 @@ class AIIntelligenceDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid watch plan", str(exc))
             return
-        if not self.watch_namespace.text().strip() or not self.watch_name.text().strip():
-            QMessageBox.information(self, "Target required", "Enter the target namespace and resource name.")
+        try:
+            ai_incident_workflow.validate_incident_target(
+                self.watch_context.text().strip(),
+                self.watch_namespace.text().strip(),
+                self.watch_resource.currentText(),
+                self.watch_name.text().strip(),
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid watch target", str(exc))
             return
         if self._find_ssh_connection() is None:
             QMessageBox.warning(self, "SSH not connected", "Connect to a VM in KubeDock before starting a watch.")
             return
         self._watch_observations = 0
+        self._last_watch_observation = None
         self._watch_deadline = time.monotonic() + self._watch_config["duration_seconds"]
         self._watch_active = True
         self.watch_output.clear()
@@ -647,10 +661,81 @@ class AIIntelligenceDialog(QDialog):
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         text = ai_intelligence.redact_evidence((output or "") + ("\n" + error if error else ""))
         self.watch_output.append("[" + stamp + "] exit=" + str(exit_code) + "\n" + (text or "(no output)"))
-        if exit_code != 0:
+        if exit_code == 0 and text.strip():
+            if self._last_watch_observation is not None:
+                difference = ai_incident_workflow.compare_watch_states(
+                    self._last_watch_observation, text
+                )
+                if difference["changed"] or difference["critical_signals"]:
+                    header = (
+                        "\n[change detected · " + difference["severity"].upper() + "] "
+                        + difference["message"]
+                    )
+                    if difference["critical_signals"]:
+                        header += " Signals: " + ", ".join(difference["critical_signals"])
+                    self.watch_output.append(header)
+                    if difference["added"]:
+                        self.watch_output.append("Added/changed lines:\n- " + "\n- ".join(difference["added"][:8]))
+                    if self.watch_notify_chk.isChecked():
+                        self._notify_watch_change(difference)
+            self._last_watch_observation = text
+        else:
             self.watch_output.append("Observation failed; treat the resource state as unknown, not healthy.")
         if self._watch_config and self._watch_observations >= self._watch_config["max_observations"]:
             self._stop_watch()
+
+    def _notify_watch_change(self, difference):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        try:
+            if self._watch_tray is None:
+                icon = self.windowIcon()
+                if icon.isNull():
+                    icon = QApplication.windowIcon()
+                self._watch_tray = QSystemTrayIcon(icon, self)
+                self._watch_tray.show()
+            severity = difference.get("severity", "info")
+            title = "KubeDock: critical resource change" if severity == "high" else "KubeDock: resource changed"
+            details = ", ".join(difference.get("critical_signals") or difference.get("added") or [])[:240]
+            self._watch_tray.showMessage(
+                title, details or difference.get("message", "A watched resource changed."),
+                QSystemTrayIcon.Warning if severity == "high" else QSystemTrayIcon.Information,
+                5000,
+            )
+        except Exception:
+            # Notifications are a convenience only; the in-app watch log remains authoritative.
+            return
+
+    def _investigate_watch_observations(self):
+        observations = self.watch_output.toPlainText().strip()
+        if not observations:
+            QMessageBox.information(self, "No observations", "Start a watch and collect observations first.")
+            return
+        namespace = self.watch_namespace.text().strip()
+        context = self.watch_context.text().strip() or "current context"
+        resource = self.watch_resource.currentText()
+        name = self.watch_name.text().strip()
+        bundle = ai_intelligence.build_incident_bundle(
+            title="Watch-mode change review: " + resource + "/" + name,
+            cluster=context,
+            namespace=namespace,
+            resource=resource + "/" + name,
+            evidence={
+                "logs": observations,
+                "live_resource_evidence": self._last_watch_observation or "No successful observation available.",
+                "candidate_signals": ai_intelligence.correlate_incident_signals(logs=observations.splitlines()),
+                "collection_note": "Generated from explicit bounded read-only watch observations.",
+            },
+        )
+        self._active_incident_bundle = bundle
+        self.incident_context.setText("" if context == "current context" else context)
+        self.incident_namespace.setText(namespace)
+        self.incident_resource_kind.setCurrentText(resource)
+        self.incident_resource_name.setText(name)
+        index = self._select_workspace_tab("Incident investigator")
+        self.incident_output.setPlainText("Watch observations loaded as an incident bundle. Review them and run the AI investigation when ready.")
+        if index >= 0:
+            self.tabs.setCurrentIndex(index)
 
     def _on_watch_error(self, error):
         self.watch_output.append("[watch error] " + ai_intelligence.redact_evidence(error))
