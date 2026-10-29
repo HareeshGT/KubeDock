@@ -26,7 +26,7 @@ class AIIntelligenceTests(unittest.TestCase):
 
 
     def test_incident_redaction_covers_provider_keys_and_jwts(self):
-        value = ai_intelligence_text = (
+        value = (
             "OPENAI_KEY=sk-abcdefghijklmnopqrstuvwxyz123456 "
             "AIza123456789012345678901234567890123 "
             "eyJabcdefghijk.abcdefghijk.abcdefghijk"
