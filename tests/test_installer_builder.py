@@ -33,11 +33,15 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         editor = (ROOT / "requirements-editor.txt").read_text(encoding="utf-8").lower()
         voice = (ROOT / "requirements-voice.txt").read_text(encoding="utf-8").lower()
 
-        self.assertNotIn("pyinstaller", core)
-        self.assertNotIn("pyqtwebengine", core)
-        self.assertNotIn("python-dotenv", core)
-        self.assertNotIn("uvicorn[standard]", core)
-        self.assertIn("websockets", core)
+        core_requirements = [
+            line.strip() for line in core.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        self.assertFalse(any(line.startswith("pyinstaller") for line in core_requirements))
+        self.assertFalse(any(line.startswith("pyqtwebengine") for line in core_requirements))
+        self.assertFalse(any(line.startswith("python-dotenv") for line in core_requirements))
+        self.assertFalse(any(line.startswith("uvicorn[standard]") for line in core_requirements))
+        self.assertTrue(any(line.startswith("websockets") for line in core_requirements))
         self.assertIn("pyinstaller", build)
         self.assertIn("pyqtwebengine", editor)
         self.assertIn("pyobjc-framework-cocoa", voice)
