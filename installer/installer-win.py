@@ -12,7 +12,7 @@ from pathlib import Path
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
 ICON = "KubeDock.ico"
-BUILD_ID = "WINDOWS-PYAUDIO-QWEN-OPTION-2026-10-22-R1"
+BUILD_ID = "WINDOWS-FAST-PREBUILT-RELEASE-2026-10-29-R1"
 RECOMMENDED_PYTHON = "3.13"
 
 
@@ -488,7 +488,11 @@ def install_prebuilt_release() -> Path:
         with zipfile.ZipFile(archive) as package:
             for member in package.infolist():
                 destination = (extract_root / member.filename).resolve()
-                if not destination.is_relative_to(root_resolved):
+                try:
+                    inside_root = os.path.commonpath([str(root_resolved), str(destination)]) == str(root_resolved)
+                except ValueError:
+                    inside_root = False
+                if not inside_root:
                     raise RuntimeError("The prebuilt archive contains an unsafe path.")
             package.extractall(extract_root)
 
