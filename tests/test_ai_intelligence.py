@@ -24,6 +24,18 @@ class AIIntelligenceTests(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnop", value)
         self.assertNotIn("\nabc\n", value)
 
+
+    def test_incident_redaction_covers_provider_keys_and_jwts(self):
+        value = ai_intelligence_text = (
+            "OPENAI_KEY=sk-abcdefghijklmnopqrstuvwxyz123456 "
+            "AIza123456789012345678901234567890123 "
+            "eyJabcdefghijk.abcdefghijk.abcdefghijk"
+        )
+        cleaned = redact_evidence(value)
+        self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz123456", cleaned)
+        self.assertNotIn("AIza123456789012345678901234567890123", cleaned)
+        self.assertNotIn("eyJabcdefghijk.abcdefghijk.abcdefghijk", cleaned)
+
     def test_signal_correlation_is_not_claimed_as_proof(self):
         result = correlate_incident_signals(logs=["OOMKilled after memory cgroup out of memory"])
         self.assertEqual(result["observations"][0]["signal"], "oom")
