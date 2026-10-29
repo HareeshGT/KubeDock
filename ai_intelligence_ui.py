@@ -192,7 +192,7 @@ class AIIntelligenceDialog(QDialog):
                 metadata = item.get("metadata") or {}
                 spec = item.get("spec") or {}
                 status = item.get("status") or {}
-                pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec.get("template"), dict) else spec.get("spec", {})
+                pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec.get("template"), dict) else spec
                 containers = pod_spec.get("containers", []) if isinstance(pod_spec, dict) else []
                 container_statuses = status.get("containerStatuses", []) if isinstance(status, list) else status.get("containerStatuses", [])
                 normalized = {
