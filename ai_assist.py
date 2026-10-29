@@ -634,7 +634,10 @@ def get_ai_settings() -> dict:
         selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
         if selected_provider not in PROVIDERS:
             selected_provider = "ollama" if profile == "local_private" else provider
-        task_profiles[profile] = {"provider": selected_provider}
+        selected_model = str(item.get("model_id") or models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]).strip()
+        if not _is_valid_model_id(selected_model):
+            selected_model = models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        task_profiles[profile] = {"provider": selected_provider, "model_id": selected_model}
     return {
         "provider": provider,
         "api_keys": api_keys,
@@ -690,7 +693,10 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
         if selected_provider not in PROVIDERS:
             selected_provider = "ollama" if profile == "local_private" else provider
-        cleaned_profiles[profile] = {"provider": selected_provider}
+        selected_model = str(item.get("model_id") or cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]).strip()
+        if not _is_valid_model_id(selected_model):
+            selected_model = cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        cleaned_profiles[profile] = {"provider": selected_provider, "model_id": selected_model}
     if auto_escalation is None:
         auto_escalation = bool(existing_ai.get("auto_escalation", False))
     if usage_telemetry_enabled is None:
@@ -1192,7 +1198,7 @@ def _task_provider_selection(profile: str, fallback_provider: str, fallback_key:
     if provider not in PROVIDERS:
         provider = fallback_provider
     api_key = settings.get("api_keys", {}).get(provider) or (fallback_key if provider == fallback_provider else "")
-    model = settings.get("models", {}).get(provider) or (fallback_model if provider == fallback_provider else "")
+    model = assignment.get("model_id") or settings.get("models", {}).get(provider) or (fallback_model if provider == fallback_provider else "")
     if not api_key and provider != "ollama":
         return None, None, None, f"No API key is configured for the {profile.replace('_', ' ')} profile provider ({provider}). Add it in Settings → AI."
     if not _is_valid_model_id(model):
