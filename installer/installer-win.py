@@ -243,6 +243,34 @@ def install_requirements(python, repo, include_qwen: bool = False):
     print("PyAudio entries removed from generated requirements: YES")
     run([python, "-m", "pip", "install", "-r", str(generated)])
 
+    # PyInstaller is needed only for source packaging, not as a KubeDock runtime dependency.
+    build_req = Path(repo) / "requirements-build.txt"
+    if build_req.is_file():
+        run([python, "-m", "pip", "install", "-r", str(build_req)])
+    else:
+        run([python, "-m", "pip", "install", "PyInstaller>=6.0"])
+
+    # Keep the microphone packages optional, but never let pip compile PyAudio.
+    voice_req = Path(repo) / "requirements-voice.txt"
+    if voice_req.is_file():
+        voice_lines = voice_req.read_text(encoding="utf-8").splitlines()
+        filtered_voice = [
+            line for line in voice_lines
+            if not line.strip().lower().startswith(("pyaudio", "pyaudiowpatch"))
+        ]
+        generated_voice = Path(repo) / "requirements.windows.voice.generated.txt"
+        generated_voice.write_text("\n".join(filtered_voice) + "\n", encoding="utf-8")
+        run([python, "-m", "pip", "install", "-r", str(generated_voice)])
+
+    if os.environ.get("KUBEDOCK_ENABLE_WEBENGINE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        editor_req = Path(repo) / "requirements-editor.txt"
+        if not editor_req.is_file():
+            raise RuntimeError("KUBEDOCK_ENABLE_WEBENGINE was set but requirements-editor.txt is missing.")
+        print("\nInstalling optional Qt WebEngine/Monaco editor. This increases package size.")
+        run([python, "-m", "pip", "install", "-r", str(editor_req)])
+    else:
+        print("\nSkipping optional Qt WebEngine; the built-in editor remains available.")
+
     print("\nInstalling PyAudio as a binary wheel only...")
     run([python, "-m", "pip", "install", "--only-binary=:all:", "PyAudio==0.2.14"])
 
@@ -260,7 +288,7 @@ def install_requirements(python, repo, include_qwen: bool = False):
 def verify(python, include_qwen: bool = False):
     code = (
         "import importlib; "
-        "mods=['PyQt5','paramiko','speech_recognition','pyaudio','PyInstaller']; "
+        "mods=['PyQt5','paramiko','speech_recognition','pyaudio','pyttsx3','PyInstaller']; "
         "[print('[OK]', m) or importlib.import_module(m) for m in mods]"
     )
     run([python, "-c", code])
