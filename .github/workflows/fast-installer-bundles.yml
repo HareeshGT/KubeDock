@@ -6,28 +6,6 @@ on:
     - cron: "0 8 * * *"   # 1:30 PM IST
     - cron: "0 12 * * *"  # 5:30 PM IST
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-    paths:
-      - "main.py"
-      - "*.py"
-      - "dialogs_parts/**"
-      - "kubernetes_tab_parts/**"
-      - "dashboard_tab_parts/**"
-      - "main_window_parts/**"
-      - "workers_parts/**"
-      - "k8s_ai_ops_parts/**"
-      - "webapp/**"
-      - "assets/**"
-      - "requirements*.txt"
-      - "installer/build_prebuilt.py"
-      - "installer/installer.sh"
-      - "installer/installer-win.py"
-      - "installer/build_pkg.sh"
-      - "tests/test_installer_builder.py"
-      - ".github/workflows/fast-installer-bundles.yml"
 
 permissions:
   contents: write
