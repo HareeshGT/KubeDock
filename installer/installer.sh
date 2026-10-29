@@ -213,8 +213,17 @@ install_prebuilt_bundle() {
       ;;
   esac
 
-  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
-    echo "curl/tar are required to install the prebuilt bundle." >&2
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download the prebuilt bundle." >&2
+    return 1
+  fi
+  if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    if ! command -v powershell.exe >/dev/null 2>&1 || ! command -v cygpath >/dev/null 2>&1; then
+      echo "PowerShell and cygpath are required to install the Windows prebuilt bundle." >&2
+      return 1
+    fi
+  elif ! command -v tar >/dev/null 2>&1; then
+    echo "tar is required to extract the prebuilt bundle." >&2
     return 1
   fi
 
@@ -236,7 +245,15 @@ install_prebuilt_bundle() {
     return 2
   fi
 
-  if ! tar -xf "$archive" -C "$tmp"; then
+  if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    archive_win="$(cygpath -w "$archive")"
+    tmp_win="$(cygpath -w "$tmp")"
+    if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '$archive_win' -DestinationPath '$tmp_win' -Force"; then
+      echo "Downloaded Windows prebuilt bundle could not be extracted." >&2
+      rm -rf "$tmp"
+      return 2
+    fi
+  elif ! tar -xf "$archive" -C "$tmp"; then
     echo "Downloaded prebuilt bundle could not be extracted." >&2
     rm -rf "$tmp"
     return 2
