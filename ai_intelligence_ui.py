@@ -541,9 +541,13 @@ class AIIntelligenceDialog(QDialog):
         layout.addWidget(self.incident_bundle_path)
         layout.addWidget(choose)
         layout.addWidget(QLabel(
-            "Analyze an exported incident bundle with the configured Deep Diagnosis profile. "
+            "Analyze an exported incident bundle with the configured Deep Diagnosis or Local / Private profile. "
             "Evidence is redacted again before provider submission. No remediation is executed."
         ))
+        self.incident_profile_combo = QComboBox()
+        self.incident_profile_combo.addItem("Deep Diagnosis", "deep_diagnosis")
+        self.incident_profile_combo.addItem("Local / Private (Ollama)", "local_private")
+        layout.addWidget(self.incident_profile_combo)
         analyze = QPushButton("Investigate incident with AI")
         analyze.clicked.connect(self._investigate_incident_bundle)
         layout.addWidget(analyze)
@@ -571,7 +575,8 @@ class AIIntelligenceDialog(QDialog):
             QMessageBox.warning(self, "Cannot investigate incident", str(exc))
             return
         settings = ai_assist.get_ai_settings()
-        assignment = settings.get("task_profiles", {}).get("deep_diagnosis", {})
+        task_profile = self.incident_profile_combo.currentData() or "deep_diagnosis"
+        assignment = settings.get("task_profiles", {}).get(task_profile, {})
         provider = assignment.get("provider") or settings["provider"]
         api_key = ai_assist.get_api_key(provider)
         if not api_key and provider != "ollama":
@@ -587,7 +592,7 @@ class AIIntelligenceDialog(QDialog):
             logs,
             parent=self,
             resource_context=resource_context,
-            task_profile="deep_diagnosis",
+            task_profile=task_profile,
         )
         self._incident_worker.done.connect(self.incident_output.setPlainText)
         self._incident_worker.error.connect(lambda message: self.incident_output.setPlainText("Investigation failed: " + message))
