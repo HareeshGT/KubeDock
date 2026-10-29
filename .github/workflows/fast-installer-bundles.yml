@@ -1,10 +1,11 @@
+
 name: Fast prebuilt installer bundles
 
 on:
   schedule:
     - cron: "0 0 * * *"   # 5:30 AM IST
     - cron: "0 8 * * *"   # 1:30 PM IST
-    - cron: "12 15 * * *" # 8:41 PM IST
+    - cron: "11 15 * * *" # 8:41 PM IST (test)
   workflow_dispatch:
 
 permissions:
@@ -285,7 +286,7 @@ jobs:
 
           cat KubeDock-fast-installer.json
 
-      - name: Create or update rolling fast-installer release
+      - name: Create or update latest fast-installer release
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
@@ -293,20 +294,26 @@ jobs:
           set -euo pipefail
 
           if gh release view fast-installer --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Update the existing release assets.
             gh release upload fast-installer release-assets/* \
-              --repo "$GITHUB_REPOSITORY" --clobber
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
 
+            # Ensure the release is stable and designated as the latest release.
             gh release edit fast-installer \
               --repo "$GITHUB_REPOSITORY" \
-              --title "KubeDock Fast Installer (main)" \
-              --notes "Rolling prebuilt installer bundles for main. Built from commit $SOURCE_SHA. Use the installer for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
+              --title "KubeDock Fast Installer" \
+              --notes "Latest stable prebuilt installer bundles for KubeDock. Built from commit $SOURCE_SHA. Choose the bundle for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles." \
+              --prerelease=false \
+              --latest
           else
+            # Create a stable release, not a prerelease.
             gh release create fast-installer release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$SOURCE_SHA" \
-              --title "KubeDock Fast Installer (main)" \
-              --prerelease \
-              --notes "Rolling prebuilt installer bundles for main. Built from commit $SOURCE_SHA. Use the installer for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
+              --title "KubeDock Fast Installer" \
+              --notes "Latest stable prebuilt installer bundles for KubeDock. Built from commit $SOURCE_SHA. Choose the bundle for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles." \
+              --latest
           fi
 
           # Keep the rolling tag aligned with the sources used for the latest assets.
