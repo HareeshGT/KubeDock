@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 import ai_intelligence
 import db
 from themes import load_settings
-from workers import CommandWorker, track_worker
+from workers import CommandWorker
 
 
 class AIIntelligenceDialog(QDialog):
@@ -167,8 +167,7 @@ class AIIntelligenceDialog(QDialog):
         self.watch_name = QLineEdit()
         self.watch_name.setPlaceholderText("Resource name")
         self.watch_duration = QSpinBox()
-        self.watch_duration.setRange(ai_intelligence.MAX_WATCH_SECONDS, ai_intelligence.MAX_WATCH_SECONDS)
-        self.watch_duration.setMinimum(1)
+        self.watch_duration.setRange(1, ai_intelligence.MAX_WATCH_SECONDS)
         self.watch_duration.setValue(300)
         self.watch_duration.setSuffix(" seconds")
         self.watch_interval = QSpinBox()
@@ -262,7 +261,6 @@ class AIIntelligenceDialog(QDialog):
         worker.result.connect(self._on_watch_result)
         worker.error.connect(self._on_watch_error)
         worker.finished.connect(self._on_watch_finished)
-        track_worker([], worker)
         worker.start()
 
     def _on_watch_result(self, output, error, exit_code):
@@ -390,3 +388,8 @@ class AIIntelligenceDialog(QDialog):
             QMessageBox.warning(self, "Cannot build service index", str(exc))
             return
         self._show_result(self.services_output, {"count": len(result), "services": result})
+
+    def closeEvent(self, event):
+        if self._watch_active:
+            self._stop_watch()
+        super().closeEvent(event)
