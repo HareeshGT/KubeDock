@@ -108,11 +108,11 @@ jobs:
           timeout --kill-after=3s 8s dist/KubeDock/KubeDock > /tmp/kubedock-startup.log 2>&1
           result=$?
           cat /tmp/kubedock-startup.log
-          if [[ "$result" -ne 0 && "$result" -ne 124 && "$result" -ne 137 ]]; then
-            echo "Frozen KubeDock exited during startup with status $result"
-            exit "$result"
+          if [[ "$result" -ne 124 && "$result" -ne 137 ]]; then
+            echo "Frozen KubeDock exited before the startup smoke-test timeout (status $result)"
+            exit 1
           fi
-          echo "Frozen executable started under the offscreen Qt platform (exit=$result)."
+          echo "Frozen Linux executable remained alive under the offscreen Qt platform."
 
       - name: Smoke-test frozen macOS application startup
         if: runner.os == 'macOS'
