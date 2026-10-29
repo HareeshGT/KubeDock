@@ -69,6 +69,34 @@ class AIContextSecurityTests(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnopqrstuvwxyz123456", prompt)
         self.assertNotIn("super-secret-token", prompt)
 
+    def test_local_only_mode_blocks_hosted_provider_before_network(self):
+        with patch("ai_assist.get_ai_settings", return_value={"cloud_ai_enabled": False}), patch(
+            "ai_assist.urllib.request.urlopen"
+        ) as opened:
+            result, error = ai_assist._call_provider_impl(
+                "mistral", "test-api-key-123456789", "mistral-small-latest", "safe prompt"
+            )
+        self.assertIsNone(result)
+        self.assertIn("Cloud AI is disabled", error)
+        opened.assert_not_called()
+
+    def test_local_only_mode_still_allows_explicit_ollama(self):
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, size=-1):
+                return b'{"choices":[{"message":{"content":"Local response"},"finish_reason":"stop"}]}'
+        with patch("ai_assist.get_ai_settings", return_value={"cloud_ai_enabled": False}), patch(
+            "ai_assist.urllib.request.urlopen", return_value=Response()
+        ):
+            answer, error = ai_assist._call_provider_impl(
+                "ollama", "", "qwen2.5:7b", "safe prompt"
+            )
+        self.assertIsNone(error)
+        self.assertEqual(answer, "Local response")
+
     def test_provider_retries_transient_server_error_once(self):
         class Response:
             def __enter__(self):

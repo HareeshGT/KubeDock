@@ -170,6 +170,13 @@ class K8sAIOpsVoiceMixin:
                 self._set_voice_state("IDLE")
                 self.status_lbl.setText("Ready")
             return
+        if not ai_assist.get_ai_settings().get("cloud_ai_enabled", True):
+            while self._neural_speech_queue:
+                self._speak_system(self._neural_speech_queue.popleft())
+            self.status_lbl.setToolTip(
+                "Cloud AI is blocked. Speech uses the configured local system voice."
+            )
+            return
         api_key = ai_assist.get_api_key("openai")
         if not api_key:
             self._on_neural_tts_error("OpenAI API key is not configured.")
@@ -595,6 +602,13 @@ class K8sAIOpsVoiceMixin:
             self._stop_voice_recording()
             return
         if self._busy:
+            return
+        if not ai_assist.get_ai_settings().get("cloud_ai_enabled", True):
+            QMessageBox.information(
+                self, "Cloud speech is blocked",
+                "Local-only mode blocks Google Web Speech transcription. Use typed input "
+                "or explicitly re-enable cloud AI in Settings → AI."
+            )
             return
         if not _VOICE_AVAILABLE:
             QMessageBox.information(

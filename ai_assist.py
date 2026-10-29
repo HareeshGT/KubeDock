@@ -671,6 +671,9 @@ def get_ai_settings() -> dict:
         "task_profiles": task_profiles,
         "auto_escalation": bool(stored.get("auto_escalation", False)),
         "usage_telemetry_enabled": bool(stored.get("usage_telemetry_enabled", False)),
+        # True is the backwards-compatible default. When false, the central
+        # provider boundary blocks every hosted AI provider without fallback.
+        "cloud_ai_enabled": bool(stored.get("cloud_ai_enabled", True)),
     }
 
 
@@ -692,7 +695,7 @@ def get_model(provider: str = None) -> str:
     )["default_model"]
 
 
-def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None, task_profiles=None, auto_escalation=None, usage_telemetry_enabled=None):
+def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None, task_profiles=None, auto_escalation=None, usage_telemetry_enabled=None, cloud_ai_enabled=None):
     """Save AI settings atomically while retaining current custom models by default."""
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
@@ -730,6 +733,8 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         auto_escalation = bool(existing_ai.get("auto_escalation", False))
     if usage_telemetry_enabled is None:
         usage_telemetry_enabled = bool(existing_ai.get("usage_telemetry_enabled", False))
+    if cloud_ai_enabled is None:
+        cloud_ai_enabled = bool(existing_ai.get("cloud_ai_enabled", True))
     # Replace only the AI sub-setting. API keys, selections and custom model
     # definitions stay together inside SQLite app_settings.
     save_settings(ai={
@@ -740,6 +745,7 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         "task_profiles": cleaned_profiles,
         "auto_escalation": bool(auto_escalation),
         "usage_telemetry_enabled": bool(usage_telemetry_enabled),
+        "cloud_ai_enabled": bool(cloud_ai_enabled),
     })
 
 
@@ -1116,6 +1122,11 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str)
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return None, f"Unknown AI provider: {provider_id!r}"
+    if provider_id != "ollama" and not get_ai_settings().get("cloud_ai_enabled", True):
+        return None, (
+            "Cloud AI is disabled in Settings → AI. Select the Local / Private "
+            "Ollama profile or explicitly re-enable cloud AI."
+        )
     if not api_key and provider_id != "ollama":
         return None, f"No {provider['label']} API key set. Add one in Settings → 🤖 AI."
 

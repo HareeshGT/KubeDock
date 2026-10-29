@@ -1523,6 +1523,12 @@ class K8sGoogleSpeechWorker(QThread):
     self._stop_event.set()
 
   def run(self):
+    if not ai_assist.get_ai_settings().get("cloud_ai_enabled", True):
+      self.error.emit(
+        "Cloud AI is disabled. Google Web Speech transcription is blocked; use typed input "
+        "or explicitly re-enable cloud AI in Settings → AI."
+      )
+      return
     if not _VOICE_AVAILABLE:
       self.error.emit("Voice input is unavailable because SpeechRecognition/PyAudio is not installed.")
       return
