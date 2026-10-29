@@ -51,6 +51,8 @@ import urllib.error
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from themes import load_settings, save_settings
+import ai_intelligence
+import db
 
 MAX_TOKENS = 4096
 
@@ -412,6 +414,18 @@ def _groq_truncated(data):
     return bool(choices) and choices[0].get("finish_reason") == "length"
 
 
+def _ollama_request(prompt, api_key, model):
+    """Call the loopback-only Ollama OpenAI-compatible endpoint."""
+    url = "http://127.0.0.1:11434/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    body = json.dumps({
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }).encode("utf-8")
+    return url, headers, body
+
 
 PROVIDERS = {
     "anthropic": {
@@ -515,6 +529,16 @@ PROVIDERS = {
 
         "default_model": "openai/gpt-oss-120b",
     },
+    "ollama": {
+        "label": "Ollama (Local / Private)",
+        "key_placeholder": "Not required — local loopback endpoint",
+        "build_request": _ollama_request,
+        "parse_response": _openai_parse,
+        "parse_error": _openai_error,
+        "was_truncated": _openai_truncated,
+        "model_samples": ["qwen2.5:7b", "llama3.2:3b", "deepseek-r1:8b"],
+        "default_model": "qwen2.5:7b",
+    },
 }
 
 DEFAULT_PROVIDER = "anthropic"
@@ -603,11 +627,29 @@ def get_ai_settings() -> dict:
         for pid, info in PROVIDERS.items()
     }
     custom_models = _normalise_custom_models(stored.get("custom_models") or {})
+    stored_profiles = stored.get("task_profiles") or {}
+    task_profiles = {}
+    for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
+        item = stored_profiles.get(profile) or {}
+        selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
+        invalid_local_provider = profile == "local_private" and selected_provider != "ollama"
+        if selected_provider not in PROVIDERS or invalid_local_provider:
+            selected_provider = "ollama" if profile == "local_private" else provider
+        selected_model = str(
+            (models.get("ollama") if invalid_local_provider else item.get("model_id"))
+            or models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        ).strip()
+        if not _is_valid_model_id(selected_model):
+            selected_model = models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        task_profiles[profile] = {"provider": selected_provider, "model_id": selected_model}
     return {
         "provider": provider,
         "api_keys": api_keys,
         "models": models,
         "custom_models": custom_models,
+        "task_profiles": task_profiles,
+        "auto_escalation": bool(stored.get("auto_escalation", False)),
+        "usage_telemetry_enabled": bool(stored.get("usage_telemetry_enabled", False)),
     }
 
 
@@ -629,7 +671,7 @@ def get_model(provider: str = None) -> str:
     )["default_model"]
 
 
-def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None):
+def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=None, task_profiles=None, auto_escalation=None, usage_telemetry_enabled=None):
     """Save AI settings atomically while retaining current custom models by default."""
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
@@ -646,6 +688,27 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
     if custom_models is None:
         custom_models = (load_settings().get("ai") or {}).get("custom_models") or {}
     cleaned_custom_models = _normalise_custom_models(custom_models)
+    existing_ai = load_settings().get("ai") or {}
+    if task_profiles is None:
+        task_profiles = existing_ai.get("task_profiles") or {}
+    cleaned_profiles = {}
+    for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
+        item = task_profiles.get(profile) or {}
+        selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
+        invalid_local_provider = profile == "local_private" and selected_provider != "ollama"
+        if selected_provider not in PROVIDERS or invalid_local_provider:
+            selected_provider = "ollama" if profile == "local_private" else provider
+        selected_model = str(
+            (cleaned_models.get("ollama") if invalid_local_provider else item.get("model_id"))
+            or cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        ).strip()
+        if not _is_valid_model_id(selected_model):
+            selected_model = cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        cleaned_profiles[profile] = {"provider": selected_provider, "model_id": selected_model}
+    if auto_escalation is None:
+        auto_escalation = bool(existing_ai.get("auto_escalation", False))
+    if usage_telemetry_enabled is None:
+        usage_telemetry_enabled = bool(existing_ai.get("usage_telemetry_enabled", False))
     # Replace only the AI sub-setting. API keys, selections and custom model
     # definitions stay together inside SQLite app_settings.
     save_settings(ai={
@@ -653,6 +716,9 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
         "api_keys": cleaned_keys,
         "models": cleaned_models,
         "custom_models": cleaned_custom_models,
+        "task_profiles": cleaned_profiles,
+        "auto_escalation": bool(auto_escalation),
+        "usage_telemetry_enabled": bool(usage_telemetry_enabled),
     })
 
 
@@ -1007,12 +1073,12 @@ def _build_followup_prompt(source_context: str, conversation: list, question: st
     )
 
 # ─── Shared provider call ────────────────────────────────────────
-def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
+def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str):
     """Send bounded, redacted prompt data to the explicitly selected provider."""
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return None, f"Unknown AI provider: {provider_id!r}"
-    if not api_key:
+    if not api_key and provider_id != "ollama":
         return None, f"No {provider['label']} API key set. Add one in Settings → 🤖 AI."
 
     model = (model or "").strip()
@@ -1105,6 +1171,57 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
         )
     return text, None
 
+def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
+    """Call the selected provider and optionally record aggregate local telemetry."""
+    started = time.monotonic()
+    answer, error = _call_provider_impl(provider_id, api_key, model, prompt)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    try:
+        stored = get_ai_settings()
+        if stored.get("usage_telemetry_enabled"):
+            profiles = stored.get("task_profiles") or {}
+            provider_profiles = [
+                (name, item) for name, item in profiles.items()
+                if isinstance(item, dict) and item.get("provider") == provider_id
+            ]
+            exact_profile = next(
+                (name for name, item in provider_profiles if item.get("model_id") == model),
+                None,
+            )
+            profile = exact_profile or (
+                provider_profiles[0][0] if len(provider_profiles) == 1 else "manual"
+            )
+            from ai_intelligence import UsageLedger
+            UsageLedger(str(db.DB_PATH)).record(
+                provider_id, profile, success=error is None,
+                latency_ms=elapsed_ms, enabled=True,
+            )
+    except Exception:
+        # Telemetry is best-effort and must never break an AI response.
+        pass
+    return answer, error
+
+
+# ─── Task-aware provider selection ─────────────────────────────────
+
+def _task_provider_selection(profile: str, fallback_provider: str, fallback_key: str, fallback_model: str):
+    """Resolve a configured task profile; never fall back to an unconfigured key."""
+    settings = get_ai_settings()
+    assignment = settings.get("task_profiles", {}).get(profile) or {}
+    provider = assignment.get("provider") or fallback_provider
+    if provider not in PROVIDERS:
+        provider = fallback_provider
+    if profile == "local_private" and provider != "ollama":
+        return None, None, None, "Local / Private inference must use the loopback Ollama provider."
+    api_key = settings.get("api_keys", {}).get(provider) or (fallback_key if provider == fallback_provider else "")
+    model = assignment.get("model_id") or settings.get("models", {}).get(provider) or (fallback_model if provider == fallback_provider else "")
+    if not api_key and provider != "ollama":
+        return None, None, None, f"No API key is configured for the {profile.replace('_', ' ')} profile provider ({provider}). Add it in Settings → AI."
+    if not _is_valid_model_id(model):
+        return None, None, None, f"No valid model is configured for the {profile.replace('_', ' ')} profile provider ({provider})."
+    return provider, api_key, model, None
+
+
 # ─── Background workers ──────────────────────────────────────────
 
 
@@ -1141,9 +1258,13 @@ class AIConversationWorker(QThread):
             self._source_context, self._conversation, self._question
         )
 
-        text, err = _call_provider(
-            self._provider, self._api_key, self._model, prompt
+        provider, api_key, model, selection_error = _task_provider_selection(
+            "voice", self._provider, self._api_key, self._model
         )
+        if selection_error:
+            self.error.emit(selection_error)
+            return
+        text, err = _call_provider(provider, api_key, model, prompt)
         if err:
             self.error.emit(err)
         else:
@@ -1151,18 +1272,19 @@ class AIConversationWorker(QThread):
 
 
 class AIExplainWorker(QThread):
-    """Send bounded pod logs plus optional live resource evidence to the selected provider."""
+    """Send bounded pod logs plus optional live resource evidence to a task-profile provider."""
 
     done  = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, provider: str, api_key: str, model: str, pod: str,
                  namespace: str, container: str, log_text: str, parent=None,
-                 resource_context: str = ""):
+                 resource_context: str = "", task_profile: str = "deep_diagnosis"):
         super().__init__(parent)
         self._provider = provider
         self._api_key = api_key
         self._model = model
+        self._task_profile = task_profile if task_profile in {"quick", "deep_diagnosis", "voice", "local_private"} else "deep_diagnosis"
         self._pod = pod
         self._namespace = namespace
         self._container = container
@@ -1175,11 +1297,30 @@ class AIExplainWorker(QThread):
             self.error.emit("Nothing to analyze — no logs or resource evidence were collected.")
             return
 
+        # Add deterministic candidate signals from the already-collected evidence.
+        # This is correlation only; the model is explicitly told these are hypotheses.
+        try:
+            signals = ai_intelligence.correlate_incident_signals(
+                logs=(self._log_text or "").splitlines(),
+                events=(self._resource_context or "").splitlines(),
+            )
+            signal_context = (
+                "\\n\\nDeterministic candidate signals (hypotheses, not proof):\\n"
+                + json.dumps(signals, ensure_ascii=False)
+            )
+        except Exception:
+            signal_context = ""
         prompt = _build_prompt(
             self._pod, self._namespace, self._container, self._log_text,
-            resource_context=self._resource_context,
+            resource_context=(self._resource_context or "") + signal_context,
         )
-        text, err = _call_provider(self._provider, self._api_key, self._model, prompt)
+        provider, api_key, model, selection_error = _task_provider_selection(
+            self._task_profile, self._provider, self._api_key, self._model
+        )
+        if selection_error:
+            self.error.emit(selection_error)
+            return
+        text, err = _call_provider(provider, api_key, model, prompt)
         if err:
             self.error.emit(err)
         else:
@@ -1216,7 +1357,18 @@ class AICommandExplainWorker(QThread):
         prompt = _build_command_prompt(
             self._command, self._exit_code, self._stderr_text, self._stdout_text
         )
-        text, err = _call_provider(self._provider, self._api_key, self._model, prompt)
+        profile = "quick"
+        settings = get_ai_settings()
+        evidence_size = len(self._command or "") + len(self._stderr_text or "") + len(self._stdout_text or "")
+        if settings.get("auto_escalation") and (self._exit_code not in (0, None, "0") or evidence_size > 6000):
+            profile = "deep_diagnosis"
+        provider, api_key, model, selection_error = _task_provider_selection(
+            profile, self._provider, self._api_key, self._model
+        )
+        if selection_error:
+            self.error.emit(selection_error)
+            return
+        text, err = _call_provider(provider, api_key, model, prompt)
         if err:
             self.error.emit(err)
         else:

@@ -506,6 +506,77 @@ class SettingsDialog(QDialog):
         row.addWidget(self.show_key_btn)
         v.addLayout(row)
 
+        profile_group = QLabel("Task-specific model routing")
+        profile_group.setStyleSheet("font-weight: 600;")
+        v.addWidget(profile_group)
+        profile_help = QLabel(
+            "Choose which configured provider handles quick command explanations, "
+            "deep pod diagnoses, voice/conversation, and private local inference. "
+            "Ollama uses only http://127.0.0.1:11434 and does not require an API key."
+        )
+        profile_help.setWordWrap(True)
+        profile_help.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        v.addWidget(profile_help)
+
+        self.task_profile_combos = {}
+        self.task_profile_model_combos = {}
+        for profile_id, label in (
+            ("quick", "Quick explanations"),
+            ("deep_diagnosis", "Deep diagnoses"),
+            ("voice", "Voice / conversation"),
+            ("local_private", "Local / Private (Ollama loopback)"),
+        ):
+            v.addWidget(QLabel(label))
+            provider_combo = QComboBox()
+            provider_choices = (
+                [("ollama", ai_assist.PROVIDERS["ollama"])]
+                if profile_id == "local_private"
+                else list(ai_assist.PROVIDERS.items())
+            )
+            for provider_id, provider_info in provider_choices:
+                provider_combo.addItem(provider_info["label"], provider_id)
+            if profile_id == "local_private":
+                provider_combo.setEnabled(False)
+            profile_settings = ai_settings.get("task_profiles", {}).get(profile_id, {})
+            selected = profile_settings.get(
+                "provider", "ollama" if profile_id == "local_private" else ai_settings["provider"]
+            )
+            index = provider_combo.findData(selected)
+            provider_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.task_profile_combos[profile_id] = provider_combo
+            v.addWidget(provider_combo)
+
+            model_combo = QComboBox()
+            model_combo.setEditable(True)
+            self.task_profile_model_combos[profile_id] = model_combo
+            self._refresh_task_profile_models(
+                profile_id, preferred_model=profile_settings.get("model_id")
+            )
+            provider_combo.currentIndexChanged.connect(
+                lambda _index, pid=profile_id: self._on_task_profile_provider_changed(pid)
+            )
+            v.addWidget(model_combo)
+
+        self.auto_escalation_chk = QCheckBox(
+            "Automatically escalate failed/large command explanations to Deep Diagnosis"
+        )
+        self.auto_escalation_chk.setChecked(bool(ai_settings.get("auto_escalation", False)))
+        v.addWidget(self.auto_escalation_chk)
+
+        self.usage_telemetry_chk = QCheckBox(
+            "Enable local aggregate AI usage/latency counters (no prompts, logs, or API keys stored)"
+        )
+        self.usage_telemetry_chk.setChecked(bool(ai_settings.get("usage_telemetry_enabled", False)))
+        v.addWidget(self.usage_telemetry_chk)
+
+        self.ai_intelligence_tools_btn = QPushButton("Open AI Intelligence Workspace…")
+        self.ai_intelligence_tools_btn.setToolTip(
+            "Open incident-adjacent analysis, cluster comparison, watch planning, "
+            "resource recommendations, remediation validation, and service indexing tools."
+        )
+        self.ai_intelligence_tools_btn.clicked.connect(self._open_ai_intelligence_workspace)
+        v.addWidget(self.ai_intelligence_tools_btn)
+
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.add_model_btn.clicked.connect(self._add_custom_model)
         self.manage_models_btn.clicked.connect(self._manage_custom_models)
@@ -515,7 +586,62 @@ class SettingsDialog(QDialog):
         if self._current_provider_id is None:
             self._on_provider_changed(self.provider_combo.currentIndex())
         v.addStretch()
-        return w
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(w)
+        return scroll
+
+    def _refresh_task_profile_models(self, profile_id, preferred_model=None):
+        provider_combo = self.task_profile_combos.get(profile_id)
+        model_combo = self.task_profile_model_combos.get(profile_id)
+        if provider_combo is None or model_combo is None:
+            return
+        provider_id = provider_combo.currentData()
+        info = ai_assist.PROVIDERS.get(provider_id)
+        if not info:
+            return
+        model_combo.blockSignals(True)
+        model_combo.clear()
+        for model_id in info["model_samples"]:
+            model_combo.addItem(model_id, model_id)
+        for item in self._ai_custom_models.get(provider_id, []):
+            model_id = item.get("model_id")
+            if model_id and model_combo.findData(model_id) < 0:
+                model_combo.addItem(model_id, model_id)
+        default_model = self._ai_models.get(provider_id) or info["default_model"]
+        desired = preferred_model or default_model
+        index = model_combo.findData(desired)
+        if index >= 0:
+            model_combo.setCurrentIndex(index)
+        else:
+            model_combo.setEditText(desired)
+        model_combo.blockSignals(False)
+
+    def _on_task_profile_provider_changed(self, profile_id):
+        provider_id = self.task_profile_combos[profile_id].currentData()
+        self._refresh_task_profile_models(
+            profile_id, preferred_model=self._ai_models.get(provider_id)
+        )
+
+    def _selected_task_profile_model(self, profile_id):
+        combo = self.task_profile_model_combos[profile_id]
+        index = combo.currentIndex()
+        if index >= 0 and combo.currentText() == combo.itemText(index):
+            value = combo.itemData(index)
+            if value is not None:
+                return str(value)
+        return combo.currentText().strip()
+
+    def _open_ai_intelligence_workspace(self):
+        try:
+            from ai_intelligence_ui import AIIntelligenceDialog
+            dialog = AIIntelligenceDialog(self)
+            dialog.exec_()
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "AI Intelligence Workspace Unavailable",
+                f"Could not open the workspace: {exc}"
+            )
 
     def _selected_model_id(self):
         index = self.model_combo.currentIndex()
@@ -611,7 +737,7 @@ class SettingsDialog(QDialog):
         pid = self.provider_combo.currentData()
         api_key = self.api_key_edit.text().strip()
         model_id = self._selected_model_id()
-        if not api_key:
+        if not api_key and pid != "ollama":
             QMessageBox.information(
                 self, "API key required",
                 f"Add a {ai_assist.PROVIDERS[pid]['label']} API key before testing the model.",
@@ -798,6 +924,15 @@ class SettingsDialog(QDialog):
             self._ai_keys,
             self._ai_models,
             custom_models=self._ai_custom_models,
+            task_profiles={
+                profile_id: {
+                    "provider": combo.currentData(),
+                    "model_id": self._selected_task_profile_model(profile_id),
+                }
+                for profile_id, combo in self.task_profile_combos.items()
+            },
+            auto_escalation=self.auto_escalation_chk.isChecked(),
+            usage_telemetry_enabled=self.usage_telemetry_chk.isChecked(),
         )
         save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),

@@ -4,13 +4,22 @@ on:
   push:
     paths:
       - "ai_assist.py"
+      - "ai_intelligence*.py"
+      - "dialogs_parts/log_viewer.py"
+      - "k8s_ai_ops_parts/core.py"
       - "settings_dialog.py"
+      - "AI_ENHANCEMENT_STATUS.md"
+      - "README.md"
       - "tests/test_ai*.py"
       - ".github/workflows/ai-model-tests.yml"
   pull_request:
     paths:
       - "ai_assist.py"
+      - "ai_intelligence*.py"
+      - "dialogs_parts/log_viewer.py"
       - "settings_dialog.py"
+      - "AI_ENHANCEMENT_STATUS.md"
+      - "README.md"
       - "tests/test_ai*.py"
   workflow_dispatch:
 
@@ -25,8 +34,26 @@ jobs:
       - name: Install minimal runtime dependency
         run: python -m pip install --upgrade pip PyQt5
       - name: Compile changed Python modules
-        run: python -m py_compile ai_assist.py settings_dialog.py tests/test_ai_custom_models.py
+        run: python -m py_compile ai_assist.py ai_intelligence.py ai_intelligence_ui.py settings_dialog.py dialogs_parts/log_viewer.py k8s_ai_ops_parts/core.py tests/test_ai_custom_models.py tests/test_ai_intelligence.py tests/test_ai_intelligence_ui.py tests/test_ai_task_profiles.py
       - name: Run AI regression tests
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -p 'test_ai*.py' -v
+
+  full-regression-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+      - name: Install application dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
+      - name: Compile all application and test modules
+        run: python -m compileall -q .
+      - name: Run full unittest suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: PYTHONPATH=. pytest -q

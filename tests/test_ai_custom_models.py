@@ -88,12 +88,61 @@ class CustomAIModelTests(unittest.TestCase):
                     self.assertIn("/models/" + model_id + ":generateContent", url)
                 else:
                     self.assertEqual(json.loads(body)["model"], model_id)
-                expected_header = (
-                    "x-api-key" if provider_id == "anthropic" else
-                    "x-goog-api-key" if provider_id == "gemini" else
-                    "Authorization"
-                )
-                self.assertIn(expected_header, headers)
+                if provider_id == "ollama":
+                    self.assertEqual(url, "http://127.0.0.1:11434/v1/chat/completions")
+                    self.assertNotIn("Authorization", headers)
+                else:
+                    expected_header = (
+                        "x-api-key" if provider_id == "anthropic" else
+                        "x-goog-api-key" if provider_id == "gemini" else
+                        "Authorization"
+                    )
+                    self.assertIn(expected_header, headers)
+
+
+    def test_task_profiles_and_local_provider_are_persisted(self):
+        profiles = {
+            "quick": {"provider": "groq", "model_id": "openai/gpt-oss-20b"},
+            "deep_diagnosis": {"provider": "anthropic"},
+            "voice": {"provider": "mistral"},
+            "local_private": {"provider": "openai", "model_id": "cloud-model-id"},
+        }
+        ai_assist.save_ai_settings(
+            "mistral", {"mistral": "mistral-key"},
+            {"mistral": "mistral-small-latest", "ollama": "qwen2.5:7b"},
+            task_profiles=profiles, auto_escalation=True,
+        )
+        settings = ai_assist.get_ai_settings()
+        self.assertEqual(settings["task_profiles"]["local_private"]["provider"], "ollama")
+        self.assertEqual(settings["task_profiles"]["local_private"]["model_id"], "qwen2.5:7b")
+        self.assertTrue(settings["auto_escalation"])
+        self.assertEqual(settings["models"]["ollama"], "qwen2.5:7b")
+        self.assertEqual(settings["task_profiles"]["quick"]["model_id"], "openai/gpt-oss-20b")
+
+    def test_ollama_does_not_require_an_api_key(self):
+        result, error = ai_assist._call_provider("ollama", "", "", "hello")
+        self.assertIsNone(result)
+        self.assertIn("No model selected", error)
+
+
+    def test_provider_wrapper_records_only_opt_in_aggregates(self):
+        self.settings_store["ai"]["usage_telemetry_enabled"] = True
+        self.settings_store["ai"]["task_profiles"] = {
+            "quick": {"provider": "groq"}
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("db.DB_PATH", Path(temp_dir) / "usage.db"):
+                with patch("ai_assist._call_provider_impl", return_value=("answer", None)):
+                    with patch("ai_assist.time.monotonic", side_effect=[1.0, 1.25]):
+                        answer, error = ai_assist._call_provider("groq", "secret-key", "model", "private prompt")
+                self.assertEqual((answer, error), ("answer", None))
+                rows = ai_assist.ai_intelligence.UsageLedger(str(Path(temp_dir) / "usage.db")).summary()
+                self.assertEqual(rows[0]["provider"], "groq")
+                self.assertEqual(rows[0]["profile"], "quick")
+                self.assertEqual(rows[0]["calls"], 1)
+                self.assertEqual(rows[0]["average_latency_ms"], 250)
+                self.assertNotIn("private prompt", str(rows))
+                self.assertNotIn("secret-key", str(rows))
 
     def test_backward_compatibility_for_existing_settings(self):
         self.settings_store["ai"] = {
