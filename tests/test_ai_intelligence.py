@@ -18,9 +18,6 @@ class AIIntelligenceTests(unittest.TestCase):
             collected_at="2026-01-01T00:00:00Z",
         )
         self.assertNotIn("secret-value", str(bundle))
-        self.assertIn("[TRUNCATED: evidence nesting limit]", json.dumps(bundle["evidence"]))
-        self.assertIn("[TRUNCATED: evidence budget]", json.dumps(bundle["evidence"]))
-        self.assertLess(len(json.dumps(bundle["evidence"])), 250_000)
         self.assertEqual(len(bundle["evidence_sha256"]), 64)
 
     def test_redaction_handles_private_key_and_bearer(self):
@@ -67,6 +64,9 @@ class AIIntelligenceTests(unittest.TestCase):
         self.assertLessEqual(len(bundle["evidence"]["long_text"]), 12_000)
         self.assertNotIn("secret-value", json.dumps(bundle))
         self.assertNotIn("abcdefghijklmnopqrstuvwxyz123456", json.dumps(bundle))
+        self.assertIn("[TRUNCATED: evidence nesting limit]", json.dumps(bundle["evidence"]))
+        self.assertIn("[TRUNCATED: evidence budget]", json.dumps(bundle["evidence"]))
+        self.assertLess(len(json.dumps(bundle["evidence"])), 250_000)
         self.assertEqual(len(bundle["evidence_sha256"]), 64)
 
     def test_signal_correlation_is_not_claimed_as_proof(self):
