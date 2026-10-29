@@ -497,6 +497,8 @@ class UIMixin:
         self.main_tabs.setCurrentWidget(self.dashboard_tab)
       elif key == "kubernetes":
         self.main_tabs.setCurrentWidget(self.k8s_tab)
+        section = self.k8s_tab.tab_group_combo
+        section.setCurrentIndex(section.findData("workloads"))
       elif key == "ai":
         self.main_tabs.setCurrentWidget(self.k8s_tab)
         section = self.k8s_tab.tab_group_combo
