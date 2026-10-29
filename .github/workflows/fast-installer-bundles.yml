@@ -18,6 +18,18 @@ on:
           - minor
           - major
 
+  pull_request:
+    branches: [main]
+    paths:
+      - "db.py"
+      - "installer/**"
+      - "tests/test_db_paths.py"
+      - "tests/test_installer_builder.py"
+      - "tests/test_release_version.py"
+      - "docs/FAST_INSTALLER.md"
+      - "README.md"
+      - ".github/workflows/fast-installer-bundles.yml"
+
 permissions:
   contents: read
 
@@ -60,9 +72,10 @@ jobs:
         run: |
           bash -n installer/installer.sh
           bash -n installer/build_pkg.sh
-          python -m py_compile installer/installer-win.py installer/build_prebuilt.py installer/release_version.py tests/test_installer_builder.py tests/test_release_version.py
+          python -m py_compile db.py installer/installer-win.py installer/build_prebuilt.py installer/release_version.py tests/test_db_paths.py tests/test_installer_builder.py tests/test_release_version.py
           python -m unittest discover -s tests -p "test_installer_builder.py" -v
           python -m unittest discover -s tests -p "test_release_version.py" -v
+          python -m unittest discover -s tests -p "test_db_paths.py" -v
 
   build:
     if: github.ref == 'refs/heads/main'
