@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -64,6 +65,15 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
 
             self.assertEqual((framework_dir / "libssl.3.dylib").read_bytes(), b"matching-ssl")
             self.assertEqual((framework_dir / "libcrypto.3.dylib").read_bytes(), b"matching-crypto")
+
+    def test_macos_openssl_repair_is_noop_for_static_linkage(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(builder.importlib.util, "find_spec", return_value=SimpleNamespace(origin="rust-extension.so")), \
+             patch.object(builder.subprocess, "check_output", return_value="rust-extension.so:\n  /usr/lib/libcrypto.3.dylib (compatibility version 3.0.0)") as inspect:
+            bundle = Path(directory) / "KubeDock.app"
+            builder.repair_macos_openssl(bundle)
+            inspect.assert_called_once()
+            self.assertFalse((bundle / "Contents" / "Frameworks").exists())
 
     def test_runtime_requirements_keep_build_and_webengine_optional(self):
         core = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
