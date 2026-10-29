@@ -297,6 +297,9 @@ class AIIntelligenceDialog(QDialog):
         self.watch_stop_btn = QPushButton("Stop Watch")
         self.watch_stop_btn.setEnabled(False)
         self.watch_stop_btn.clicked.connect(self._stop_watch)
+        self.watch_correlate_btn = QPushButton("Correlate observations")
+        self.watch_correlate_btn.clicked.connect(self._correlate_watch_observations)
+        actions.addWidget(self.watch_correlate_btn)
         actions.addWidget(self.watch_start_btn)
         actions.addWidget(self.watch_stop_btn)
         layout.addLayout(actions)
@@ -364,6 +367,15 @@ class AIIntelligenceDialog(QDialog):
         worker.error.connect(self._on_watch_error)
         worker.finished.connect(self._on_watch_finished)
         worker.start()
+
+
+    def _correlate_watch_observations(self):
+        text = self.watch_output.toPlainText().strip()
+        if not text:
+            QMessageBox.information(self, "No observations", "Start a watch and collect observations first.")
+            return
+        result = ai_intelligence.correlate_incident_signals(logs=text.splitlines())
+        self.watch_output.append("\\nCandidate signal correlation (hypotheses, not proof):\\n" + json.dumps(result, indent=2, ensure_ascii=False))
 
     def _on_watch_result(self, output, error, exit_code):
         self._watch_observations += 1
