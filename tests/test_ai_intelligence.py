@@ -18,6 +18,9 @@ class AIIntelligenceTests(unittest.TestCase):
             collected_at="2026-01-01T00:00:00Z",
         )
         self.assertNotIn("secret-value", str(bundle))
+        self.assertIn("[TRUNCATED: evidence nesting limit]", json.dumps(bundle["evidence"]))
+        self.assertIn("[TRUNCATED: evidence budget]", json.dumps(bundle["evidence"]))
+        self.assertLess(len(json.dumps(bundle["evidence"])), 250_000)
         self.assertEqual(len(bundle["evidence_sha256"]), 64)
 
     def test_redaction_handles_private_key_and_bearer(self):
@@ -42,6 +45,10 @@ class AIIntelligenceTests(unittest.TestCase):
             f"line-{index} DB_PASSWORD=secret-value"
             for index in range(100)
         ]
+        deep_value = {"leaf": "deep-data"}
+        for _ in range(20):
+            deep_value = {"nested": deep_value}
+        wide_value = [{"payload": "z" * 2_000} for _ in range(80)]
         bundle = build_incident_bundle(
             title="Large incident",
             cluster="test",
@@ -51,6 +58,8 @@ class AIIntelligenceTests(unittest.TestCase):
                 "logs": oversized_logs,
                 "long_text": "x" * 20_000,
                 "nested": {"Authorization": "Bearer abcdefghijklmnopqrstuvwxyz123456"},
+                "deep": deep_value,
+                "wide": wide_value,
             },
             collected_at="2026-01-01T00:00:00Z",
         )
