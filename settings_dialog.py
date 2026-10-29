@@ -579,7 +579,10 @@ class SettingsDialog(QDialog):
         if self._current_provider_id is None:
             self._on_provider_changed(self.provider_combo.currentIndex())
         v.addStretch()
-        return w
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(w)
+        return scroll
 
     def _refresh_task_profile_models(self, profile_id, preferred_model=None):
         provider_combo = self.task_profile_combos.get(profile_id)
