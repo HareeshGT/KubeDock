@@ -80,8 +80,13 @@ def build_args(include_qwen: bool) -> list[str]:
         args.append("--hidden-import=pyaudio")
     if platform.system() == "Darwin":
         args.append(f"--osx-bundle-identifier={MAC_BUNDLE_ID}")
-    icon = ROOT / ("KubeDock.ico" if os.name == "nt" else "KubeDock.icns")
-    if icon.is_file():
+    if platform.system() == "Windows":
+        icon = ROOT / "KubeDock.ico"
+    elif platform.system() == "Darwin":
+        icon = ROOT / "KubeDock.icns"
+    else:
+        icon = None
+    if icon is not None and icon.is_file():
         args.append(f"--icon={icon}")
     if include_qwen:
         args.extend(
