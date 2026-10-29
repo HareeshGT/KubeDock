@@ -1180,11 +1180,16 @@ def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
         stored = get_ai_settings()
         if stored.get("usage_telemetry_enabled"):
             profiles = stored.get("task_profiles") or {}
-            profile = next(
-                (name for name, item in profiles.items()
-                 if isinstance(item, dict) and item.get("provider") == provider_id
-                 and item.get("model_id") == model),
-                "manual",
+            provider_profiles = [
+                (name, item) for name, item in profiles.items()
+                if isinstance(item, dict) and item.get("provider") == provider_id
+            ]
+            exact_profile = next(
+                (name for name, item in provider_profiles if item.get("model_id") == model),
+                None,
+            )
+            profile = exact_profile or (
+                provider_profiles[0][0] if len(provider_profiles) == 1 else "manual"
             )
             from ai_intelligence import UsageLedger
             UsageLedger(str(db.DB_PATH)).record(
