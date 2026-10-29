@@ -33,6 +33,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  installer-syntax:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate installer syntax and builder flags
+        run: |
+          bash -n installer/installer.sh
+          bash -n installer/build_pkg.sh
+          python -m py_compile installer/installer-win.py installer/build_prebuilt.py tests/test_installer_builder.py
+          python -m unittest discover -s tests -p "test_installer_builder.py" -v
+
   build:
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     strategy:
