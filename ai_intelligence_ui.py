@@ -223,14 +223,14 @@ class AIIntelligenceDialog(QDialog):
                     request_count += 1
             except ValueError:
                 continue
-        self.cpu_usage.setValue(sum(cpu_samples) / len(cpu_samples))
-        self.memory_usage.setValue(sum(memory_samples) / len(memory_samples))
+        self.cpu_usage.setValue(max(cpu_samples))
+        self.memory_usage.setValue(max(memory_samples))
         self.sample_count.setValue(min(len(cpu_samples), len(memory_samples)))
         self.cpu_request.setValue(cpu_request if request_count else 0)
         self.memory_request.setValue(memory_request if request_count else 0)
         self.rightsizing_output.setPlainText(
             "Collected " + str(min(len(cpu_samples), len(memory_samples)))
-            + " valid samples. Usage fields contain the average across samples; resource requests "
+            + " valid samples. Usage fields contain the peak observed across samples; resource requests "
             + ("were read from the pod spec." if request_count else "were not available in the pod spec.")
         )
 
