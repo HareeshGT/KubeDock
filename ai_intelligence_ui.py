@@ -1,8 +1,11 @@
 """Compact UI for safety-first AI infrastructure utilities."""
 import json
+import shlex
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
@@ -12,6 +15,7 @@ from PyQt5.QtWidgets import (
 import ai_intelligence
 import db
 from themes import load_settings
+from workers import CommandWorker, track_worker
 
 
 class AIIntelligenceDialog(QDialog):
@@ -32,6 +36,13 @@ class AIIntelligenceDialog(QDialog):
         root.addWidget(self.tabs, 1)
         self._build_rightsizing_tab()
         self._build_compare_tab()
+        self._watch_timer = QTimer(self)
+        self._watch_timer.timeout.connect(self._watch_tick)
+        self._watch_worker = None
+        self._watch_active = False
+        self._watch_deadline = 0.0
+        self._watch_observations = 0
+        self._watch_config = None
         self._build_watch_tab()
         self._build_remediation_tab()
         self._build_services_tab()
@@ -147,8 +158,17 @@ class AIIntelligenceDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         form = QFormLayout()
+        self.watch_namespace = QLineEdit()
+        self.watch_namespace.setPlaceholderText("e.g. production")
+        self.watch_context = QLineEdit()
+        self.watch_context.setPlaceholderText("Optional kubectl context")
+        self.watch_resource = QComboBox()
+        self.watch_resource.addItems(["pod", "deployment", "statefulset", "daemonset", "service", "job"])
+        self.watch_name = QLineEdit()
+        self.watch_name.setPlaceholderText("Resource name")
         self.watch_duration = QSpinBox()
-        self.watch_duration.setRange(1, ai_intelligence.MAX_WATCH_SECONDS)
+        self.watch_duration.setRange(ai_intelligence.MAX_WATCH_SECONDS, ai_intelligence.MAX_WATCH_SECONDS)
+        self.watch_duration.setMinimum(1)
         self.watch_duration.setValue(300)
         self.watch_duration.setSuffix(" seconds")
         self.watch_interval = QSpinBox()
@@ -158,20 +178,42 @@ class AIIntelligenceDialog(QDialog):
         self.watch_max = QSpinBox()
         self.watch_max.setRange(1, 500)
         self.watch_max.setValue(120)
+        form.addRow("Namespace", self.watch_namespace)
+        form.addRow("Context (optional)", self.watch_context)
+        form.addRow("Resource kind", self.watch_resource)
+        form.addRow("Resource name", self.watch_name)
         form.addRow("Watch duration", self.watch_duration)
         form.addRow("Polling interval", self.watch_interval)
         form.addRow("Maximum observations", self.watch_max)
         layout.addLayout(form)
-        layout.addWidget(QLabel("This validates a bounded watch plan only. Live polling must be started explicitly by a future/connected collector; no background loop is started here."))
-        button = QPushButton("Validate watch plan")
-        button.clicked.connect(self._validate_watch)
-        layout.addWidget(button)
+        layout.addWidget(QLabel(
+            "Starts an explicit, bounded, read-only kubectl get watch over the current SSH session. "
+            "No automated remediation is performed. Requires an active KubeDock SSH connection."
+        ))
+        actions = QHBoxLayout()
+        self.watch_start_btn = QPushButton("Start Watch")
+        self.watch_start_btn.clicked.connect(self._start_watch)
+        self.watch_stop_btn = QPushButton("Stop Watch")
+        self.watch_stop_btn.setEnabled(False)
+        self.watch_stop_btn.clicked.connect(self._stop_watch)
+        actions.addWidget(self.watch_start_btn)
+        actions.addWidget(self.watch_stop_btn)
+        layout.addLayout(actions)
         self.watch_output = self._output(layout)
         self.tabs.addTab(tab, "Watch mode")
 
-    def _validate_watch(self):
+    def _find_ssh_connection(self):
+        node = self.parentWidget()
+        while node is not None:
+            ssh = getattr(node, "ssh", None)
+            if ssh is not None:
+                return ssh
+            node = node.parentWidget()
+        return None
+
+    def _start_watch(self):
         try:
-            result = ai_intelligence.bounded_watch_config(
+            self._watch_config = ai_intelligence.bounded_watch_config(
                 duration_seconds=self.watch_duration.value(),
                 interval_seconds=self.watch_interval.value(),
                 max_observations=self.watch_max.value(),
@@ -179,7 +221,72 @@ class AIIntelligenceDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid watch plan", str(exc))
             return
-        self._show_result(self.watch_output, result)
+        if not self.watch_namespace.text().strip() or not self.watch_name.text().strip():
+            QMessageBox.information(self, "Target required", "Enter the target namespace and resource name.")
+            return
+        if self._find_ssh_connection() is None:
+            QMessageBox.warning(self, "SSH not connected", "Connect to a VM in KubeDock before starting a watch.")
+            return
+        self._watch_observations = 0
+        self._watch_deadline = time.monotonic() + self._watch_config["duration_seconds"]
+        self._watch_active = True
+        self.watch_output.clear()
+        self.watch_start_btn.setEnabled(False)
+        self.watch_stop_btn.setEnabled(True)
+        self.watch_output.append("Watch started. Read-only polling only; automatic mutations are disabled.")
+        self._watch_tick()
+        self._watch_timer.start(self._watch_config["interval_seconds"] * 1000)
+
+    def _watch_tick(self):
+        if not self._watch_active:
+            return
+        if time.monotonic() >= self._watch_deadline or self._watch_observations >= self._watch_config["max_observations"]:
+            self._stop_watch()
+            return
+        if self._watch_worker is not None:
+            return
+        ssh = self._find_ssh_connection()
+        if ssh is None:
+            self.watch_output.append("SSH connection is no longer available; watch stopped.")
+            self._stop_watch()
+            return
+        namespace = shlex.quote(self.watch_namespace.text().strip())
+        name = shlex.quote(self.watch_name.text().strip())
+        resource = self.watch_resource.currentText()
+        context = self.watch_context.text().strip()
+        context_flag = "--context " + shlex.quote(context) + " " if context else ""
+        inner = "kubectl " + context_flag + "-n " + namespace + " get " + resource + " " + name + " -o wide 2>&1"
+        command = "bash -lc " + shlex.quote(inner)
+        worker = CommandWorker(ssh, command, timeout=20)
+        self._watch_worker = worker
+        worker.result.connect(self._on_watch_result)
+        worker.error.connect(self._on_watch_error)
+        worker.finished.connect(self._on_watch_finished)
+        track_worker([], worker)
+        worker.start()
+
+    def _on_watch_result(self, output, error, exit_code):
+        self._watch_observations += 1
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        text = ai_intelligence.redact_evidence((output or "") + ("\\n" + error if error else ""))
+        self.watch_output.append("[" + stamp + "] exit=" + str(exit_code) + "\\n" + (text or "(no output)"))
+        if exit_code != 0:
+            self.watch_output.append("Observation failed; treat the resource state as unknown, not healthy.")
+        if self._watch_config and self._watch_observations >= self._watch_config["max_observations"]:
+            self._stop_watch()
+
+    def _on_watch_error(self, error):
+        self.watch_output.append("[watch error] " + ai_intelligence.redact_evidence(error))
+
+    def _on_watch_finished(self):
+        self._watch_worker = None
+
+    def _stop_watch(self):
+        self._watch_active = False
+        self._watch_timer.stop()
+        self.watch_start_btn.setEnabled(True)
+        self.watch_stop_btn.setEnabled(False)
+        self.watch_output.append("Watch stopped after " + str(self._watch_observations) + " observation(s).")
 
     def _build_remediation_tab(self):
         tab = QWidget()
