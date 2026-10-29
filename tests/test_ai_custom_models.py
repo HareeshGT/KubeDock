@@ -102,7 +102,7 @@ class CustomAIModelTests(unittest.TestCase):
 
     def test_task_profiles_and_local_provider_are_persisted(self):
         profiles = {
-            "quick": {"provider": "groq"},
+            "quick": {"provider": "groq", "model_id": "openai/gpt-oss-20b"},
             "deep_diagnosis": {"provider": "anthropic"},
             "voice": {"provider": "mistral"},
             "local_private": {"provider": "ollama"},
@@ -116,6 +116,7 @@ class CustomAIModelTests(unittest.TestCase):
         self.assertEqual(settings["task_profiles"]["local_private"]["provider"], "ollama")
         self.assertTrue(settings["auto_escalation"])
         self.assertEqual(settings["models"]["ollama"], "qwen2.5:7b")
+        self.assertEqual(settings["task_profiles"]["quick"]["model_id"], "openai/gpt-oss-20b")
 
     def test_ollama_does_not_require_an_api_key(self):
         result, error = ai_assist._call_provider("ollama", "", "", "hello")
