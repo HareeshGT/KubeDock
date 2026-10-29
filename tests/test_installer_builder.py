@@ -76,7 +76,7 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
     def test_build_metadata_records_source_and_optional_features(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             os.environ,
-            {"GITHUB_SHA": "test-source-sha", "GITHUB_REF_NAME": "test-branch"},
+            {"GITHUB_SHA": "test-source-sha", "GITHUB_REF_NAME": "test-branch", "KUBEDOCK_RELEASE_VERSION": "1.2.3"},
         ):
             bundle = Path(directory) / "KubeDock"
             bundle.mkdir()
@@ -85,6 +85,7 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
         self.assertEqual(metadata["application"], "KubeDock")
+        self.assertEqual(metadata["version"], "1.2.3")
         self.assertEqual(metadata["source_sha"], "test-source-sha")
         self.assertEqual(metadata["source_branch"], "test-branch")
         self.assertFalse(metadata["qwen_tts"])
