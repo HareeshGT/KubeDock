@@ -195,7 +195,7 @@ def compare_cluster_snapshots(left: Mapping[str, Any], right: Mapping[str, Any])
 def parse_cpu_millicores(value: str) -> float:
     """Parse common Kubernetes CPU quantities into millicores."""
     text = str(value or "").strip()
-    match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)(n|u|m)?", text)
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(n|u|m)?", text)
     if not match:
         raise ValueError(f"Unsupported CPU quantity: {text!r}")
     amount = float(match.group(1))
@@ -210,7 +210,7 @@ def parse_cpu_millicores(value: str) -> float:
 def parse_memory_bytes(value: str) -> int:
     """Parse common Kubernetes binary/SI memory quantities into bytes."""
     text = str(value or "").strip()
-    match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?", text)
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?", text)
     if not match:
         raise ValueError(f"Unsupported memory quantity: {text!r}")
     amount = float(match.group(1))
