@@ -1,0 +1,199 @@
+name: Fast prebuilt installer bundles
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "main.py"
+      - "*.py"
+      - "dialogs_parts/**"
+      - "kubernetes_tab_parts/**"
+      - "dashboard_tab_parts/**"
+      - "main_window_parts/**"
+      - "workers_parts/**"
+      - "k8s_ai_ops_parts/**"
+      - "webapp/**"
+      - "assets/**"
+      - "requirements*.txt"
+      - "installer/build_prebuilt.py"
+      - ".github/workflows/fast-installer-bundles.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fast-installer-bundles-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset: KubeDock-linux-x86_64.tar.gz
+            bundle: KubeDock
+            family: linux
+          - runner: ubuntu-24.04-arm
+            asset: KubeDock-linux-arm64.tar.gz
+            bundle: KubeDock
+            family: linux
+          - runner: macos-15
+            asset: KubeDock-macos-arm64.tar.gz
+            bundle: KubeDock.app
+            family: macos
+          - runner: macos-15-intel
+            asset: KubeDock-macos-x86_64.tar.gz
+            bundle: KubeDock.app
+            family: macos
+          - runner: windows-2025
+            asset: KubeDock-windows-x86_64.zip
+            bundle: KubeDock
+            family: windows
+    runs-on: ${{ matrix.runner }}
+    env:
+      ASSET_NAME: ${{ matrix.asset }}
+      BUNDLE_NAME: ${{ matrix.bundle }}
+      BUILD_FAMILY: ${{ matrix.family }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-voice.txt
+
+      - name: Install Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libasound2-dev libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
+
+      - name: Install macOS build libraries
+        if: runner.os == 'macOS'
+        run: brew install portaudio
+
+      - name: Install application requirements
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-voice.txt
+
+      - name: Build the app bundle
+        run: python installer/build_prebuilt.py
+
+      - name: Package Linux/macOS bundle
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar -czf "$ASSET_NAME" -C dist "$BUNDLE_NAME"
+          test -s "$ASSET_NAME"
+          ls -lh "$ASSET_NAME"
+
+      - name: Package Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -c "import shutil; shutil.make_archive('KubeDock-windows-x86_64', 'zip', root_dir='dist', base_dir='KubeDock')"
+          if (!(Test-Path "$env:ASSET_NAME")) { throw "Windows bundle archive was not created" }
+          Get-Item "$env:ASSET_NAME" | Format-List Name,Length
+
+      - name: Validate bundle metadata
+        shell: bash
+        run: |
+          if [[ "$BUILD_FAMILY" == "macos" ]]; then
+            test -f "dist/$BUNDLE_NAME/Contents/Resources/KubeDock-BUILD-METADATA.json"
+          else
+            test -f "dist/$BUNDLE_NAME/KubeDock-BUILD-METADATA.json"
+          fi
+
+      - name: Upload prebuilt bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 3
+
+  publish-rolling-release:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source for the release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download platform bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: prebuilt-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create bundle checksums and manifest
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum KubeDock-* > SHA256SUMS
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path(".")
+          assets = sorted(p.name for p in root.glob("KubeDock-*") if p.is_file())
+          manifest = {
+              "application": "KubeDock",
+              "release_tag": "fast-installer",
+              "source_branch": os.environ["SOURCE_BRANCH"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "built_at": datetime.now(timezone.utc).isoformat(),
+              "assets": assets,
+              "sha256_file": "SHA256SUMS",
+              "note": "Rolling prebuilt bundles for main. Optional Qwen3-TTS is not included.",
+          }
+          (root / "KubeDock-fast-installer.json").write_text(
+              json.dumps(manifest, indent=2) + "\\n", encoding="utf-8"
+          )
+          PY
+          cat KubeDock-fast-installer.json
+
+      - name: Create or update rolling fast-installer release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if gh release view fast-installer --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload fast-installer release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit fast-installer --repo "$GITHUB_REPOSITORY" \
+              --title "KubeDock Fast Installer (main)" \
+              --notes "Rolling prebuilt installer bundles for main. Built from commit $SOURCE_SHA. Use the installer for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
+          else
+            gh release create fast-installer release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "KubeDock Fast Installer (main)" \
+              --prerelease \
+              --notes "Rolling prebuilt installer bundles for main. Built from commit $SOURCE_SHA. Use the installer for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
+          fi
+
+          # Keep the rolling tag aligned with the sources used for the latest assets.
+          git tag --force fast-installer "$SOURCE_SHA"
+          git push origin refs/tags/fast-installer --force
