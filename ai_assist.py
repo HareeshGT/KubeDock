@@ -1236,9 +1236,13 @@ class AIConversationWorker(QThread):
             self._source_context, self._conversation, self._question
         )
 
-        text, err = _call_provider(
-            self._provider, self._api_key, self._model, prompt
+        provider, api_key, model, selection_error = _task_provider_selection(
+            "voice", self._provider, self._api_key, self._model
         )
+        if selection_error:
+            self.error.emit(selection_error)
+            return
+        text, err = _call_provider(provider, api_key, model, prompt)
         if err:
             self.error.emit(err)
         else:
