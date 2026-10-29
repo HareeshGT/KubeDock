@@ -506,6 +506,42 @@ class SettingsDialog(QDialog):
         row.addWidget(self.show_key_btn)
         v.addLayout(row)
 
+        profile_group = QLabel("Task-specific model routing")
+        profile_group.setStyleSheet("font-weight: 600;")
+        v.addWidget(profile_group)
+        profile_help = QLabel(
+            "Choose which configured provider handles quick command explanations, "
+            "deep pod diagnoses, and voice/conversational requests. Each profile "
+            "uses that provider's saved model and API key."
+        )
+        profile_help.setWordWrap(True)
+        profile_help.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+        v.addWidget(profile_help)
+
+        self.task_profile_combos = {}
+        for profile_id, label in (
+            ("quick", "Quick explanations"),
+            ("deep_diagnosis", "Deep diagnoses"),
+            ("voice", "Voice / conversation"),
+        ):
+            v.addWidget(QLabel(label))
+            combo = QComboBox()
+            for provider_id, provider_info in ai_assist.PROVIDERS.items():
+                combo.addItem(provider_info["label"], provider_id)
+            selected = ai_settings.get("task_profiles", {}).get(profile_id, {}).get(
+                "provider", ai_settings["provider"]
+            )
+            index = combo.findData(selected)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            self.task_profile_combos[profile_id] = combo
+            v.addWidget(combo)
+
+        self.auto_escalation_chk = QCheckBox(
+            "Automatically escalate failed/large command explanations to Deep Diagnosis"
+        )
+        self.auto_escalation_chk.setChecked(bool(ai_settings.get("auto_escalation", False)))
+        v.addWidget(self.auto_escalation_chk)
+
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.add_model_btn.clicked.connect(self._add_custom_model)
         self.manage_models_btn.clicked.connect(self._manage_custom_models)
@@ -798,6 +834,11 @@ class SettingsDialog(QDialog):
             self._ai_keys,
             self._ai_models,
             custom_models=self._ai_custom_models,
+            task_profiles={
+                profile_id: {"provider": combo.currentData()}
+                for profile_id, combo in self.task_profile_combos.items()
+            },
+            auto_escalation=self.auto_escalation_chk.isChecked(),
         )
         save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),
