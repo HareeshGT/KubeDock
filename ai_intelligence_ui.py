@@ -375,13 +375,13 @@ class AIIntelligenceDialog(QDialog):
             QMessageBox.information(self, "No observations", "Start a watch and collect observations first.")
             return
         result = ai_intelligence.correlate_incident_signals(logs=text.splitlines())
-        self.watch_output.append("\\nCandidate signal correlation (hypotheses, not proof):\\n" + json.dumps(result, indent=2, ensure_ascii=False))
+        self.watch_output.append("\nCandidate signal correlation (hypotheses, not proof):\n" + json.dumps(result, indent=2, ensure_ascii=False))
 
     def _on_watch_result(self, output, error, exit_code):
         self._watch_observations += 1
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        text = ai_intelligence.redact_evidence((output or "") + ("\\n" + error if error else ""))
-        self.watch_output.append("[" + stamp + "] exit=" + str(exit_code) + "\\n" + (text or "(no output)"))
+        text = ai_intelligence.redact_evidence((output or "") + ("\n" + error if error else ""))
+        self.watch_output.append("[" + stamp + "] exit=" + str(exit_code) + "\n" + (text or "(no output)"))
         if exit_code != 0:
             self.watch_output.append("Observation failed; treat the resource state as unknown, not healthy.")
         if self._watch_config and self._watch_observations >= self._watch_config["max_observations"]:
@@ -568,7 +568,7 @@ class AIIntelligenceDialog(QDialog):
                 resource_context = json.dumps(resource_context, ensure_ascii=False)
             signals = evidence.get("candidate_signals")
             if signals:
-                resource_context += "\\n\\nPreviously correlated candidate signals (not proof):\\n" + json.dumps(signals, ensure_ascii=False)
+                resource_context += "\n\nPreviously correlated candidate signals (not proof):\n" + json.dumps(signals, ensure_ascii=False)
             if not logs.strip() and not resource_context.strip():
                 raise ValueError("The incident bundle contains no logs or resource evidence.")
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -648,7 +648,7 @@ class AIIntelligenceDialog(QDialog):
 
     def _on_services_captured(self, context, output, error, exit_code):
         if exit_code != 0:
-            self.services_output.setPlainText("Service discovery failed; state is unknown.\\n" + ai_intelligence.redact_evidence(error or output))
+            self.services_output.setPlainText("Service discovery failed; state is unknown.\n" + ai_intelligence.redact_evidence(error or output))
             return
         try:
             payload = json.loads(output)
