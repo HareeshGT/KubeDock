@@ -258,7 +258,7 @@ install_prebuilt_bundle() {
   if ! [[ "$expected_hash" =~ ^[[:xdigit:]]{64}$ ]]; then
     echo "The release checksum file does not contain a valid digest for $asset." >&2
     rm -rf "$tmp"
-    return 2
+    return 1
   fi
 
   if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
@@ -277,7 +277,7 @@ install_prebuilt_bundle() {
   if [[ "$actual_hash" != "$expected_hash" ]]; then
     echo "SHA-256 verification failed for $asset." >&2
     rm -rf "$tmp"
-    return 2
+    return 1
   fi
   echo "SHA-256 checksum verified."
 
