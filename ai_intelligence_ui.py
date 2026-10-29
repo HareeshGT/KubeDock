@@ -1450,6 +1450,185 @@ class AIIntelligenceDialog(QDialog):
         self._filter_services()
         self._show_result(self.services_output, {"count": len(result), "services": result})
 
+    def _build_runbooks_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(10)
+        intro = QLabel(
+            "Index local Markdown/text runbooks for deterministic retrieval. Files stay on this device "
+            "unless you explicitly include matching excerpts in an AI investigation."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        folder_row = QHBoxLayout()
+        self.runbook_folder = QLineEdit(self._runbook_folder)
+        self.runbook_folder.setPlaceholderText("Local runbook directory")
+        choose = QPushButton("Choose folder…")
+        choose.clicked.connect(self._choose_runbook_folder)
+        index_btn = QPushButton("Index local runbooks")
+        index_btn.clicked.connect(self._index_runbooks)
+        folder_row.addWidget(self.runbook_folder, 1)
+        folder_row.addWidget(choose)
+        folder_row.addWidget(index_btn)
+        layout.addLayout(folder_row)
+
+        self.runbook_query = QLineEdit()
+        self.runbook_query.setPlaceholderText("Search runbooks, e.g. OOMKilled, ImagePullBackOff, DNS")
+        self.runbook_query.textChanged.connect(self._search_runbooks)
+        layout.addWidget(self.runbook_query)
+        self.runbook_results = QListWidget()
+        self.runbook_results.currentItemChanged.connect(self._show_runbook_selection)
+        layout.addWidget(self.runbook_results, 1)
+        self.runbook_output = self._output(layout)
+        self.tabs.addTab(tab, "Runbooks")
+        if self._runbook_folder and Path(self._runbook_folder).is_dir():
+            self._index_runbooks(silent=True)
+
+    def _choose_runbook_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose local runbook folder", self.runbook_folder.text().strip() or str(Path.home())
+        )
+        if folder:
+            self.runbook_folder.setText(folder)
+            self._runbook_folder = folder
+            self._runbook_docs = []
+
+    def _index_runbooks(self, silent=False):
+        folder = self.runbook_folder.text().strip()
+        if not folder:
+            if not silent:
+                QMessageBox.information(self, "Runbook folder required", "Choose a local folder containing Markdown or text runbooks.")
+            return
+        try:
+            documents = ai_incident_workflow.load_runbook_documents(folder)
+        except (OSError, ValueError) as exc:
+            if not silent:
+                QMessageBox.warning(self, "Cannot index runbooks", str(exc))
+            return
+        self._runbook_folder = folder
+        self._runbook_docs = documents
+        save_settings(ai_runbook_directory=folder)
+        self.runbook_query.clear()
+        self._search_runbooks()
+        if not silent:
+            QMessageBox.information(
+                self, "Runbooks indexed",
+                f"Indexed {len(documents)} local document(s). Contents remain local until explicitly included in an AI investigation."
+            )
+
+    def _search_runbooks(self, _query=None):
+        if not hasattr(self, "runbook_results"):
+            return
+        query = self.runbook_query.text().strip()
+        self.runbook_results.clear()
+        if query:
+            matches = ai_incident_workflow.match_runbook_snippets(
+                query, self._runbook_docs, max_results=20, max_chars=2400
+            )
+            records = matches
+        else:
+            records = [
+                {"title": doc["title"], "filename": doc["filename"], "snippet": doc["content"][:2400], "score": 0}
+                for doc in self._runbook_docs
+            ]
+        for record in records:
+            item = QListWidgetItem(
+                str(record.get("title") or "Runbook") + "  ·  " + str(record.get("filename") or "")
+            )
+            item.setData(Qt.UserRole, record)
+            self.runbook_results.addItem(item)
+        if not records:
+            self.runbook_output.setPlainText("No matching local runbooks. Index a folder or try another search term.")
+
+    def _show_runbook_selection(self, current, _previous=None):
+        if current is None:
+            return
+        record = current.data(Qt.UserRole) or {}
+        self._show_result(self.runbook_output, {
+            "source": record.get("filename"),
+            "title": record.get("title"),
+            "rank_score": record.get("score"),
+            "snippet": record.get("snippet", ""),
+            "note": "Local reference only. This snippet is not sent to a model unless you explicitly include runbooks in an investigation.",
+        })
+
+    def _build_overview_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        heading = QLabel("AI Operations Centre")
+        heading.setStyleSheet("font-size: 18px; font-weight: 700;")
+        layout.addWidget(heading)
+        desc = QLabel(
+            "Investigate a live target, compare clusters, watch for meaningful changes, use local runbooks, "
+            "and prepare reviewed remediation proposals from one place."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        status_group = QGroupBox("Current state")
+        status_layout = QVBoxLayout(status_group)
+        self.overview_connection_status = QLabel()
+        self.overview_privacy_status = QLabel()
+        self.overview_runbook_status = QLabel()
+        for label in (self.overview_connection_status, self.overview_privacy_status, self.overview_runbook_status):
+            label.setWordWrap(True)
+            status_layout.addWidget(label)
+        refresh = QPushButton("Refresh status")
+        refresh.clicked.connect(self._refresh_overview)
+        status_layout.addWidget(refresh, 0, Qt.AlignLeft)
+        layout.addWidget(status_group)
+
+        feature_group = QGroupBox("Open a workflow")
+        grid = QGridLayout(feature_group)
+        workflows = [
+            ("Investigate an incident", "Incident investigator"),
+            ("Compare clusters", "Cluster comparison"),
+            ("Watch a resource", "Watch mode"),
+            ("Review local runbooks", "Runbooks"),
+            ("Right-size resources", "Right-sizing"),
+            ("Validate a remediation", "Remediation planner"),
+            ("Search services", "Service index"),
+            ("Usage and latency", "Usage / latency"),
+        ]
+        for index, (label, target) in enumerate(workflows):
+            button = QPushButton(label)
+            button.setMinimumHeight(38)
+            button.clicked.connect(lambda _checked=False, t=target: self._select_workspace_tab(t))
+            grid.addWidget(button, index // 2, index % 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addWidget(feature_group)
+        guidance = QLabel(
+            "Safety model: evidence collection is read-only; local runbooks are retrieved on-device; "
+            "hosted AI requires explicit consent; remediation is handed to Ops Mind for normal confirmation and verification."
+        )
+        guidance.setWordWrap(True)
+        layout.addWidget(guidance)
+        layout.addStretch(1)
+        self._overview_tab = tab
+        self._refresh_overview()
+
+    def _refresh_overview(self):
+        if not hasattr(self, "overview_connection_status"):
+            return
+        connected = self._find_ssh_connection() is not None
+        self.overview_connection_status.setText(
+            "Connection: active SSH session available." if connected
+            else "Connection: no SSH session. Live collection needs an active KubeDock SSH connection."
+        )
+        settings = ai_assist.get_ai_settings()
+        if settings.get("cloud_ai_enabled", True):
+            self.overview_privacy_status.setText("AI privacy: hosted providers are allowed, but incident analysis still requires per-investigation consent.")
+        else:
+            self.overview_privacy_status.setText("AI privacy: local-only mode is enabled. Hosted text-model and cloud speech calls are blocked.")
+        self.overview_runbook_status.setText(
+            f"Local runbooks: {len(self._runbook_docs)} document(s) indexed."
+            if self._runbook_docs else "Local runbooks: none indexed. Choose a local documentation folder on the Runbooks tab."
+        )
+
     def closeEvent(self, event):
         if self._watch_active:
             self._stop_watch()
