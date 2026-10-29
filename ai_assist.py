@@ -51,6 +51,7 @@ import urllib.error
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from themes import load_settings, save_settings
+import ai_intelligence
 
 MAX_TOKENS = 4096
 
@@ -1239,9 +1240,22 @@ class AIExplainWorker(QThread):
             self.error.emit("Nothing to analyze — no logs or resource evidence were collected.")
             return
 
+        # Add deterministic candidate signals from the already-collected evidence.
+        # This is correlation only; the model is explicitly told these are hypotheses.
+        try:
+            signals = ai_intelligence.correlate_incident_signals(
+                logs=(self._log_text or "").splitlines(),
+                events=(self._resource_context or "").splitlines(),
+            )
+            signal_context = (
+                "\\n\\nDeterministic candidate signals (hypotheses, not proof):\\n"
+                + json.dumps(signals, ensure_ascii=False)
+            )
+        except Exception:
+            signal_context = ""
         prompt = _build_prompt(
             self._pod, self._namespace, self._container, self._log_text,
-            resource_context=self._resource_context,
+            resource_context=(self._resource_context or "") + signal_context,
         )
         provider, api_key, model, selection_error = _task_provider_selection(
             "deep_diagnosis", self._provider, self._api_key, self._model
