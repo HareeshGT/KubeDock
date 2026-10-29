@@ -1477,15 +1477,22 @@ class AIIntelligenceDialog(QDialog):
         self.service_context = QLineEdit()
         self.service_context.setPlaceholderText("kubectl context name for live service discovery")
         layout.addWidget(self.service_context)
+        service_actions = QHBoxLayout()
         capture = QPushButton("Discover services over current SSH")
         capture.clicked.connect(self._capture_services)
-        layout.addWidget(capture)
+        service_actions.addWidget(capture)
+        self.investigate_service_btn = QPushButton("Investigate selected service")
+        self.investigate_service_btn.setEnabled(False)
+        self.investigate_service_btn.clicked.connect(self._investigate_selected_service)
+        service_actions.addWidget(self.investigate_service_btn)
+        layout.addLayout(service_actions)
         self.service_filter = QLineEdit()
         self.service_filter.setPlaceholderText("Filter by cluster, namespace, service, or port")
         self.service_filter.textChanged.connect(self._filter_services)
         layout.addWidget(self.service_filter)
         self.service_list = QListWidget()
         self.service_list.itemDoubleClicked.connect(self._show_selected_service)
+        self.service_list.currentItemChanged.connect(self._on_service_selection_changed)
         layout.addWidget(self.service_list, 1)
         self.services_path = QLineEdit()
         self.services_path.setPlaceholderText("Or load JSON with a services array")
@@ -1571,6 +1578,9 @@ class AIIntelligenceDialog(QDialog):
             item.setData(Qt.UserRole, service)
             self.service_list.addItem(item)
 
+    def _on_service_selection_changed(self, current, _previous=None):
+        self.investigate_service_btn.setEnabled(current is not None)
+
     def _show_selected_service(self, item):
         service = item.data(Qt.UserRole) or {}
         command = "kubectl --context " + shlex.quote(str(service.get("cluster") or "")) + " -n " + shlex.quote(str(service.get("namespace") or "")) + " get service " + shlex.quote(str(service.get("name") or ""))
@@ -1579,6 +1589,28 @@ class AIIntelligenceDialog(QDialog):
             "read_only_inspection_command": command,
             "note": "The command is shown for inspection only and has not been executed.",
         })
+
+    def _investigate_selected_service(self):
+        item = self.service_list.currentItem()
+        service = item.data(Qt.UserRole) if item is not None else None
+        if not isinstance(service, dict):
+            QMessageBox.information(self, "Service required", "Select a service from the index first.")
+            return
+        try:
+            target = ai_incident_workflow.validate_incident_target(
+                str(service.get("cluster") or ""),
+                str(service.get("namespace") or ""),
+                "service",
+                str(service.get("name") or ""),
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid service target", str(exc))
+            return
+        open_ai_intelligence_workspace(
+            self,
+            initial_incident_target=target,
+            start_live_incident=True,
+        )
 
     def _build_service_index(self):
         try:
