@@ -114,6 +114,37 @@ jobs:
           fi
           echo "Frozen executable started under the offscreen Qt platform (exit=$result)."
 
+      - name: Smoke-test frozen macOS application startup
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          timeout --kill-after=3s 8s "dist/KubeDock.app/Contents/MacOS/KubeDock" > /tmp/kubedock-startup.log 2>&1
+          result=$?
+          cat /tmp/kubedock-startup.log
+          if [[ "$result" -ne 124 && "$result" -ne 137 ]]; then
+            echo "Frozen KubeDock exited before the startup smoke-test timeout (status $result)"
+            exit 1
+          fi
+          echo "Frozen macOS executable remained alive under the offscreen Qt platform."
+
+      - name: Smoke-test frozen Windows application startup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = (Resolve-Path "dist/KubeDock/KubeDock.exe").Path
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          $process.Refresh()
+          if ($process.HasExited) {
+            throw "Frozen KubeDock exited during startup with status $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+          Write-Host "Frozen Windows executable remained alive through the startup smoke-test window."
+
       - name: Package Linux/macOS bundle
         if: runner.os != 'Windows'
         shell: bash
