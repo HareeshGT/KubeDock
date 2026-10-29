@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from ai_intelligence import (
-    UsageLedger, bounded_watch_config, build_incident_bundle, build_service_index,
+    UsageLedger, bounded_watch_config, build_incident_bundle, build_service_index, parse_cpu_millicores, parse_memory_bytes,
     compare_cluster_snapshots, correlate_incident_signals, recommend_rightsizing,
     redact_evidence, validate_remediation_plan,
 )
@@ -67,6 +67,18 @@ class AIIntelligenceTests(unittest.TestCase):
         result = compare_cluster_snapshots(left, right)
         self.assertEqual(result["changed"][0]["left"]["phase"], "Running")
         self.assertEqual(result["only_right"], [["service", "a", "api"]])
+
+
+    def test_parse_kubernetes_resource_quantities(self):
+        self.assertEqual(parse_cpu_millicores("250m"), 250)
+        self.assertEqual(parse_cpu_millicores("0.5"), 500)
+        self.assertAlmostEqual(parse_cpu_millicores("100u"), 0.1)
+        self.assertEqual(parse_memory_bytes("512Mi"), 512 * 1024 * 1024)
+        self.assertEqual(parse_memory_bytes("1G"), 1_000_000_000)
+        with self.assertRaises(ValueError):
+            parse_cpu_millicores("invalid")
+        with self.assertRaises(ValueError):
+            parse_memory_bytes("unknown")
 
     def test_rightsizing_requires_samples_and_review(self):
         sparse = recommend_rightsizing(cpu_usage_millicores=100, memory_usage_bytes=1000, sample_count=2)
