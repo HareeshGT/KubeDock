@@ -32,6 +32,17 @@ class AIContextSecurityTests(unittest.TestCase):
         self.assertNotIn("super-secret-password", prompt)
         self.assertNotIn("super-secret-token", prompt)
 
+    def test_response_detail_preference_applies_to_diagnosis_and_followups(self):
+        with patch("ai_assist.load_settings", return_value={"ai_response_detail": "concise"}):
+            concise = ai_assist._build_prompt("pod", "ns", "", "log")
+            followup = ai_assist._build_followup_prompt("evidence", [], "why?")
+        self.assertIn("Be concise", concise)
+        self.assertIn("Be concise", followup)
+
+        with patch("ai_assist.load_settings", return_value={"ai_response_detail": "detailed"}):
+            detailed = ai_assist._build_command_prompt("kubectl get pods", 1, "denied")
+        self.assertIn("in more depth", detailed)
+
     def test_resource_evidence_clip_preserves_head_and_tail(self):
         resource = (
             "Name: api-123\nNamespace: prod\nStatus: Running\n"
