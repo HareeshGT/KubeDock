@@ -22,7 +22,7 @@ win_installer = importlib.util.module_from_spec(WIN_SPEC)
 WIN_SPEC.loader.exec_module(win_installer)
 
 
-
+class WindowsReleaseAssetURLTests(unittest.TestCase):
     def test_windows_installer_pins_bundle_and_checksum_to_latest_tag(self):
         tag = "fast-installer-f5b9fa8-40904841970"
         bundle_url = win_installer.release_asset_url(tag, "KubeDock-windows-x86_64.zip")
