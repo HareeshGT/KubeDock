@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: fast-installer-bundles-${{ github.ref }}
@@ -83,7 +83,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install portaudio
+          brew install portaudio openssl@3
           PORTAUDIO_PREFIX="$(brew --prefix portaudio)"
           echo "CPPFLAGS=-I$PORTAUDIO_PREFIX/include" >> "$GITHUB_ENV"
           echo "LDFLAGS=-L$PORTAUDIO_PREFIX/lib" >> "$GITHUB_ENV"
@@ -92,6 +92,15 @@ jobs:
       - name: Install application requirements
         shell: bash
         run: |
+          # cryptography 50 may build from source on Intel macOS. Link it
+          # statically to OpenSSL so PyInstaller cannot substitute an older
+          # libssl.3.dylib collected from another dependency.
+          if [[ "${RUNNER_OS:-}" == "macOS" && "${RUNNER_ARCH:-}" == "X64" ]]; then
+            export OPENSSL_DIR="$(brew --prefix openssl@3)"
+            export OPENSSL_STATIC=1
+            # Avoid reusing a cached wheel built with dynamic OpenSSL.
+            export PIP_NO_CACHE_DIR=1
+          fi
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-voice.txt -r requirements-build.txt
 
@@ -108,11 +117,59 @@ jobs:
           timeout --kill-after=3s 8s dist/KubeDock/KubeDock > /tmp/kubedock-startup.log 2>&1
           result=$?
           cat /tmp/kubedock-startup.log
-          if [[ "$result" -ne 0 && "$result" -ne 124 && "$result" -ne 137 ]]; then
-            echo "Frozen KubeDock exited during startup with status $result"
-            exit "$result"
+          if [[ "$result" -ne 124 && "$result" -ne 137 ]]; then
+            echo "Frozen KubeDock exited before the startup smoke-test timeout (status $result)"
+            exit 1
           fi
-          echo "Frozen executable started under the offscreen Qt platform (exit=$result)."
+          echo "Frozen Linux executable remained alive under the offscreen Qt platform."
+
+      - name: Smoke-test frozen macOS application startup
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import sys
+          import tempfile
+
+          with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as log:
+              try:
+                  result = subprocess.run(
+                      ["dist/KubeDock.app/Contents/MacOS/KubeDock"],
+                      stdout=log,
+                      stderr=subprocess.STDOUT,
+                      text=True,
+                      timeout=8,
+                      env=os.environ.copy(),
+                  )
+              except subprocess.TimeoutExpired:
+                  log.seek(0)
+                  print(log.read())
+                  print("Frozen macOS executable remained alive through the startup smoke-test window.")
+              else:
+                  log.seek(0)
+                  print(log.read())
+                  print(f"Frozen KubeDock exited early with status {result.returncode}", file=sys.stderr)
+                  raise SystemExit(1)
+          PY
+
+      - name: Smoke-test frozen Windows application startup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = (Resolve-Path "dist/KubeDock/KubeDock.exe").Path
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          $process.Refresh()
+          if ($process.HasExited) {
+            throw "Frozen KubeDock exited during startup with status $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+          Write-Host "Frozen Windows executable remained alive through the startup smoke-test window."
 
       - name: Package Linux/macOS bundle
         if: runner.os != 'Windows'
@@ -151,6 +208,8 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Check out source for the release tag
         uses: actions/checkout@v4

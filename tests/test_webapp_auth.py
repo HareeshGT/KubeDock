@@ -64,11 +64,15 @@ def test_successful_otp_creates_protected_session_and_replay_is_denied(monkeypat
     code = _fixed_totp(monkeypatch)
 
     response = Response()
-    result = server.login(server.LoginRequest(code=code), _request(), response)
+    result = server.login(server.LoginRequest(code=code), _request(scheme="https"), response)
 
     assert result["ok"] is True
     assert settings["webapp_totp_last_counter"] == int(_FIXED_TIME // 30)
-    assert "httponly" in response.headers["set-cookie"].lower()
+    cookie_header = response.headers["set-cookie"].lower()
+    assert "httponly" in cookie_header
+    assert "secure" in cookie_header
+    assert "samesite=strict" in cookie_header
+    assert response.headers["cache-control"] == "no-store"
     cookie = SimpleCookie()
     cookie.load(response.headers["set-cookie"])
     token = cookie[server._SESSION_COOKIE].value
