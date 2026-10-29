@@ -280,7 +280,20 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None, k8s_tab_titles=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setFixedSize(460, 540)
+        # Size the dialog for its content while respecting the available screen.
+        # The previous fixed 460x540 size forced the AI tab to clip long controls
+        # and made the tab bar show horizontal navigation arrows on normal screens.
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        if available is not None:
+            width = min(820, max(420, int(available.width() * 0.88)))
+            height = min(760, max(420, int(available.height() * 0.88)))
+        else:
+            width, height = 820, 760
+
+        self.setMinimumSize(min(640, width), min(560, height))
+        self.resize(width, height)
+        self.setSizeGripEnabled(True)
         apply_qss_to(self)
         settings = load_settings()
         self._k8s_titles = list(k8s_tab_titles or [])
