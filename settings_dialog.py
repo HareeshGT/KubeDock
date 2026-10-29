@@ -673,7 +673,7 @@ class SettingsDialog(QDialog):
         pid = self.provider_combo.currentData()
         api_key = self.api_key_edit.text().strip()
         model_id = self._selected_model_id()
-        if not api_key:
+        if not api_key and pid != "ollama":
             QMessageBox.information(
                 self, "API key required",
                 f"Add a {ai_assist.PROVIDERS[pid]['label']} API key before testing the model.",
