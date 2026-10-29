@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,29 @@ class AIIntelligenceTests(unittest.TestCase):
         self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz123456", cleaned)
         self.assertNotIn("AIza123456789012345678901234567890123", cleaned)
         self.assertNotIn("eyJabcdefghijk.abcdefghijk.abcdefghijk", cleaned)
+
+    def test_incident_bundle_bounds_large_nested_evidence_and_redacts_credentials(self):
+        oversized_logs = [
+            f"line-{index} DB_PASSWORD=secret-value"
+            for index in range(100)
+        ]
+        bundle = build_incident_bundle(
+            title="Large incident",
+            cluster="test",
+            namespace="apps",
+            resource="pod/api",
+            evidence={
+                "logs": oversized_logs,
+                "long_text": "x" * 20_000,
+                "nested": {"Authorization": "Bearer abcdefghijklmnopqrstuvwxyz123456"},
+            },
+            collected_at="2026-01-01T00:00:00Z",
+        )
+        self.assertLessEqual(len(bundle["evidence"]["logs"]), 80)
+        self.assertLessEqual(len(bundle["evidence"]["long_text"]), 12_000)
+        self.assertNotIn("secret-value", json.dumps(bundle))
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz123456", json.dumps(bundle))
+        self.assertEqual(len(bundle["evidence_sha256"]), 64)
 
     def test_signal_correlation_is_not_claimed_as_proof(self):
         result = correlate_incident_signals(logs=["OOMKilled after memory cgroup out of memory"])
