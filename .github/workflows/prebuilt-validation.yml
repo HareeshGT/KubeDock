@@ -20,6 +20,7 @@ on:
       - "installer/installer-win.py"
       - "installer/build_pkg.sh"
       - "tests/test_installer_builder.py"
+      - "tests/test_db_paths.py"
       - ".github/workflows/prebuilt-validation.yml"
   workflow_dispatch:
 
@@ -42,8 +43,9 @@ jobs:
         run: |
           bash -n installer/installer.sh
           bash -n installer/build_pkg.sh
-          python -m py_compile installer/installer-win.py installer/build_prebuilt.py tests/test_installer_builder.py
+          python -m py_compile db.py themes.py installer/installer-win.py installer/build_prebuilt.py tests/test_installer_builder.py tests/test_db_paths.py
           python -m unittest discover -s tests -p "test_installer_builder.py" -v
+          python -m unittest discover -s tests -p "test_db_paths.py" -v
 
   build-smoke-test:
     needs: installer-syntax
