@@ -8,7 +8,8 @@ bundle instead of installing Python dependencies and running PyInstaller on
 the target computer.
 
 The source-build path remains available for users who need a specific branch or
-the optional Qwen3-TTS/Torch runtime.
+the optional Qwen3-TTS/Torch runtime. PyInstaller is installed from
+`requirements-build.txt`, not the core runtime dependency list.
 
 ## Install modes
 
@@ -41,9 +42,14 @@ signed, not Developer ID signed/notarized.
 
 ## Optional features
 
-The fast bundle excludes Qwen3-TTS, PyTorch, Transformers, and downloaded model
-weights. Users who require this large local model runtime should use source mode
-with `KUBEDOCK_ENABLE_QWEN_TTS=1`. Some media fallback workflows may need native
+The fast bundle excludes Qwen3-TTS, PyTorch, Transformers, downloaded model
+weights, and Qt WebEngine/Chromium. The normal built-in remote editor remains
+available without WebEngine; the Monaco editor can be installed optionally with
+`pip install -r requirements-editor.txt`, or included in a source build with
+`KUBEDOCK_ENABLE_WEBENGINE=1`.
+
+Users who require the large local Qwen model runtime should use source mode with
+`KUBEDOCK_ENABLE_QWEN_TTS=1`. Some media fallback workflows may need native
 `ffmpeg` and `flac` executables; the fast installer warns if those are absent
 on Linux rather than blocking the app installation.
 

@@ -535,8 +535,9 @@ Python requirements or run PyInstaller locally.
 The rolling [Fast Installer release](https://github.com/HareeshGT/KubeDock/releases/tag/fast-installer)
 contains bundles for Linux x86-64, macOS Apple Silicon/Intel, and Windows
 x86-64. The main-branch GitHub Actions workflow refreshes these bundles after
-changes land on `main`. The fast bundle omits the optional Qwen3-TTS/PyTorch
-runtime, which can add several GB to an installation.
+changes land on `main`. Fast bundles omit the optional Qwen3-TTS/PyTorch stack
+and the large Qt WebEngine/Chromium runtime. The built-in remote editor remains
+available; install the optional Monaco editor only when you need it.
 
 To use the shell installer directly:
 
@@ -551,7 +552,7 @@ Install behavior can be selected with `KUBEDOCK_INSTALL_MODE`:
 |---|---|
 | `auto` (default) | Try the prebuilt bundle first; build from source if no compatible bundle is published. |
 | `release` | Require the prebuilt bundle. Fail instead of starting a source build if it is unavailable. |
-| `source` | Use the branch-selecting source installer and build with PyInstaller on the target machine. |
+| `source` | Use the branch-selecting source installer and build with PyInstaller on the target machine. Set `KUBEDOCK_ENABLE_WEBENGINE=1` to include the optional Monaco editor. |
 
 Pass a branch argument to build that branch from source, for example
 `bash kubedock-installer.sh feature/my-branch`. To install the latest main
@@ -594,6 +595,21 @@ On Windows:
 ```bash
 pip install -r requirements.txt
 ```
+
+The core requirements contain only packages needed by the regular desktop app
+and embedded Web App. Build tooling and the large Monaco/Qt WebEngine editor are
+kept separate:
+
+```bash
+# Only when packaging KubeDock locally with PyInstaller:
+pip install -r requirements-build.txt
+
+# Optional Monaco web editor; the built-in editor works without this:
+pip install -r requirements-editor.txt
+```
+
+The fast prebuilt bundles and default source installs use the built-in editor.
+For the source installer, set `KUBEDOCK_ENABLE_WEBENGINE=1` to include Monaco.
 
 ### Optional: voice input and offline narration
 
@@ -735,11 +751,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies (see "Optional: voice input" above for microphone support):
+Install runtime dependencies (see the optional editor and voice sections above for additional features):
 
 ```bash
 pip install -r requirements.txt
 ```
+
+For a local PyInstaller build, also install `requirements-build.txt`. The
+optional `requirements-editor.txt` can be installed before packaging if you
+want the Monaco/Qt WebEngine editor inside the resulting bundle.
 
 Run the application:
 
