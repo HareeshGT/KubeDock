@@ -96,6 +96,9 @@ def _is_storage_path_error(exc: sqlite3.OperationalError) -> bool:
             "attempt to write a readonly database",
             "readonly database",
             "disk i/o error",
+            "access is denied",
+            "permission denied",
+            "winerror 5",
         )
     )
 
