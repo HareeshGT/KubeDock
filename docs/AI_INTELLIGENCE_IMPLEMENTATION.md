@@ -36,7 +36,7 @@ Pull request: https://github.com/HareeshGT/KubeDock/pull/41
 ## Validation
 
 - AI-focused regression tests: passed in GitHub Actions.
-- Full pytest suite on Python 3.12: latest confirmed successful run reported **214 passed, 2 skipped, 2 warnings, 7 subtests passed**. Re-run after the latest commit before merging.
+- Full pytest suite on Python 3.12: latest confirmed successful run reported **216 passed, 2 skipped, 2 warnings, 7 subtests passed** on the latest successful run; re-run after any subsequent commit before merging.
 - Full module compilation: passed in GitHub Actions.
 - Live cluster behavior, real provider connectivity, Ollama installation/model availability, voice hardware, and packaged application smoke tests require validation on the target environment.
 
