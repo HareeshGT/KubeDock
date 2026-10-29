@@ -177,6 +177,7 @@ def write_build_metadata(bundle: Path, *, include_qwen: bool) -> None:
 
     metadata = {
         "application": APP_NAME,
+        "version": os.environ.get("KUBEDOCK_RELEASE_VERSION", "development"),
         "source_sha": source_sha,
         "source_branch": source_branch,
         "built_at": datetime.now(timezone.utc).isoformat(),
