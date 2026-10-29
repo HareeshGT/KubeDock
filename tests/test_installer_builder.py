@@ -27,6 +27,26 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         self.assertNotIn("--collect-all=torch", joined)
         self.assertNotIn("--collect-all=qwen_tts", joined)
 
+    def test_runtime_requirements_keep_build_and_webengine_optional(self):
+        core = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
+        build = (ROOT / "requirements-build.txt").read_text(encoding="utf-8").lower()
+        editor = (ROOT / "requirements-editor.txt").read_text(encoding="utf-8").lower()
+        voice = (ROOT / "requirements-voice.txt").read_text(encoding="utf-8").lower()
+
+        core_requirements = [
+            line.strip() for line in core.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        self.assertFalse(any(line.startswith("pyinstaller") for line in core_requirements))
+        self.assertFalse(any(line.startswith("pyqtwebengine") for line in core_requirements))
+        self.assertFalse(any(line.startswith("python-dotenv") for line in core_requirements))
+        self.assertFalse(any(line.startswith("uvicorn[standard]") for line in core_requirements))
+        self.assertTrue(any(line.startswith("websockets") for line in core_requirements))
+        self.assertIn("pyinstaller", build)
+        self.assertIn("pyqtwebengine", editor)
+        self.assertIn("pyobjc-framework-cocoa", voice)
+        self.assertNotIn("\npyobjc;", voice)
+
     def test_qwen_runtime_is_opt_in(self):
         args = builder.build_args(include_qwen=True)
         self.assertIn("--collect-all=torch", args)
@@ -43,6 +63,8 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         self.assertEqual(metadata["source_sha"], "abc123")
         self.assertEqual(metadata["source_branch"], "main")
         self.assertFalse(metadata["qwen_tts"])
+        self.assertIn("monaco_web_editor", metadata)
+        self.assertIsInstance(metadata["monaco_web_editor"], bool)
         self.assertEqual(metadata["bundle_format"], "onedir")
 
 

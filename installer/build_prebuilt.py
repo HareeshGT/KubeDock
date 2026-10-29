@@ -107,6 +107,14 @@ def build_args(include_qwen: bool) -> list[str]:
     return args
 
 
+def _module_available(module: str) -> bool:
+    """Return whether an optional runtime module is importable in this build env."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
 def write_build_metadata(bundle: Path, *, include_qwen: bool) -> None:
     source_sha = os.environ.get("GITHUB_SHA", "").strip()
     source_branch = os.environ.get("GITHUB_REF_NAME", "").strip()
@@ -134,6 +142,7 @@ def write_build_metadata(bundle: Path, *, include_qwen: bool) -> None:
         "architecture": platform.machine(),
         "python": platform.python_version(),
         "qwen_tts": bool(include_qwen),
+        "monaco_web_editor": _module_available("PyQt5.QtWebEngineWidgets"),
         "bundle_format": "onedir",
     }
     if platform.system() == "Darwin":

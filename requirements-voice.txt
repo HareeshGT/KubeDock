@@ -1,4 +1,6 @@
 # Optional voice features for Ops Mind: microphone input and offline narration.
+# On macOS, install only Cocoa's PyObjC wrappers (AppKit/Foundation), not every
+# PyObjC framework wrapper.
 #
 # PyAudio needs the native PortAudio library:
 #   macOS:          brew install portaudio
@@ -14,4 +16,4 @@
 SpeechRecognition>=3.10,<4
 PyAudio>=0.2.13
 pyttsx3>=2.90
-pyobjc; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"

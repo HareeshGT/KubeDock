@@ -11,6 +11,7 @@ set -euo pipefail
 # Environment:
 #   KUBEDOCK_INSTALL_MODE          auto (default), release (fast-only), or source.
 #   KUBEDOCK_ENABLE_QWEN_TTS       1/0: include (or skip) the optional Qwen3-TTS runtime.
+#   KUBEDOCK_ENABLE_WEBENGINE      1: include Qt WebEngine for the optional Monaco editor.
 #   KUBEDOCK_KEEP_BUILD            1: keep the temporary build directory (debugging).
 #   KUBEDECK_PKG_MODE              Set by the macOS .pkg wrapper (installer/build_pkg.sh).
 #\n
@@ -950,9 +951,30 @@ if [ ! -f requirements.txt ]; then
 fi
 
 echo
-echo "Installing Python requirements..."
+echo "Installing core Python requirements..."
 
 pip_install -r requirements.txt
+
+# PyInstaller is a build tool, not a runtime requirement for launching KubeDock.
+if [ -f requirements-build.txt ]; then
+  pip_install -r requirements-build.txt
+else
+  # Compatibility for older branches that predate the build requirements file.
+  pip_install "PyInstaller>=6.0"
+fi
+
+# Qt WebEngine/Chromium is large. The built-in editor works without it; install
+# the Monaco editor only when explicitly requested.
+if [[ "${KUBEDOCK_ENABLE_WEBENGINE:-0}" == "1" ]]; then
+  if [ ! -f requirements-editor.txt ]; then
+    echo "ERROR: KUBEDOCK_ENABLE_WEBENGINE=1 but requirements-editor.txt is missing."
+    exit 1
+  fi
+  echo "Installing optional Qt WebEngine/Monaco editor..."
+  pip_install -r requirements-editor.txt
+else
+  echo "Skipping optional Qt WebEngine; the built-in editor remains available."
+fi
 
 # Optional voice input (PyAudio). Failure must not abort the install; the
 # app runs without it and just disables microphone input.
@@ -991,13 +1013,16 @@ print("Python:", sys.executable)
 required = [
   ("PyQt5", "PyQt5"),
   ("paramiko", "paramiko"),
-  ("SpeechRecognition", "speech_recognition"),
   ("PyInstaller", "PyInstaller"),
 ]
 
-# Voice input is optional (see requirements-voice.txt): report it, never fail on it.
+# Voice input and Monaco are optional; missing packages must not block typed
+# Ops Mind requests or the built-in remote editor.
 optional = [
+  ("SpeechRecognition", "speech_recognition"),
   ("PyAudio", "pyaudio"),
+  ("pyttsx3 narration", "pyttsx3"),
+  ("Qt WebEngine Monaco editor", "PyQt5.QtWebEngineWidgets"),
 ]
 
 failed = []
@@ -1017,7 +1042,7 @@ for label, module in optional:
     version = getattr(imported, "__version__", "installed")
     print(f"[OK] {label}: {version}")
   except Exception as exc:
-    print(f"[WARN] {label}: {exc} (voice input will be unavailable)")
+    print(f"[WARN] {label}: {exc} (optional feature unavailable)")
 
 if failed:
   print()
@@ -1057,8 +1082,7 @@ if [[ "$OS" == "Darwin" || "$OS" == "Linux" ]]; then
 
 fi
 
-# (PyInstaller comes from requirements.txt and is verified above, so the former
-# separate "Install PyInstaller" step could never run and was removed.)
+# PyInstaller is installed via requirements-build.txt, not requirements.txt.
 
 # --------------------------------------------------
 # Prepare Web App Static Assets
