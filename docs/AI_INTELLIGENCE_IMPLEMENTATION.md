@@ -42,7 +42,7 @@ Pull request: https://github.com/HareeshGT/KubeDock/pull/41
 
 ## Known limitations
 
-- Right-sizing is advisory and currently uses the measured usage/sample values supplied in the UI; it does not automatically query historical Prometheus/metrics data or write resource requests.
+- Right-sizing can collect five live usage samples with `kubectl top` and read current pod requests over SSH. It remains advisory, does not query historical Prometheus windows, and never writes resource requests.
 - The watch tab polls a single named resource and correlates its observations; it does not automatically remediate or continuously scan the cluster.
 - Cross-system correlation is deterministic signal matching over evidence supplied by the user or collected for an incident; it does not prove causality.
 - Multi-cluster comparison is based on selected kubectl contexts available through the current SSH session, or user-provided JSON snapshots. It does not create or configure cluster credentials.
