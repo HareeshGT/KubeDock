@@ -163,7 +163,7 @@ A quick review of the merged code found that resource evidence was tail-truncate
 - Local inference requires the user to install and start Ollama and pull a model. The app connects only to loopback; no model installation is automated.
 - Cluster comparison and service indexing consume user-selected JSON inventory snapshots; automatic snapshot discovery for multiple clusters is not implemented by this workspace.
 - The watch mode polls a single named resource with a read-only `kubectl get` command over the existing SSH session. It is finite (maximum one hour), interval-bounded, explicitly started, and performs no automatic remediation.
-- Resource right-sizing accepts measured usage and sample count from the user; it does not yet automatically collect historical metrics or write resource requests back to a workload.
+- Resource right-sizing can collect five live usage samples via `kubectl top` and read current pod requests over SSH; it does not yet query historical Prometheus windows or write resource requests back to a workload.
 - The incident bundle exports the current pod logs plus collected describe/alternate-log/metrics evidence when available. It does not query Kubernetes Secret values.
 - The remediation workspace validates proposed actions but does not dispatch them. Existing Ops Mind confirmation, RBAC and post-mutation verification paths remain the only mutation route.
 - Voice profile selection applies to AI conversation follow-ups; local/private diagnosis is explicitly selectable from the pod log viewer.
