@@ -14,6 +14,7 @@ import json
 import re
 import sqlite3
 import math
+from itertools import islice
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -83,7 +84,7 @@ def _safe_evidence_value(
 
     if isinstance(value, Mapping):
         result = {}
-        for key, item in list(value.items())[:MAX_EVIDENCE_ITEMS]:
+        for key, item in islice(value.items(), MAX_EVIDENCE_ITEMS):
             if _budget["nodes"] <= 0 or _budget["chars"] <= 0:
                 result["_truncated"] = "[TRUNCATED: evidence budget]"
                 break
@@ -93,7 +94,7 @@ def _safe_evidence_value(
 
     if isinstance(value, (list, tuple)):
         result = []
-        for item in list(value)[:MAX_EVIDENCE_ITEMS]:
+        for item in islice(value, MAX_EVIDENCE_ITEMS):
             if _budget["nodes"] <= 0 or _budget["chars"] <= 0:
                 result.append("[TRUNCATED: evidence budget]")
                 break
