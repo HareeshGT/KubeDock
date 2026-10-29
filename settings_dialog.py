@@ -519,6 +519,7 @@ class SettingsDialog(QDialog):
         v.addWidget(profile_help)
 
         self.task_profile_combos = {}
+        self.task_profile_model_combos = {}
         for profile_id, label in (
             ("quick", "Quick explanations"),
             ("deep_diagnosis", "Deep diagnoses"),
@@ -526,16 +527,28 @@ class SettingsDialog(QDialog):
             ("local_private", "Local / Private (Ollama loopback)"),
         ):
             v.addWidget(QLabel(label))
-            combo = QComboBox()
+            provider_combo = QComboBox()
             for provider_id, provider_info in ai_assist.PROVIDERS.items():
-                combo.addItem(provider_info["label"], provider_id)
-            selected = ai_settings.get("task_profiles", {}).get(profile_id, {}).get(
-                "provider", ai_settings["provider"]
+                provider_combo.addItem(provider_info["label"], provider_id)
+            profile_settings = ai_settings.get("task_profiles", {}).get(profile_id, {})
+            selected = profile_settings.get(
+                "provider", "ollama" if profile_id == "local_private" else ai_settings["provider"]
             )
-            index = combo.findData(selected)
-            combo.setCurrentIndex(index if index >= 0 else 0)
-            self.task_profile_combos[profile_id] = combo
-            v.addWidget(combo)
+            index = provider_combo.findData(selected)
+            provider_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.task_profile_combos[profile_id] = provider_combo
+            v.addWidget(provider_combo)
+
+            model_combo = QComboBox()
+            model_combo.setEditable(True)
+            self.task_profile_model_combos[profile_id] = model_combo
+            self._refresh_task_profile_models(
+                profile_id, preferred_model=profile_settings.get("model_id")
+            )
+            provider_combo.currentIndexChanged.connect(
+                lambda _index, pid=profile_id: self._on_task_profile_provider_changed(pid)
+            )
+            v.addWidget(model_combo)
 
         self.auto_escalation_chk = QCheckBox(
             "Automatically escalate failed/large command explanations to Deep Diagnosis"
@@ -567,6 +580,47 @@ class SettingsDialog(QDialog):
             self._on_provider_changed(self.provider_combo.currentIndex())
         v.addStretch()
         return w
+
+    def _refresh_task_profile_models(self, profile_id, preferred_model=None):
+        provider_combo = self.task_profile_combos.get(profile_id)
+        model_combo = self.task_profile_model_combos.get(profile_id)
+        if provider_combo is None or model_combo is None:
+            return
+        provider_id = provider_combo.currentData()
+        info = ai_assist.PROVIDERS.get(provider_id)
+        if not info:
+            return
+        model_combo.blockSignals(True)
+        model_combo.clear()
+        for model_id in info["model_samples"]:
+            model_combo.addItem(model_id, model_id)
+        for item in self._ai_custom_models.get(provider_id, []):
+            model_id = item.get("model_id")
+            if model_id and model_combo.findData(model_id) < 0:
+                model_combo.addItem(model_id, model_id)
+        default_model = self._ai_models.get(provider_id) or info["default_model"]
+        desired = preferred_model or default_model
+        index = model_combo.findData(desired)
+        if index >= 0:
+            model_combo.setCurrentIndex(index)
+        else:
+            model_combo.setEditText(desired)
+        model_combo.blockSignals(False)
+
+    def _on_task_profile_provider_changed(self, profile_id):
+        provider_id = self.task_profile_combos[profile_id].currentData()
+        self._refresh_task_profile_models(
+            profile_id, preferred_model=self._ai_models.get(provider_id)
+        )
+
+    def _selected_task_profile_model(self, profile_id):
+        combo = self.task_profile_model_combos[profile_id]
+        index = combo.currentIndex()
+        if index >= 0 and combo.currentText() == combo.itemText(index):
+            value = combo.itemData(index)
+            if value is not None:
+                return str(value)
+        return combo.currentText().strip()
 
     def _open_ai_intelligence_workspace(self):
         try:
@@ -861,7 +915,10 @@ class SettingsDialog(QDialog):
             self._ai_models,
             custom_models=self._ai_custom_models,
             task_profiles={
-                profile_id: {"provider": combo.currentData()}
+                profile_id: {
+                    "provider": combo.currentData(),
+                    "model_id": self._selected_task_profile_model(profile_id),
+                }
                 for profile_id, combo in self.task_profile_combos.items()
             },
             auto_escalation=self.auto_escalation_chk.isChecked(),
