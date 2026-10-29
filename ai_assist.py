@@ -632,9 +632,13 @@ def get_ai_settings() -> dict:
     for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
         item = stored_profiles.get(profile) or {}
         selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
-        if selected_provider not in PROVIDERS or (profile == "local_private" and selected_provider != "ollama"):
+        invalid_local_provider = profile == "local_private" and selected_provider != "ollama"
+        if selected_provider not in PROVIDERS or invalid_local_provider:
             selected_provider = "ollama" if profile == "local_private" else provider
-        selected_model = str(item.get("model_id") or models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]).strip()
+        selected_model = str(
+            (models.get("ollama") if invalid_local_provider else item.get("model_id"))
+            or models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        ).strip()
         if not _is_valid_model_id(selected_model):
             selected_model = models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
         task_profiles[profile] = {"provider": selected_provider, "model_id": selected_model}
@@ -691,9 +695,13 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
     for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
         item = task_profiles.get(profile) or {}
         selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
-        if selected_provider not in PROVIDERS or (profile == "local_private" and selected_provider != "ollama"):
+        invalid_local_provider = profile == "local_private" and selected_provider != "ollama"
+        if selected_provider not in PROVIDERS or invalid_local_provider:
             selected_provider = "ollama" if profile == "local_private" else provider
-        selected_model = str(item.get("model_id") or cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]).strip()
+        selected_model = str(
+            (cleaned_models.get("ollama") if invalid_local_provider else item.get("model_id"))
+            or cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
+        ).strip()
         if not _is_valid_model_id(selected_model):
             selected_model = cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
         cleaned_profiles[profile] = {"provider": selected_provider, "model_id": selected_model}
