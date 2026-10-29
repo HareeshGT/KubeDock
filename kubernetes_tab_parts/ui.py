@@ -1299,6 +1299,9 @@ class KubernetesUiMixin:
     # while the Tunnels tab is on screen (event-driven refreshes also run
     # after start/stop/restart/kill).
     self._tunnel_status_timer = QTimer(self)
+    # Keep a valid interval while UI construction runs; the tab constructor
+    # reapplies the persisted interval after all controls and timers exist.
+    self._tunnel_status_timer.setInterval(15000)
     self._tunnel_status_timer.timeout.connect(self._poll_tunnel_status)
     self._tunnel_status_timer.start()
 

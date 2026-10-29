@@ -191,15 +191,16 @@ class ConnectionMixin:
       # in a QLineEdit for the seconds it takes to connect, just longer.
       self._conn_password = password
       self._set_connected(True)
+      # Set this before asynchronous context discovery so preferences resolve
+      # against the incoming connection rather than the previous one.
+      self.k8s_tab.set_connection_info(host, port, user, pem)
       self.k8s_tab.set_ssh(self.ssh)
       self.k8s_tab.set_sudo_user(None)
       self.docker_tab.set_sudo_user(None)
       self.docker_tab.set_ssh(self.ssh)
       self.dashboard_tab.set_connection("ssh", ssh=self.ssh, host=host, port=port, user=user)
-      # Local (client-side) connection details for the port-tunnel
-      # feature, which runs `ssh` on this machine rather than over
-      # the remote self.ssh session.
-      self.k8s_tab.set_connection_info(host, port, user, pem)
+      # Local tunnel commands run on this machine rather than over the
+      # remote self.ssh session; connection info was set before set_ssh().
       self.sidebar.populate_remote(self.sftp)
       # Pass alias to persist it in the CSV
       add_recent_instance(host, port, user, pem, alias, "ssh")

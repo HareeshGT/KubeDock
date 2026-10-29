@@ -23,7 +23,7 @@ from PyQt5.QtGui import QFont, QColor, QPalette, QKeySequence
 
 import themes as _themes
 from ui_icons import set_icon, apply_text_icon, add_icon_tab, icon_button, icon_pixmap, split_icon_text
-from themes import T, THEMES, apply_theme_vars, build_qss, apply_qss_to, save_settings
+from themes import T, THEMES, apply_theme_vars, build_qss, apply_qss_to, save_settings, load_settings
 from utils import classify, icon_for, size_fmt, add_recent_instance, monospace_font
 from sudo_fs import SudoFS
 from ftp_fs import FTPFS
@@ -548,7 +548,9 @@ class UIMixin:
 
     def _on_main_tab_change(self, idx):
       new_widget = self.main_tabs.widget(idx)
-      if (self._tab_slide_ready and new_widget is not None
+      if (self._tab_slide_ready
+          and not bool(load_settings().get("reduce_motion", False))
+          and new_widget is not None
           and self._current_tab_widget is not None
           and new_widget is not self._current_tab_widget):
         direction = 1 if idx > self._current_tab_idx else -1

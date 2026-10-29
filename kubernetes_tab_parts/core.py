@@ -161,6 +161,20 @@ class KubernetesCoreMixin:
   # ── Local connection info (for tunnelling) ────────────────
 
   def set_connection_info(self, host, port, user, pem):
+    new_identity = k8s_connection_profile_key(host, port or 22, user)
+    old_identity = getattr(self, "_conn_profile_identity", None)
+    if old_identity != new_identity:
+      self._current_context = ""
+      self._current_ns = "default"
+      if hasattr(self, "context_combo"):
+        self.context_combo.blockSignals(True)
+        self.context_combo.clear()
+        self.context_combo.blockSignals(False)
+      if hasattr(self, "ns_combo"):
+        self.ns_combo.blockSignals(True)
+        self.ns_combo.clear()
+        self.ns_combo.blockSignals(False)
+    self._conn_profile_identity = new_identity
     self._conn_host = host
     self._conn_port = port or 22
     self._conn_user = user
@@ -173,6 +187,7 @@ class KubernetesCoreMixin:
     self._conn_port = 22
     self._conn_user = None
     self._conn_pem = None
+    self._conn_profile_identity = None
     self._tunnel_services = []
     self.tunnel_list.clear()
     self.tunnel_list.set_empty_text("Connect to a VM to see its tunnel services")
@@ -321,7 +336,8 @@ class KubernetesCoreMixin:
     else:
       self._auto_refresh_timer.stop()
       self.auto_btn.setChecked(False)
-      self.auto_btn.setText("⏱ Auto (30 s)")
+      interval = normalize_performance_settings(load_settings())["kubernetes_refresh_seconds"]
+      self.auto_btn.setText(f"⏱ Auto ({interval} s)")
       self.health_lbl.setText("● Cluster unavailable")
       self.health_lbl.setStyleSheet(f"color: {T['DANGER']}; font-size: 12px;")
       self._clear_all(keep_context=True)
@@ -342,7 +358,8 @@ class KubernetesCoreMixin:
     if not self.ssh or not self._cluster_available or not self._current_context:
       self._auto_refresh_timer.stop()
       self.auto_btn.setChecked(False)
-      self.auto_btn.setText("⏱ Auto (30 s)")
+      interval = normalize_performance_settings(load_settings())["kubernetes_refresh_seconds"]
+      self.auto_btn.setText(f"⏱ Auto ({interval} s)")
       return
     self._refresh_current_tab()
 

@@ -364,6 +364,13 @@ class SettingsDialog(QDialog):
         group_layout.addWidget(hint)
         root.addWidget(group)
 
+        appearance = QGroupBox("Appearance & accessibility")
+        appearance_layout = QVBoxLayout(appearance)
+        self.reduce_motion_chk = QCheckBox("Reduce motion (disable animated page transitions)")
+        self.reduce_motion_chk.setChecked(bool(load_settings().get("reduce_motion", False)))
+        appearance_layout.addWidget(self.reduce_motion_chk)
+        root.addWidget(appearance)
+
         maintenance = QGroupBox("Maintenance")
         maintenance_layout = QVBoxLayout(maintenance)
         open_folder = QPushButton("Open KubeDock data folder")
@@ -1095,6 +1102,7 @@ class SettingsDialog(QDialog):
             },
             remember_k8s_context=self.remember_k8s_chk.isChecked(),
             ai_response_detail=self.ai_response_detail_combo.currentData(),
+            reduce_motion=self.reduce_motion_chk.isChecked(),
             k8s_hidden_tabs=self.hidden_k8s_tabs(),
         )
         k8s_ai_ops.save_protected_namespaces(
