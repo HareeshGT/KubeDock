@@ -86,7 +86,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install portaudio
+          brew install portaudio openssl@3
           PORTAUDIO_PREFIX="$(brew --prefix portaudio)"
           echo "CPPFLAGS=-I$PORTAUDIO_PREFIX/include" >> "$GITHUB_ENV"
           echo "LDFLAGS=-L$PORTAUDIO_PREFIX/lib" >> "$GITHUB_ENV"
@@ -95,6 +95,15 @@ jobs:
       - name: Install application requirements
         shell: bash
         run: |
+          # cryptography 50 may build from source on Intel macOS. Link it
+          # statically to OpenSSL so PyInstaller cannot substitute an older
+          # libssl.3.dylib collected from another dependency.
+          if [[ "${RUNNER_OS:-}" == "macOS" && "${RUNNER_ARCH:-}" == "X64" ]]; then
+            export OPENSSL_DIR="$(brew --prefix openssl@3)"
+            export OPENSSL_STATIC=1
+            export PIP_NO_CACHE_DIR=1
+            python -m pip cache purge
+          fi
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-voice.txt -r requirements-build.txt
 
