@@ -16,6 +16,7 @@ import platform
 import plistlib
 import subprocess
 import sys
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -115,6 +116,44 @@ def _module_available(module: str) -> bool:
         return False
 
 
+def repair_macos_openssl(bundle: Path, *, source_dir: Path | None = None) -> None:
+    """Keep cryptography's OpenSSL pair together in the macOS app bundle.
+
+    PyInstaller can collect a different libssl.3.dylib from another dependency
+    into the same Frameworks directory. On Intel macOS this can make the
+    cryptography extension fail at launch with missing OpenSSL symbols. Copy
+    the exact pair linked by the build environment after PyInstaller finishes.
+    """
+    if source_dir is None:
+        try:
+            rust_spec = importlib.util.find_spec("cryptography.hazmat.bindings._rust")
+            if rust_spec is None or not rust_spec.origin:
+                raise RuntimeError("cryptography Rust extension was not found")
+            linked_libraries = subprocess.check_output(
+                ["otool", "-L", rust_spec.origin], text=True, stderr=subprocess.STDOUT
+            )
+            ssl_line = next(
+                line.strip().split(" (", 1)[0]
+                for line in linked_libraries.splitlines()
+                if "/libssl.3.dylib" in line and line.strip().startswith("/")
+            )
+            source_dir = Path(ssl_line).parent
+        except (OSError, subprocess.CalledProcessError, StopIteration, RuntimeError) as exc:
+            raise RuntimeError(
+                "Unable to locate the OpenSSL libraries linked by cryptography on macOS."
+            ) from exc
+
+    source_dir = Path(source_dir)
+    framework_dir = bundle / "Contents" / "Frameworks"
+    framework_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("libssl.3.dylib", "libcrypto.3.dylib"):
+        source = source_dir / name
+        if not source.is_file():
+            raise RuntimeError(f"Expected matching OpenSSL library was not found: {source}")
+        shutil.copy2(source, framework_dir / name)
+        print(f"[OK] Synchronized macOS runtime library: {name}")
+
+
 def write_build_metadata(bundle: Path, *, include_qwen: bool) -> None:
     source_sha = os.environ.get("GITHUB_SHA", "").strip()
     source_branch = os.environ.get("GITHUB_REF_NAME", "").strip()
@@ -187,6 +226,8 @@ def main() -> int:
     if not bundle.exists():
         raise RuntimeError(f"PyInstaller did not produce the expected bundle: {bundle}")
 
+    if platform.system() == "Darwin":
+        repair_macos_openssl(bundle)
     write_build_metadata(bundle, include_qwen=args.include_qwen)
     if platform.system() == "Darwin":
         subprocess.run(["codesign", "--deep", "--force", "--sign", "-", str(bundle)], check=True)
