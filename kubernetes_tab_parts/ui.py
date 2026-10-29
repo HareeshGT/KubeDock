@@ -128,6 +128,39 @@ class KubernetesUiMixin:
     self.progress.hide()
     root.addWidget(self.progress)
 
+    # A compact section filter keeps the Kubernetes resource strip focused
+    # without removing or destroying any of the existing feature tabs.
+    self.section_bar = QWidget()
+    self.section_bar.setFixedHeight(40)
+    self.section_bar.setStyleSheet(
+      f"background: {T['BG_PANEL']}; border-bottom: 1px solid {T['BORDER']};"
+    )
+    section_row = QHBoxLayout(self.section_bar)
+    section_row.setContentsMargins(12, 0, 12, 0)
+    section_row.setSpacing(10)
+    section_label = QLabel("SECTION")
+    section_label.setStyleSheet(
+      f"color: {T['TEXT_DIM']}; font-size: 10px; font-weight: 700; "
+      "letter-spacing: 0.5px; background: transparent;"
+    )
+    section_row.addWidget(section_label)
+    self.tab_group_combo = QComboBox()
+    self.tab_group_combo.setObjectName("k8s_tab_group_combo")
+    self.tab_group_combo.setFixedHeight(28)
+    self.tab_group_combo.addItem("Workloads", "workloads")
+    self.tab_group_combo.addItem("Networking", "networking")
+    self.tab_group_combo.addItem("Storage & Configuration", "storage")
+    self.tab_group_combo.addItem("Observability", "observability")
+    self.tab_group_combo.addItem("Tools", "tools")
+    self.tab_group_combo.addItem("AI", "ai")
+    self.tab_group_combo.addItem("All sections", "all")
+    saved_group = load_settings().get("k8s_tab_group", "workloads")
+    saved_index = self.tab_group_combo.findData(saved_group)
+    self.tab_group_combo.setCurrentIndex(saved_index if saved_index >= 0 else 0)
+    section_row.addWidget(self.tab_group_combo)
+    section_row.addStretch()
+    root.addWidget(self.section_bar)
+
     self.sub_tabs = QTabWidget()
     self.sub_tabs.setTabPosition(QTabWidget.North)
     self.sub_tabs.currentChanged.connect(self._refresh_current_tab)
@@ -147,6 +180,9 @@ class KubernetesUiMixin:
     self._build_tunnels_tab()
     self._build_terminal_tab()
     self._build_ai_ops_tab()
+    # Apply visibility after every tab (including Tools and AI) has been built.
+    self._apply_saved_hidden_tabs()
+    self.tab_group_combo.currentIndexChanged.connect(self._on_tab_group_changed)
 
 
   def _build_pods_tab(self):

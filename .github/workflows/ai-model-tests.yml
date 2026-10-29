@@ -1,55 +1,16 @@
-name: AI model regression tests
+name: KubeDock regression tests
 
 on:
   push:
-    paths:
-      - "ai_assist.py"
-      - "ai_intelligence*.py"
-      - "dialogs_parts/log_viewer.py"
-      - "k8s_ai_ops_parts/core.py"
-      - "settings_dialog.py"
-      - "AI_ENHANCEMENT_STATUS.md"
-      - "README.md"
-      - "tests/test_ai*.py"
-      - ".github/workflows/ai-model-tests.yml"
-      - "installer/**"
-      - "docs/FAST_INSTALLER.md"
-      - "tests/test_installer_builder.py"
-      - ".github/workflows/fast-installer-bundles.yml"
   pull_request:
-    paths:
-      - "ai_assist.py"
-      - "ai_intelligence*.py"
-      - "dialogs_parts/log_viewer.py"
-      - "settings_dialog.py"
-      - "AI_ENHANCEMENT_STATUS.md"
-      - "README.md"
-      - "tests/test_ai*.py"
-      - "installer/**"
-      - "docs/FAST_INSTALLER.md"
-      - "tests/test_installer_builder.py"
-      - ".github/workflows/fast-installer-bundles.yml"
+    branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  ai-model-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install minimal runtime dependency
-        run: python -m pip install --upgrade pip PyQt5
-      - name: Compile changed Python modules
-        run: python -m py_compile ai_assist.py ai_intelligence.py ai_intelligence_ui.py settings_dialog.py dialogs_parts/log_viewer.py k8s_ai_ops_parts/core.py tests/test_ai_custom_models.py tests/test_ai_intelligence.py tests/test_ai_intelligence_ui.py tests/test_ai_task_profiles.py
-      - name: Run AI regression tests
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python -m unittest discover -s tests -p 'test_ai*.py' -v
-
-
-  full-regression-suite:
+  regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +23,7 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
       - name: Compile all application and test modules
         run: python -m compileall -q .
-      - name: Run full unittest suite
+      - name: Run full regression suite
         env:
           QT_QPA_PLATFORM: offscreen
         run: PYTHONPATH=. pytest -q

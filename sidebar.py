@@ -40,10 +40,18 @@ class Sidebar(QWidget):
     lbl.setObjectName("section_title")
     self._layout.addWidget(lbl)
 
-    # Fixed skeleton: QUICK ACCESS label, always-on items, SYSTEM label
-    # (hidden until the remote probe finds dirs), probe items, stretch.
-    self._sys_lbl = QLabel("SYSTEM")
-    self._sys_lbl.setObjectName("section_title")
+    # Keep common locations visible and group the less-frequent paths.
+    self._expanded = False
+    self._sys_lbl = QPushButton("MORE LOCATIONS ▾")
+    self._sys_lbl.setObjectName("quick_access_more")
+    self._sys_lbl.setFlat(True)
+    self._sys_lbl.setCursor(Qt.PointingHandCursor)
+    self._sys_lbl.setStyleSheet(
+      f"color: {T['TEXT_MUTED']}; text-align: left; border: none; "
+      "padding: 8px 14px 4px; font-size: 9px; font-weight: 700; "
+      "letter-spacing: 1px; background: transparent;"
+    )
+    self._sys_lbl.clicked.connect(self._toggle_probe_locations)
     self._sys_lbl.hide()
     self._layout.addWidget(self._sys_lbl)
     self._layout.addStretch()
@@ -88,6 +96,12 @@ class Sidebar(QWidget):
     self._active = path
     self._restyle_buttons()
 
+  def _toggle_probe_locations(self):
+    self._expanded = not self._expanded
+    self._sys_lbl.setText("FEWER LOCATIONS ▴" if self._expanded else "MORE LOCATIONS ▾")
+    for btn in self._probe_buttons:
+      btn.setVisible(self._expanded)
+
   def _restyle_buttons(self):
     for btn, p in self._buttons:
       btn.setStyleSheet(self._btn_style(p == self._active))
@@ -116,10 +130,12 @@ class Sidebar(QWidget):
       try:
         sftp.stat(path)
         btn = self._add_btn(text, path)
+        btn.setVisible(self._expanded)
         self._probe_buttons.append(btn)
       except Exception:
         pass
     self._sys_lbl.setVisible(bool(self._probe_buttons))
+    self._sys_lbl.setText("FEWER LOCATIONS ▴" if self._expanded else "MORE LOCATIONS ▾")
 
   def clear_remote(self):
     self._clear_probe_buttons()
@@ -130,6 +146,9 @@ class Sidebar(QWidget):
 
   # ── Private ───────────────────────────────────────────────
   def _clear_probe_buttons(self):
+    self._expanded = False
+    self._sys_lbl.setText("MORE LOCATIONS ▾")
+    self._sys_lbl.hide()
     for btn in self._probe_buttons:
       self._buttons = [(b, p) for b, p in self._buttons if b is not btn]
       self._layout.removeWidget(btn)

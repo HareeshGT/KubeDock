@@ -4,6 +4,18 @@ from command_utils import command_operation_label
 
 _LOG = logging.getLogger(__name__)
 
+# Normalized tab titles are grouped rather than reconstructed; every page
+# remains available through the section selector and Settings visibility list.
+K8S_TAB_GROUPS = {
+  "all": None,
+  "workloads": frozenset({"pods", "deployments", "statefulsets", "daemonsets", "hpa", "jobs & cronjobs"}),
+  "networking": frozenset({"services", "ingress"}),
+  "storage": frozenset({"storage", "config & secrets"}),
+  "observability": frozenset({"events"}),
+  "tools": frozenset({"terminal", "tunnels"}),
+  "ai": frozenset({"ops mind"}),
+}
+
 
 class KubernetesCoreMixin:
   def _context_flag(self) -> str:
@@ -555,13 +567,29 @@ class KubernetesCoreMixin:
 
 
   def apply_hidden_tabs(self, hidden_titles):
-    """Hide/show sub-tabs by title. Safe to call at any time (e.g.
-    right after the user saves new choices in Settings) — QTabWidget
-    keeps a hidden tab's contents alive, it just isn't selectable
-    from the tab bar."""
+    """Combine saved Settings visibility with the active Kubernetes section."""
     hidden = set(hidden_titles or [])
+    group = self.tab_group_combo.currentData() if hasattr(self, "tab_group_combo") else "all"
+    allowed = K8S_TAB_GROUPS.get(group)
+    visible_indices = []
     for i in range(self.sub_tabs.count()):
-      self.sub_tabs.setTabVisible(i, self.sub_tabs.tabText(i) not in hidden)
+      title = self.sub_tabs.tabText(i)
+      normalized = " ".join(title.replace("&&", "&").strip().lower().split())
+      visible = title not in hidden and (allowed is None or normalized in allowed)
+      self.sub_tabs.setTabVisible(i, visible)
+      if visible:
+        visible_indices.append(i)
+    current = self.sub_tabs.currentIndex()
+    if visible_indices and current not in visible_indices:
+      self.sub_tabs.setCurrentIndex(visible_indices[0])
+
+
+  def _on_tab_group_changed(self, _index=None):
+    """Persist the chosen section and reapply Settings-hidden tab choices."""
+    self._apply_saved_hidden_tabs()
+    group = self.tab_group_combo.currentData()
+    if group in K8S_TAB_GROUPS:
+      save_settings(k8s_tab_group=group)
 
 
   def _apply_saved_hidden_tabs(self):

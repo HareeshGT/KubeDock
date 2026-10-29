@@ -858,3 +858,19 @@ class AIIntelligenceDialog(QDialog):
         if self._watch_active:
             self._stop_watch()
         super().closeEvent(event)
+
+
+
+def open_ai_intelligence_workspace(parent=None):
+    """Open the shared advisory workspace from Settings, Ops Mind, or other UI entry points."""
+    from PyQt5.QtWidgets import QMessageBox
+    try:
+        dialog = AIIntelligenceDialog(parent)
+        return dialog.exec_()
+    except Exception as exc:
+        QMessageBox.warning(
+            parent,
+            "AI Intelligence Workspace Unavailable",
+            f"Could not open the workspace: {exc}",
+        )
+        return None

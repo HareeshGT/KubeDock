@@ -9,6 +9,8 @@ from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics
 
 from themes import THEMES, T
 
+CURATED_THEME_NAMES = ("App Default", "Obsidian Purple", "Apple Dark")
+
 
 # ── Individual dot in the strip ───────────────────────────────────────────────
 
@@ -155,6 +157,7 @@ class _ThemePanel(QWidget):
         self.setWindowOpacity(1.0)
         self._tiles: dict[str, _ThemeTile] = {}
         self._current = ""
+        self._advanced_open = False
         self._build()
 
     def _build(self):
@@ -166,14 +169,15 @@ class _ThemePanel(QWidget):
         frame_layout = QGridLayout(frame)
         frame_layout.setContentsMargins(8, 8, 8, 8)
         frame_layout.setSpacing(6)
-
-        names = list(THEMES.keys())
-        for idx, name in enumerate(names):
-            tile = _ThemeTile(name, THEMES[name])
-            tile.clicked.connect(self._on_tile_clicked)
-            row, col = divmod(idx, self.COLS)
-            frame_layout.addWidget(tile, row, col)
-            self._tiles[name] = tile
+        self._frame_layout = frame_layout
+        self._advanced_button = QPushButton()
+        self._advanced_button.setCursor(Qt.PointingHandCursor)
+        self._advanced_button.setFlat(True)
+        self._advanced_button.setStyleSheet(
+            f"color: {T['ACCENT']}; border: none; padding: 6px; font-size: 11px;"
+        )
+        self._advanced_button.clicked.connect(self._toggle_advanced)
+        self._populate_tiles()
 
         frame.setStyleSheet("""
             QFrame#panelFrame {{
@@ -185,7 +189,35 @@ class _ThemePanel(QWidget):
 
         outer.addWidget(frame)
 
+    def _populate_tiles(self):
+        for tile in self._tiles.values():
+            self._frame_layout.removeWidget(tile)
+            tile.deleteLater()
+        self._tiles = {}
+        names = list(THEMES.keys()) if self._advanced_open else [
+            name for name in CURATED_THEME_NAMES if name in THEMES
+        ]
+        for idx, name in enumerate(names):
+            tile = _ThemeTile(name, THEMES[name], selected=(name == self._current))
+            tile.clicked.connect(self._on_tile_clicked)
+            row, col = divmod(idx, self.COLS)
+            self._frame_layout.addWidget(tile, row, col)
+            self._tiles[name] = tile
+        row = (len(names) + self.COLS - 1) // self.COLS
+        self._advanced_button.setText(
+            "Fewer themes ▴" if self._advanced_open else "More themes…"
+        )
+        self._frame_layout.addWidget(self._advanced_button, row, 0, 1, self.COLS)
+
+    def _toggle_advanced(self):
+        self._advanced_open = not self._advanced_open
+        self._populate_tiles()
+        self.adjustSize()
+
     def select(self, name: str):
+        if name in THEMES and name not in CURATED_THEME_NAMES and not self._advanced_open:
+            self._advanced_open = True
+            self._populate_tiles()
         if self._current and self._current in self._tiles:
             self._tiles[self._current].set_selected(False)
         self._current = name
@@ -194,9 +226,6 @@ class _ThemePanel(QWidget):
 
     def refresh_theme(self):
         """Re-apply border/background colours after a theme change."""
-        for name, tile in self._tiles.items():
-            # keep tile's own palette — only the frame border changes
-            pass
         frame = self.findChild(QFrame, "panelFrame")
         if frame:
             frame.setStyleSheet("""

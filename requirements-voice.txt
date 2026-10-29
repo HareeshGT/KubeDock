@@ -1,4 +1,4 @@
-# Optional: microphone input for Ops Mind voice commands.
+# Optional voice features for Ops Mind: microphone input and offline narration.
 #
 # PyAudio needs the native PortAudio library:
 #   macOS:          brew install portaudio
@@ -9,6 +9,9 @@
 # Install on top of the core requirements:
 #   pip install -r requirements.txt -r requirements-voice.txt
 #
-# Without this file's packages KubeDock runs normally; the voice button just
-# shows an "unavailable" message.
+# Without these packages typed Ops Mind requests still work. Microphone input
+# and offline narration report when their optional runtime is missing.
+SpeechRecognition>=3.10,<4
 PyAudio>=0.2.13
+pyttsx3>=2.90
+pyobjc; sys_platform == "darwin"

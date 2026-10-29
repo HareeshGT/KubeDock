@@ -109,6 +109,16 @@ class K8sAIOpsUIMixin:
     def set_ssh(self, ssh):
         self.ssh = ssh
 
+    def _toggle_advanced_voice_options(self, expanded):
+        self.voice_advanced_panel.setVisible(bool(expanded))
+        self.voice_options_btn.setText(
+            "Advanced voice options ▾" if expanded else "Advanced voice options ▸"
+        )
+
+    def _open_ai_intelligence_workspace(self):
+        from ai_intelligence_ui import open_ai_intelligence_workspace
+        open_ai_intelligence_workspace(self)
+
     def _build_ui(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -129,6 +139,12 @@ class K8sAIOpsUIMixin:
         self.status_lbl = QLabel('Ready')
         self.status_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
         title_row.addWidget(self.status_lbl)
+        self.ai_workspace_btn = QPushButton("AI Workspace…")
+        self.ai_workspace_btn.setToolTip(
+            "Open incident investigation, watch, comparison, right-sizing, and remediation-advisory tools."
+        )
+        self.ai_workspace_btn.clicked.connect(self._open_ai_intelligence_workspace)
+        title_row.addWidget(self.ai_workspace_btn)
         root.addLayout(title_row)
         description = QLabel('Describe a Kubernetes operation in plain English. Previous Ops Mind operations are remembered across app restarts.')
         description.setWordWrap(True)
@@ -221,6 +237,18 @@ class K8sAIOpsUIMixin:
 
         # Compact Ops Mind voice/personality controls, persisted through the
         # existing SQLite-backed application settings.
+        self.voice_options_btn = QPushButton("Advanced voice options ▸")
+        self.voice_options_btn.setCheckable(True)
+        self.voice_options_btn.setToolTip(
+            "Show advanced speech engine, persona, and conversation controls."
+        )
+        self.voice_options_btn.toggled.connect(self._toggle_advanced_voice_options)
+        root.addWidget(self.voice_options_btn)
+        self.voice_advanced_panel = QWidget(self._ai_content)
+        voice_advanced_layout = QVBoxLayout(self.voice_advanced_panel)
+        voice_advanced_layout.setContentsMargins(0, 0, 0, 0)
+        voice_advanced_layout.setSpacing(6)
+
         voice_settings_row = QHBoxLayout()
         voice_settings_row.setSpacing(8)
         voice_settings_row.addWidget(QLabel("Engine"))
@@ -276,7 +304,7 @@ class K8sAIOpsUIMixin:
         voice_settings_row.addWidget(self.voice_combo)
         voice_settings_row.addWidget(self.voice_test_btn)
         voice_settings_row.addStretch()
-        root.addLayout(voice_settings_row)
+        voice_advanced_layout.addLayout(voice_settings_row)
 
         # Conversation controls get their own row so the window never clips them.
         voice_settings_row2 = QHBoxLayout()
@@ -334,7 +362,9 @@ class K8sAIOpsUIMixin:
         self.voice_state_lbl.setToolTip("Voice conversation state")
         voice_settings_row2.addWidget(self.voice_state_lbl)
         voice_settings_row2.addStretch()
-        root.addLayout(voice_settings_row2)
+        voice_advanced_layout.addLayout(voice_settings_row2)
+        root.addWidget(self.voice_advanced_panel)
+        self.voice_advanced_panel.setVisible(False)
 
         self.output = QTextBrowser()
         self.output.setOpenExternalLinks(False)

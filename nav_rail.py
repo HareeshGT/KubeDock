@@ -21,7 +21,7 @@ NAV_ITEMS = [
   ("docker",     "Docker",     "docker"),
   ("ec2",        "EC2",        "server"),
   ("terminal",   "Terminal",   "terminal"),
-  ("tunnels",    "Tunnels",    "tunnel"),
+  ("ai",         "AI",         "ai"),
 ]
 
 class NavRail(QFrame):

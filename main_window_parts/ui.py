@@ -497,6 +497,17 @@ class UIMixin:
         self.main_tabs.setCurrentWidget(self.dashboard_tab)
       elif key == "kubernetes":
         self.main_tabs.setCurrentWidget(self.k8s_tab)
+        section = self.k8s_tab.tab_group_combo
+        section.setCurrentIndex(section.findData("workloads"))
+      elif key == "ai":
+        self.main_tabs.setCurrentWidget(self.k8s_tab)
+        section = self.k8s_tab.tab_group_combo
+        section.setCurrentIndex(section.findData("ai"))
+        subs = self.k8s_tab.sub_tabs
+        for i in range(subs.count()):
+          if "Ops Mind" in subs.tabText(i):
+            subs.setCurrentIndex(i)
+            break
       elif key == "docker":
         self.main_tabs.setCurrentWidget(self.docker_tab)
       elif key == "files":
@@ -528,7 +539,7 @@ class UIMixin:
         key = "docker"
       elif w is self.k8s_tab:
         subs = self.k8s_tab.sub_tabs
-        key = "tunnels" if "Tunnels" in subs.tabText(subs.currentIndex()) else "kubernetes"
+        key = "ai" if "Ops Mind" in subs.tabText(subs.currentIndex()) else "kubernetes"
       else:
         key = "files"
       self.nav_rail.set_active(key)

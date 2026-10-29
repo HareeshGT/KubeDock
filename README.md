@@ -595,19 +595,25 @@ On Windows:
 pip install -r requirements.txt
 ```
 
-### Optional: voice input
+### Optional: voice input and offline narration
 
-Microphone input for Ops Mind voice commands needs PyAudio, which depends on a
-native PortAudio library and can fail to build on some systems. It is kept out
-of the core requirements so a normal install never breaks on it:
+Voice features are kept out of the core requirements so ordinary installs do
+not need microphone, speech-recognition, or offline text-to-speech packages.
+The optional bundle installs SpeechRecognition, PyAudio, and pyttsx3; on macOS
+it also installs the pyobjc bridge used by the system speech backend. PyAudio
+may need the native PortAudio library first:
 
 ```bash
 # macOS: brew install portaudio   |   Debian/Ubuntu: sudo apt install portaudio19-dev
 pip install -r requirements-voice.txt
 ```
 
-Without it KubeDock runs normally and the voice button reports that voice input
-is unavailable.
+Without these packages, typed Ops Mind requests continue to work; microphone
+input and offline narration report when their optional runtime is unavailable.
+OpenAI neural TTS remains a separate cloud option that uses the configured API
+key and may incur provider charges. Qwen3-TTS remains optional and is installed
+separately with `requirements-qwen-tts.txt`; its model weights are not bundled
+or downloaded during an ordinary installation.
 
 ---
 
