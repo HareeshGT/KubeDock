@@ -1,4 +1,5 @@
 """Regression tests for SQLite app-data path recovery in frozen installs."""
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -39,6 +40,29 @@ class DatabasePathFallbackTests(unittest.TestCase):
                     )
                 finally:
                     connection.close()
+
+
+    def test_windows_candidates_include_independent_writable_fallbacks(self):
+        with (
+            patch.object(db.sys, "platform", "win32"),
+            patch.object(db, "_HOME_DIR", Path("C:/Users/haree")),
+            patch.object(db.tempfile, "gettempdir", return_value=Path("C:/Temp")),
+            patch.dict(
+                os.environ,
+                {
+                    "KUBEDOCK_DATA_DIR": "",
+                    "LOCALAPPDATA": r"C:\Users\haree\AppData\Local",
+                    "APPDATA": r"C:\Users\haree\AppData\Roaming",
+                    "USERNAME": "haree",
+                },
+                clear=False,
+            ),
+        ):
+            candidates = [str(path).replace("\\", "/") for path in db._candidate_app_dirs()]
+
+        self.assertTrue(any(path.endswith("AppData/Roaming/KubeDock") for path in candidates))
+        self.assertTrue(any(path.endswith("KubeDockData") for path in candidates))
+        self.assertTrue(any(path.endswith("KubeDock-Data/haree") for path in candidates))
 
     def test_fallback_restores_existing_database_without_losing_data(self):
         with tempfile.TemporaryDirectory() as temporary:
