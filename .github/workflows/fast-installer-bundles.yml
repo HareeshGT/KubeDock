@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "0 0 * * *"   # 5:30 AM IST
     - cron: "0 8 * * *"   # 1:30 PM IST
-    - cron: "9 15 * * *" # 8:39 PM IST  # 5:30 PM IST
+    - cron: "12 15 * * *" # 8:41 PM IST
   workflow_dispatch:
 
 permissions:
@@ -21,10 +21,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
       - name: Validate installer syntax and builder flags
         run: |
           bash -n installer/installer.sh
@@ -42,23 +44,29 @@ jobs:
             asset: KubeDock-linux-x86_64.tar.gz
             bundle: KubeDock
             family: linux
+
           - runner: macos-15
             asset: KubeDock-macos-arm64.tar.gz
             bundle: KubeDock.app
             family: macos
+
           - runner: macos-15-intel
             asset: KubeDock-macos-x86_64.tar.gz
             bundle: KubeDock.app
             family: macos
+
           - runner: windows-2025
             asset: KubeDock-windows-x86_64.zip
             bundle: KubeDock
             family: windows
+
     runs-on: ${{ matrix.runner }}
+
     env:
       ASSET_NAME: ${{ matrix.asset }}
       BUNDLE_NAME: ${{ matrix.bundle }}
       BUILD_FAMILY: ${{ matrix.family }}
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -101,6 +109,7 @@ jobs:
             # Avoid reusing a cached wheel built with dynamic OpenSSL.
             export PIP_NO_CACHE_DIR=1
           fi
+
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-voice.txt -r requirements-build.txt
 
@@ -117,10 +126,12 @@ jobs:
           timeout --kill-after=3s 8s dist/KubeDock/KubeDock > /tmp/kubedock-startup.log 2>&1
           result=$?
           cat /tmp/kubedock-startup.log
+
           if [[ "$result" -ne 124 && "$result" -ne 137 ]]; then
             echo "Frozen KubeDock exited before the startup smoke-test timeout (status $result)"
             exit 1
           fi
+
           echo "Frozen Linux executable remained alive under the offscreen Qt platform."
 
       - name: Smoke-test frozen macOS application startup
@@ -152,7 +163,10 @@ jobs:
               else:
                   log.seek(0)
                   print(log.read())
-                  print(f"Frozen KubeDock exited early with status {result.returncode}", file=sys.stderr)
+                  print(
+                      f"Frozen KubeDock exited early with status {result.returncode}",
+                      file=sys.stderr,
+                  )
                   raise SystemExit(1)
           PY
 
@@ -165,9 +179,11 @@ jobs:
           $process = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 8
           $process.Refresh()
+
           if ($process.HasExited) {
             throw "Frozen KubeDock exited during startup with status $($process.ExitCode)"
           }
+
           Stop-Process -Id $process.Id -Force
           Write-Host "Frozen Windows executable remained alive through the startup smoke-test window."
 
@@ -184,7 +200,11 @@ jobs:
         shell: pwsh
         run: |
           python -c "import shutil; shutil.make_archive('KubeDock-windows-x86_64', 'zip', root_dir='dist', base_dir='KubeDock')"
-          if (!(Test-Path "$env:ASSET_NAME")) { throw "Windows bundle archive was not created" }
+
+          if (!(Test-Path "$env:ASSET_NAME")) {
+            throw "Windows bundle archive was not created"
+          }
+
           Get-Item "$env:ASSET_NAME" | Format-List Name,Length
 
       - name: Validate bundle metadata
@@ -208,8 +228,10 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+
     permissions:
       contents: write
+
     steps:
       - name: Check out source for the release tag
         uses: actions/checkout@v4
@@ -230,7 +252,9 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
+
           sha256sum KubeDock-* > SHA256SUMS
+
           python - <<'PY'
           import json
           import os
@@ -238,7 +262,10 @@ jobs:
           from pathlib import Path
 
           root = Path(".")
-          assets = sorted(p.name for p in root.glob("KubeDock-*") if p.is_file())
+          assets = sorted(
+              p.name for p in root.glob("KubeDock-*") if p.is_file()
+          )
+
           manifest = {
               "application": "KubeDock",
               "release_tag": "fast-installer",
@@ -249,10 +276,13 @@ jobs:
               "sha256_file": "SHA256SUMS",
               "note": "Rolling prebuilt bundles for main. Optional Qwen3-TTS is not included.",
           }
+
           (root / "KubeDock-fast-installer.json").write_text(
-              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
           )
           PY
+
           cat KubeDock-fast-installer.json
 
       - name: Create or update rolling fast-installer release
@@ -261,9 +291,13 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+
           if gh release view fast-installer --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload fast-installer release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit fast-installer --repo "$GITHUB_REPOSITORY" \
+            gh release upload fast-installer release-assets/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
+
+            gh release edit fast-installer \
+              --repo "$GITHUB_REPOSITORY" \
               --title "KubeDock Fast Installer (main)" \
               --notes "Rolling prebuilt installer bundles for main. Built from commit $SOURCE_SHA. Use the installer for your OS and architecture. Qwen3-TTS is optional and excluded from these lightweight bundles."
           else
