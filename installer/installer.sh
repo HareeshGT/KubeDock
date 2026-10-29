@@ -183,7 +183,7 @@ fi
 
 install_prebuilt_bundle() {
   local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
-  base="https://github.com/HareeshGT/KubeDock/releases/download/fast-installer"
+  base="https://github.com/HareeshGT/KubeDock/releases/latest/download"
 
   case "$OS" in
     Darwin)
