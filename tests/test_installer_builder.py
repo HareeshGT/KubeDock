@@ -47,6 +47,24 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         self.assertTrue(metadata["architecture"])
         self.assertTrue(metadata["python"])
 
+    def test_macos_openssl_repair_copies_matching_library_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "openssl"
+            bundle = root / "KubeDock.app"
+            source.mkdir()
+            (source / "libssl.3.dylib").write_bytes(b"matching-ssl")
+            (source / "libcrypto.3.dylib").write_bytes(b"matching-crypto")
+            framework_dir = bundle / "Contents" / "Frameworks"
+            framework_dir.mkdir(parents=True)
+            (framework_dir / "libssl.3.dylib").write_bytes(b"stale-ssl")
+            (framework_dir / "libcrypto.3.dylib").write_bytes(b"stale-crypto")
+
+            builder.repair_macos_openssl(bundle, source_dir=source)
+
+            self.assertEqual((framework_dir / "libssl.3.dylib").read_bytes(), b"matching-ssl")
+            self.assertEqual((framework_dir / "libcrypto.3.dylib").read_bytes(), b"matching-crypto")
+
     def test_runtime_requirements_keep_build_and_webengine_optional(self):
         core = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
         build = (ROOT / "requirements-build.txt").read_text(encoding="utf-8").lower()
