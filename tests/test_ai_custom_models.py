@@ -100,6 +100,43 @@ class CustomAIModelTests(unittest.TestCase):
                     self.assertIn(expected_header, headers)
 
 
+
+    def test_provider_ssl_context_keeps_verification_enabled_and_loads_certifi(self):
+        import ssl
+        from unittest.mock import MagicMock, patch
+
+        context = MagicMock()
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
+        with patch("ai_assist.ssl.create_default_context", return_value=context), \
+             patch("ai_assist.certifi.where", return_value="/test/cacert.pem"):
+            result = ai_assist._provider_ssl_context()
+        self.assertIs(result, context)
+        context.load_verify_locations.assert_called_once_with(cafile="/test/cacert.pem")
+        self.assertEqual(result.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(result.check_hostname)
+
+    def test_certificate_verification_failure_has_actionable_error_and_is_not_retried(self):
+        import ssl
+        import urllib.error
+        from unittest.mock import patch
+
+        failure = urllib.error.URLError(
+            ssl.SSLCertVerificationError(
+                1, "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate"
+            )
+        )
+        with patch("ai_assist.urllib.request.urlopen", side_effect=failure) as open_url:
+            answer, error = ai_assist._call_provider_impl(
+                "openai", "test-api-key", "gpt-4o-mini", "hello"
+            )
+        self.assertIsNone(answer)
+        self.assertIn("TLS certificate verification failed", error)
+        self.assertIn("SSL_CERT_FILE", error)
+        self.assertIn("verification remains enabled", error)
+        self.assertEqual(open_url.call_count, 1)
+        self.assertIn("context", open_url.call_args.kwargs)
+
     def test_task_profiles_and_local_provider_are_persisted(self):
         profiles = {
             "quick": {"provider": "groq", "model_id": "openai/gpt-oss-20b"},
