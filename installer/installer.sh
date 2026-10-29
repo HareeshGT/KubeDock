@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# KubeDock installer: clones the selected branch, builds it with PyInstaller and
-# installs the result for the current OS (macOS, Linux, or Windows via Git Bash).
+# KubeDock installer: prefer the prebuilt rolling main bundle for a fast install.
+# If no compatible bundle is published (or a branch is explicitly requested),
+# fall back to the existing branch-selecting source build with PyInstaller.
 #
-#   ./installer.sh [branch]
+#   ./installer.sh                 # fast prebuilt bundle, when available
+#   ./installer.sh <branch>        # build the requested branch from source
 #
 # Environment:
-#   KUBEDECK_BRANCH            Branch to build (same as the positional argument).
-#   KUBEDOCK_ENABLE_QWEN_TTS   1/0: include (or skip) the local Qwen3-TTS runtime.
-#   KUBEDOCK_KEEP_BUILD        1: keep the temporary build directory (debugging).
-#   KUBEDECK_PKG_MODE          Set by the macOS .pkg wrapper (installer/build_pkg.sh).
-
+#   KUBEDOCK_INSTALL_MODE          auto (default), release (fast-only), or source.
+#   KUBEDOCK_ENABLE_QWEN_TTS       1/0: include (or skip) the optional Qwen3-TTS runtime.
+#   KUBEDOCK_KEEP_BUILD            1: keep the temporary build directory (debugging).
+#   KUBEDECK_PKG_MODE              Set by the macOS .pkg wrapper (installer/build_pkg.sh).
+#\n
 REPO="https://github.com/HareeshGT/KubeDock.git"
 
 OS="$(uname -s)"
@@ -68,7 +70,7 @@ fi
 # Homebrew commands as the active GUI user.
 KUBEDECK_PKG_MODE="${KUBEDECK_PKG_MODE:-0}"
 
-if [[ "$OS" == "Darwin" && "$KUBEDECK_PKG_MODE" == "1" && "$(id -u)" = "0" ]]; then
+if [[ "$OS" == "Darwin" && "$KUBEDECK_PKG_MODE" == "1" && "$(id -u)" = "0" && "${KUBEDOCK_INSTALL_MODE:-source}" == "source" ]]; then
   KUBEDECK_INSTALL_USER="$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true)"
 
   if [ -z "$KUBEDECK_INSTALL_USER" ] || [ "$KUBEDECK_INSTALL_USER" = "root" ] || [ "$KUBEDECK_INSTALL_USER" = "loginwindow" ]; then
@@ -162,6 +164,290 @@ if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
 fi
 
 # --------------------------------------------------
+
+# --------------------------------------------------
+# Fast path: install a prebuilt rolling main bundle
+# --------------------------------------------------
+# Normal installs should not need Git, Python/pip or a local PyInstaller build.
+# The rolling release is published by .github/workflows/fast-installer-bundles.yml.
+# Pass a branch explicitly or set KUBEDOCK_INSTALL_MODE=source to keep the
+# developer flow that builds the selected branch locally.
+SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-${KUBEDOCK_BRANCH:-}}}"
+KUBEDOCK_INSTALL_MODE="${KUBEDOCK_INSTALL_MODE:-auto}"
+
+if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release" && "$KUBEDOCK_INSTALL_MODE" != "source" ]]; then
+  echo "ERROR: KUBEDOCK_INSTALL_MODE must be auto, release, or source."
+  exit 1
+fi
+
+install_prebuilt_bundle() {
+  local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
+  base="https://github.com/HareeshGT/KubeDock/releases/download/fast-installer"
+
+  case "$OS" in
+    Darwin)
+      arch="$(uname -m)"
+      case "$arch" in
+        arm64|aarch64) asset="KubeDock-macos-arm64.tar.gz" ;;
+        x86_64|amd64)  asset="KubeDock-macos-x86_64.tar.gz" ;;
+        *) echo "No prebuilt macOS bundle for architecture: $arch" >&2; return 1 ;;
+      esac
+      ;;
+    Linux)
+      arch="$(uname -m)"
+      case "$arch" in
+        x86_64|amd64) asset="KubeDock-linux-x86_64.tar.gz" ;;
+        aarch64|arm64)
+          echo "A prebuilt Linux ARM64 bundle is not published yet; the auto installer can fall back to a source build." >&2
+          return 1
+          ;;
+        *) echo "No prebuilt Linux bundle for architecture: $arch" >&2; return 1 ;;
+      esac
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      arch="${PROCESSOR_ARCHITECTURE:-AMD64}"
+      case "$arch" in
+        AMD64|amd64|x86_64) asset="KubeDock-windows-x86_64.zip" ;;
+        *) echo "No prebuilt Windows bundle for architecture: $arch" >&2; return 1 ;;
+      esac
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download the prebuilt bundle." >&2
+    return 1
+  fi
+  if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    if ! command -v powershell.exe >/dev/null 2>&1 || ! command -v cygpath >/dev/null 2>&1; then
+      echo "PowerShell and cygpath are required to install the Windows prebuilt bundle." >&2
+      return 1
+    fi
+  elif ! command -v tar >/dev/null 2>&1; then
+    echo "tar is required to extract the prebuilt bundle." >&2
+    return 1
+  fi
+
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/kubedock-prebuilt.XXXXXX")" || return 2
+  archive="$tmp/$asset"
+  url="$base/$asset"
+
+  echo
+  echo "Fast install: downloading prebuilt KubeDock bundle..."
+  echo "Platform asset: $asset"
+  if ! curl -fL --retry 2 --retry-delay 2 --connect-timeout 10 --max-time 900 "$url" -o "$archive"; then
+    echo "Prebuilt bundle is not available yet (or could not be downloaded)." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  if [ ! -s "$archive" ]; then
+    echo "Downloaded prebuilt bundle is empty." >&2
+    rm -rf "$tmp"
+    return 2
+  fi
+
+  checksum_file="$tmp/SHA256SUMS"
+  if ! curl -fL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 60 "$base/SHA256SUMS" -o "$checksum_file"; then
+    echo "Could not download the prebuilt bundle checksum file." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  expected_hash="$(awk -v name="$asset" '$2 == name { print $1; exit }' "$checksum_file")"
+  if ! [[ "$expected_hash" =~ ^[[:xdigit:]]{64}$ ]]; then
+    echo "The release checksum file does not contain a valid digest for $asset." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    archive_win="$(cygpath -w "$archive")"
+    actual_hash="$(KUBEDOCK_ARCHIVE_WIN="$archive_win" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$path = $env:KUBEDOCK_ARCHIVE_WIN; (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash' 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    actual_hash="$(sha256sum "$archive" | awk '{ print $1 }' | tr '[:upper:]' '[:lower:]')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_hash="$(shasum -a 256 "$archive" | awk '{ print $1 }' | tr '[:upper:]' '[:lower:]')"
+  else
+    echo "No SHA-256 utility was found; cannot verify the downloaded bundle." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  expected_hash="$(printf '%s' "$expected_hash" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    echo "SHA-256 verification failed for $asset." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  echo "SHA-256 checksum verified."
+
+  if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    archive_win="$(cygpath -w "$archive")"
+    tmp_win="$(cygpath -w "$tmp")"
+    if ! KUBEDOCK_ARCHIVE_WIN="$archive_win" KUBEDOCK_TMP_WIN="$tmp_win" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$archive = $env:KUBEDOCK_ARCHIVE_WIN; $destination = $env:KUBEDOCK_TMP_WIN; Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force'; then
+      echo "Downloaded Windows prebuilt bundle could not be extracted." >&2
+      rm -rf "$tmp"
+      return 2
+    fi
+  elif ! tar -xf "$archive" -C "$tmp"; then
+    echo "Downloaded prebuilt bundle could not be extracted." >&2
+    rm -rf "$tmp"
+    return 2
+  fi
+
+  case "$OS" in
+    Darwin)
+      extracted="$tmp/KubeDock.app"
+      target="/Applications/KubeDock.app"
+      staged="/Applications/KubeDock.app.new"
+      backup="/Applications/KubeDock.app.old"
+      if [ ! -d "$extracted/Contents" ]; then
+        echo "Prebuilt macOS archive did not contain KubeDock.app." >&2
+        rm -rf "$tmp"
+        return 2
+      fi
+      $SUDO rm -rf "$staged"
+      if ! $SUDO ditto "$extracted" "$staged"; then
+        $SUDO rm -rf "$staged"
+        rm -rf "$tmp"
+        return 2
+      fi
+      # Re-sign after extraction/copy so the installed bundle has a consistent
+      # ad-hoc signature even on systems that strip archive extended attributes.
+      if ! $SUDO codesign --deep --force --sign - "$staged"; then
+        $SUDO rm -rf "$staged"
+        rm -rf "$tmp"
+        return 2
+      fi
+      ;;
+    Linux)
+      extracted="$tmp/KubeDock"
+      target="/opt/KubeDock"
+      staged="/opt/KubeDock.new"
+      backup="/opt/KubeDock.old"
+      if [ ! -x "$extracted/KubeDock" ]; then
+        echo "Prebuilt Linux archive did not contain the KubeDock executable." >&2
+        rm -rf "$tmp"
+        return 2
+      fi
+      $SUDO mkdir -p /opt
+      $SUDO rm -rf "$staged"
+      if ! $SUDO cp -a "$extracted" "$staged"; then
+        $SUDO rm -rf "$staged"
+        rm -rf "$tmp"
+        return 2
+      fi
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      extracted="$tmp/KubeDock"
+      target="/c/Program Files/KubeDock"
+      staged="/c/Program Files/KubeDock.new"
+      backup="/c/Program Files/KubeDock.old"
+      if [ ! -f "$extracted/KubeDock.exe" ]; then
+        echo "Prebuilt Windows archive did not contain KubeDock.exe." >&2
+        rm -rf "$tmp"
+        return 2
+      fi
+      rm -rf "$staged"
+      if ! cp -R "$extracted" "$staged"; then
+        rm -rf "$staged" "$tmp"
+        return 2
+      fi
+      ;;
+  esac
+
+  # Atomic-ish replace: move the current install aside first and restore it if
+  # the new staged directory cannot be moved into place.
+  $SUDO rm -rf "$backup"
+  if [ -e "$target" ]; then
+    if ! $SUDO mv "$target" "$backup"; then
+      $SUDO rm -rf "$staged"
+      rm -rf "$tmp"
+      return 2
+    fi
+  fi
+  if ! $SUDO mv "$staged" "$target"; then
+    if [ -e "$backup" ]; then
+      $SUDO mv "$backup" "$target" || true
+    fi
+    $SUDO rm -rf "$staged"
+    rm -rf "$tmp"
+    return 2
+  fi
+  $SUDO rm -rf "$backup"
+
+  if [[ "$OS" == "Linux" ]]; then
+    if [ -d "/usr/local/bin" ] || $SUDO mkdir -p "/usr/local/bin" 2>/dev/null; then
+      $SUDO ln -sf "/opt/KubeDock/KubeDock" "/usr/local/bin/kubedock" 2>/dev/null || true
+      $SUDO ln -sf "/opt/KubeDock/KubeDock" "/usr/local/bin/kubedeck" 2>/dev/null || true
+    fi
+    if $SUDO mkdir -p "/usr/share/applications" 2>/dev/null; then
+      local desktop_tmp
+      desktop_tmp="$(mktemp)"
+      cat > "$desktop_tmp" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=KubeDock
+Comment=Kubernetes / VM infrastructure workspace
+Exec=/opt/KubeDock/KubeDock
+Icon=application-x-executable
+Terminal=false
+Categories=Development;Utility;
+EOF
+      $SUDO cp "$desktop_tmp" "/usr/share/applications/kubedock.desktop" 2>/dev/null || true
+      rm -f "$desktop_tmp"
+    fi
+    if ! command -v flac >/dev/null 2>&1; then
+      echo "NOTE: FLAC is not installed; some speech-recognition workflows may be unavailable."
+    fi
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+      echo "NOTE: FFmpeg is not installed; uncommon remote media formats may not play."
+    fi
+  fi
+
+  echo
+  echo "=========================================="
+  echo "KubeDock installed from prebuilt bundle!"
+  echo "=========================================="
+  case "$OS" in
+    Darwin) echo "Installed: /Applications/KubeDock.app" ;;
+    Linux) echo "Installed: /opt/KubeDock"; echo "Launch with: kubedock" ;;
+    MINGW*|MSYS*|CYGWIN*) echo "Installed: C:\\Program Files\\KubeDock" ;;
+  esac
+  if [ -f "$target/KubeDock-BUILD-METADATA.json" ]; then
+    echo "Build metadata:"
+    cat "$target/KubeDock-BUILD-METADATA.json"
+  elif [ -f "$target/Contents/Resources/KubeDock-BUILD-METADATA.json" ]; then
+    echo "Build metadata:"
+    cat "$target/Contents/Resources/KubeDock-BUILD-METADATA.json"
+  fi
+  echo
+  echo "Optional Qwen3-TTS is not included in the fast bundle. Set KUBEDOCK_INSTALL_MODE=source to build a custom branch/runtime."
+  rm -rf "$tmp"
+  return 0
+}
+
+if [[ "$KUBEDOCK_INSTALL_MODE" == "release" && -n "$SELECTED_BRANCH" ]]; then
+  echo "ERROR: KUBEDOCK_INSTALL_MODE=release cannot be combined with an explicit branch. Omit the branch for a fast install or use KUBEDOCK_INSTALL_MODE=source." >&2
+  exit 1
+fi
+
+if [[ "$KUBEDOCK_INSTALL_MODE" != "source" && -z "$SELECTED_BRANCH" ]]; then
+  if install_prebuilt_bundle; then
+    exit 0
+  else
+    PREBUILT_RC=$?
+    if [[ "$KUBEDOCK_INSTALL_MODE" == "release" || "$PREBUILT_RC" -ne 1 ]]; then
+      echo "ERROR: Prebuilt installation failed. No source build was attempted." >&2
+      exit 1
+    fi
+    echo
+    echo "Prebuilt bundle unavailable; falling back to the existing source installer."
+    echo "The source build can take significantly longer because it installs dependencies and runs PyInstaller."
+    echo
+  fi
+fi
+
 # Select GitHub Branch
 # --------------------------------------------------
 
@@ -178,7 +464,7 @@ fi
 # If no branch is supplied, the script retrieves the available
 # remote branches from GitHub and lets the user select one.
 
-SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-}}"
+SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-${KUBEDOCK_BRANCH:-}}}"
 
 echo
 echo "=========================================="

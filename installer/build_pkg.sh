@@ -81,6 +81,32 @@ cp "$SCRIPT_DIR/installer.sh" "$INSTALLER"
 chmod 755 "$INSTALLER"
 
 # --------------------------------------------------
+# Choose fast prebuilt install or developer source build
+# --------------------------------------------------
+
+INSTALL_MODE="$(/usr/bin/osascript <<'APPLESCRIPT' 2>/dev/null || true
+on run
+    set selectedMode to button returned of (display dialog "The fast install downloads the ready-to-run KubeDock app. Choose source mode only when you need a specific branch or the optional Qwen3-TTS build." with title "KubeDock Installer" buttons {"Build from source (slower)", "Fast install (recommended)"} default button "Fast install (recommended)")
+    return selectedMode
+end run
+APPLESCRIPT
+)"
+
+if [ "$INSTALL_MODE" = "Fast install (recommended)" ]; then
+  export KUBEDOCK_INSTALL_MODE=release
+  export KUBEDECK_PKG_MODE=0
+  /bin/bash "$INSTALLER"
+  exit $?
+fi
+
+if [ "$INSTALL_MODE" != "Build from source (slower)" ]; then
+  echo "Installation cancelled."
+  exit 1
+fi
+
+export KUBEDOCK_INSTALL_MODE=source
+
+# --------------------------------------------------
 # Fetch current GitHub branches at install time
 # --------------------------------------------------
 
@@ -249,4 +275,4 @@ echo
 echo "Version : $VERSION"
 echo "Package : $OUTPUT"
 echo
-echo "Available branches are fetched at install time."
+echo "Fast install uses the latest rolling prebuilt bundle; source mode fetches branches at install time."

@@ -1,15 +1,19 @@
+import hashlib
 import os
 import platform
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
+import zipfile
 from pathlib import Path
 
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
 ICON = "KubeDock.ico"
-BUILD_ID = "WINDOWS-PYAUDIO-QWEN-OPTION-2026-10-22-R1"
+BUILD_ID = "WINDOWS-FAST-PREBUILT-RELEASE-2026-10-29-R1"
 RECOMMENDED_PYTHON = "3.13"
 
 
@@ -449,6 +453,90 @@ def install_application(output):
     return local_appdata
 
 
+
+def install_prebuilt_release() -> Path:
+    """Download and install the ready-to-run Windows bundle without pip/PyInstaller."""
+    asset = "KubeDock-windows-x86_64.zip"
+    url = f"https://github.com/HareeshGT/KubeDock/releases/download/fast-installer/{asset}"
+    temp_dir = Path(tempfile.mkdtemp(prefix="KubeDockFastInstall-"))
+    archive = temp_dir / asset
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "KubeDock-Installer"})
+        print(f"Downloading prebuilt bundle: {url}")
+        with urllib.request.urlopen(request, timeout=45) as response, archive.open("wb") as output:
+            total = int(response.headers.get("Content-Length", "0") or 0)
+            downloaded = 0
+            last_percent = -1
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    percent = int(downloaded * 100 / total)
+                    if percent >= last_percent + 10:
+                        print(f"  Download: {percent}%")
+                        last_percent = percent
+                elif downloaded // (50 * 1024 * 1024) != (downloaded - len(chunk)) // (50 * 1024 * 1024):
+                    print(f"  Downloaded {downloaded / (1024 * 1024):.0f} MiB")
+        if not archive.is_file() or archive.stat().st_size == 0:
+            raise RuntimeError("The downloaded KubeDock bundle is empty.")
+
+        checksum_url = "https://github.com/HareeshGT/KubeDock/releases/download/fast-installer/SHA256SUMS"
+        checksum_request = urllib.request.Request(checksum_url, headers={"User-Agent": "KubeDock-Installer"})
+        with urllib.request.urlopen(checksum_request, timeout=30) as response:
+            checksum_lines = response.read().decode("utf-8").splitlines()
+        expected_hash = next(
+            (line.split()[0].lower() for line in checksum_lines
+             if len(line.split()) >= 2 and line.split()[1].lstrip("*") == asset),
+            None,
+        )
+        if not expected_hash or len(expected_hash) != 64:
+            raise RuntimeError("The release checksum file has no valid hash for the Windows bundle.")
+        digest = hashlib.sha256()
+        with archive.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            raise RuntimeError("SHA-256 verification failed for the downloaded Windows bundle.")
+        print("[OK] SHA-256 checksum verified.")
+
+        extract_root = temp_dir / "extracted"
+        extract_root.mkdir()
+        root_resolved = extract_root.resolve()
+        with zipfile.ZipFile(archive) as package:
+            for member in package.infolist():
+                destination = (extract_root / member.filename).resolve()
+                try:
+                    inside_root = os.path.commonpath([str(root_resolved), str(destination)]) == str(root_resolved)
+                except ValueError:
+                    inside_root = False
+                if not inside_root:
+                    raise RuntimeError("The prebuilt archive contains an unsafe path.")
+            package.extractall(extract_root)
+
+        output_dir = extract_root / APP
+        executable = output_dir / "KubeDock.exe"
+        if not executable.is_file():
+            raise RuntimeError("The downloaded archive does not contain KubeDock.exe.")
+        metadata_path = output_dir / "KubeDock-BUILD-METADATA.json"
+        if metadata_path.is_file():
+            print("\\nPrebuilt bundle metadata:")
+            print(metadata_path.read_text(encoding="utf-8"))
+
+        destination = install_application(output_dir)
+        print("\\n==========================================")
+        print("KubeDock installed from prebuilt bundle!")
+        print("==========================================")
+        print("Installed to:", destination)
+        print("Executable:", destination / "KubeDock.exe")
+        print("Optional Qwen3-TTS is not included in the fast bundle.")
+        return destination
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def main():
     print("==========================================")
     print(f"KubeDock Installer: {BUILD_ID}")
@@ -458,6 +546,20 @@ def main():
         raise RuntimeError("This installer is Windows-only. Do not run it inside WSL.")
 
     ensure_admin()
+    install_mode = os.environ.get("KUBEDOCK_INSTALL_MODE", "auto").strip().lower()
+    if install_mode not in {"auto", "release", "source"}:
+        raise RuntimeError("KUBEDOCK_INSTALL_MODE must be auto, release, or source.")
+
+    if install_mode != "source":
+        try:
+            install_prebuilt_release()
+            return
+        except Exception as exc:
+            if install_mode == "release":
+                raise RuntimeError(f"Prebuilt installation failed: {exc}") from exc
+            print("\\n[INFO] Prebuilt bundle unavailable; falling back to the source build.")
+            print("       The source path installs Python requirements and runs PyInstaller.")
+
     include_qwen = choose_qwen_tts()
 
     python = find_python(include_qwen=include_qwen)

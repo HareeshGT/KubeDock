@@ -12,6 +12,10 @@ on:
       - "README.md"
       - "tests/test_ai*.py"
       - ".github/workflows/ai-model-tests.yml"
+      - "installer/**"
+      - "docs/FAST_INSTALLER.md"
+      - "tests/test_installer_builder.py"
+      - ".github/workflows/fast-installer-bundles.yml"
   pull_request:
     paths:
       - "ai_assist.py"
@@ -21,6 +25,10 @@ on:
       - "AI_ENHANCEMENT_STATUS.md"
       - "README.md"
       - "tests/test_ai*.py"
+      - "installer/**"
+      - "docs/FAST_INSTALLER.md"
+      - "tests/test_installer_builder.py"
+      - ".github/workflows/fast-installer-bundles.yml"
   workflow_dispatch:
 
 jobs:
@@ -39,6 +47,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -p 'test_ai*.py' -v
+
 
   full-regression-suite:
     runs-on: ubuntu-latest
