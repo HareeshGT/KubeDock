@@ -73,6 +73,49 @@ class DatabasePathFallbackTests(unittest.TestCase):
                 finally:
                     connection.close()
 
+    def test_fallback_fails_closed_when_existing_database_cannot_be_copied(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy_dir = root / "old-profile"
+            legacy_dir.mkdir()
+            legacy_db = legacy_dir / "kubedock.db"
+            source = sqlite3.connect(legacy_db)
+            source.execute("CREATE TABLE preserved_data (value TEXT NOT NULL)")
+            source.execute(
+                "INSERT INTO preserved_data(value) VALUES (?)", ("must-survive",)
+            )
+            source.commit()
+            source.close()
+
+            fallback = root / "new-profile"
+            fallback.mkdir()
+            destination = sqlite3.connect(fallback / "kubedock.db")
+            try:
+                with (
+                    patch.object(db, "LEGACY_APP_DIR", root / "different-profile"),
+                    patch.object(db, "LEGACY_DB_PATH", legacy_db),
+                    patch.object(
+                        db.sqlite3,
+                        "connect",
+                        side_effect=sqlite3.OperationalError("simulated backup failure"),
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        sqlite3.OperationalError, "could not preserve it"
+                    ):
+                        db._restore_legacy_database_if_needed(
+                            destination, fallback, database_already_exists=False
+                        )
+            finally:
+                destination.close()
+
+            # The source profile must remain available for recovery.
+            with sqlite3.connect(legacy_db) as preserved:
+                self.assertEqual(
+                    preserved.execute("SELECT value FROM preserved_data").fetchone()[0],
+                    "must-survive",
+                )
+
     def test_windows_candidates_include_independent_writable_fallbacks(self):
         with (
             patch.object(db.sys, "platform", "win32"),
