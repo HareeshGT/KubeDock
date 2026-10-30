@@ -35,6 +35,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install PortAudio headers for the voice profile
+        if: matrix.profile == 'voice'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+
       - name: Install dependency profile and audit tool
         shell: bash
         run: |
