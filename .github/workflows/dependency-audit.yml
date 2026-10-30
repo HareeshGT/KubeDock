@@ -1,0 +1,55 @@
+name: Dependency vulnerability audit
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit ${{ matrix.profile }} dependencies
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: core
+            requirements: "requirements.txt"
+          - profile: build
+            requirements: "requirements.txt requirements-build.txt"
+          - profile: editor
+            requirements: "requirements.txt requirements-editor.txt"
+          - profile: voice
+            requirements: "requirements.txt requirements-voice.txt"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependency profile and audit tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          for requirement_file in ${{ matrix.requirements }}; do
+            python -m pip install -r "$requirement_file"
+          done
+          python -m pip check
+
+      - name: Scan installed dependency graph for known vulnerabilities
+        run: pip-audit
+
+# requirements-qwen-tts.txt is intentionally not installed in CI: it resolves a
+# source-pinned local TTS stack with heavyweight ML/GPU dependencies. Keep its
+# upstream commit pin reviewed explicitly rather than downloading that stack on
+# every application change.
