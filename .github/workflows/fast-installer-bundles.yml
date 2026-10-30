@@ -5,7 +5,6 @@ on:
   schedule:
     - cron: "0 0 * * *"   # 5:30 AM IST
     - cron: "0 8 * * *"   # 1:30 PM IST
-    - cron: "11 15 * * *" # 8:41 PM IST (test)
   workflow_dispatch:
     inputs:
       version_bump:
