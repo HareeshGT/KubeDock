@@ -120,6 +120,10 @@ def test_all_api_routes_except_auth_entrypoints_require_login():
     public_auth_routes = {"/api/login", "/api/logout"}
     for route in server.app.routes:
         path = getattr(route, "path", "")
+        # WebSocket routes authenticate the session in their handshake handler
+        # rather than through FastAPI's HTTP Depends mechanism.
+        if getattr(route, "methods", None) is None:
+            continue
         if not path.startswith("/api/") or path in public_auth_routes:
             continue
         dependencies = getattr(getattr(route, "dependant", None), "dependencies", [])
