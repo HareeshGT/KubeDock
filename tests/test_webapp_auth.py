@@ -116,6 +116,34 @@ def test_rate_limit_blocks_before_otp_validation(monkeypatch):
     assert blocked.value.headers["Retry-After"] == "17"
 
 
+def test_all_api_routes_except_auth_entrypoints_require_login():
+    public_auth_routes = {"/api/login", "/api/logout"}
+    for route in server.app.routes:
+        path = getattr(route, "path", "")
+        # WebSocket routes authenticate the session in their handshake handler
+        # rather than through FastAPI's HTTP Depends mechanism.
+        if getattr(route, "methods", None) is None:
+            continue
+        if not path.startswith("/api/") or path in public_auth_routes:
+            continue
+        dependencies = getattr(getattr(route, "dependant", None), "dependencies", [])
+        assert any(dependency.call is server.require_login for dependency in dependencies), (
+            f"API route {path!r} does not declare require_login"
+        )
+
+
+def test_auth_failure_tracking_is_bounded(monkeypatch):
+    monkeypatch.setattr(server, "_AUTH_MAX_TRACKED_CLIENTS", 3)
+    with server._AUTH_FAIL_LOCK:
+        server._AUTH_FAILURES.clear()
+
+    for client_ip in ("192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4", "192.0.2.5"):
+        server._record_auth_failure(client_ip)
+
+    assert len(server._AUTH_FAILURES) <= 3
+    assert "192.0.2.5" in server._AUTH_FAILURES
+
+
 def test_missing_secure_keyring_fails_closed(monkeypatch):
     monkeypatch.setattr(server, "get_or_create_secret", lambda: (_ for _ in ()).throw(
         OTPConfigurationError("secure keyring missing")

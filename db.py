@@ -119,10 +119,17 @@ def _restore_legacy_database_if_needed(
         source_uri = LEGACY_DB_PATH.resolve().as_uri() + "?mode=ro"
         source = sqlite3.connect(source_uri, uri=True, timeout=3)
         source.backup(conn)
-    except (OSError, sqlite3.Error):
-        # A failed best-effort backup must not prevent a fresh profile from
-        # starting; settings.json migration below still uses its original path.
-        pass
+    except (OSError, sqlite3.Error) as exc:
+        # Never continue with a fresh, empty profile when an existing database
+        # could not be copied. The original file is intentionally left untouched;
+        # fail closed and give the user actionable recovery guidance instead.
+        raise sqlite3.OperationalError(
+            "KubeDock found an existing profile database at "
+            f"{LEGACY_DB_PATH}, but could not preserve it in the fallback "
+            f"data directory {directory}. The original database was not deleted "
+            "or modified. Check its read permissions and available disk space "
+            "before restarting KubeDock."
+        ) from exc
     finally:
         if source is not None:
             source.close()

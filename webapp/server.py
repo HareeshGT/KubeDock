@@ -157,6 +157,8 @@ _AUTH_FAILURES: dict[str, list[float]] = {}
 _AUTH_MAX_FAILURES = 5
 _AUTH_WINDOW_SECONDS = 300.0
 _AUTH_LOCKOUT_SECONDS = 60.0
+# Keep failed-login tracking bounded if the listener is exposed to many clients.
+_AUTH_MAX_TRACKED_CLIENTS = 2048
 _SESSION_LOCK = threading.RLock()
 _WEB_SESSIONS: dict[str, tuple[str, float]] = {}
 _SESSION_TTL_SECONDS = 8 * 60 * 60
@@ -215,11 +217,21 @@ def require_login(request: Request) -> None:
     _log_client_identity(request, username)
 
 
+def _prune_auth_failures(now: float) -> None:
+    """Drop expired clients so repeated one-off requests cannot grow state forever."""
+    for tracked_ip, timestamps in list(_AUTH_FAILURES.items()):
+        recent = [stamp for stamp in timestamps if now - stamp < _AUTH_WINDOW_SECONDS]
+        if recent:
+            _AUTH_FAILURES[tracked_ip] = recent[-_AUTH_MAX_FAILURES:]
+        else:
+            _AUTH_FAILURES.pop(tracked_ip, None)
+
+
 def _auth_block_seconds(client_ip: str) -> int:
     now = perf_counter()
     with _AUTH_FAIL_LOCK:
-        failures = [t for t in _AUTH_FAILURES.get(client_ip, []) if now - t < _AUTH_WINDOW_SECONDS]
-        _AUTH_FAILURES[client_ip] = failures
+        _prune_auth_failures(now)
+        failures = _AUTH_FAILURES.get(client_ip, [])
         if len(failures) < _AUTH_MAX_FAILURES:
             return 0
         remaining = _AUTH_LOCKOUT_SECONDS - (now - failures[-_AUTH_MAX_FAILURES])
@@ -229,7 +241,13 @@ def _auth_block_seconds(client_ip: str) -> int:
 def _record_auth_failure(client_ip: str) -> None:
     now = perf_counter()
     with _AUTH_FAIL_LOCK:
-        failures = [t for t in _AUTH_FAILURES.get(client_ip, []) if now - t < _AUTH_WINDOW_SECONDS]
+        _prune_auth_failures(now)
+        if client_ip not in _AUTH_FAILURES and len(_AUTH_FAILURES) >= _AUTH_MAX_TRACKED_CLIENTS:
+            # Evict the oldest active entry rather than allowing unbounded
+            # memory growth from clients that rotate source addresses.
+            oldest_ip = min(_AUTH_FAILURES, key=lambda ip: _AUTH_FAILURES[ip][-1])
+            _AUTH_FAILURES.pop(oldest_ip, None)
+        failures = _AUTH_FAILURES.setdefault(client_ip, [])
         failures.append(now)
         _AUTH_FAILURES[client_ip] = failures[-_AUTH_MAX_FAILURES:]
 

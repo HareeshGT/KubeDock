@@ -66,6 +66,10 @@ def save_lock_settings(**kwargs):
 def set_pin(pin: str, autolock_minutes: int = None):
     """Enable the lock and (re)set the PIN — generates a fresh salt so a
     changed PIN also invalidates the old hash entirely."""
+    # Keep the security boundary in this module as well as in the UI dialog:
+    # other callers must not be able to persist a PIN that cannot unlock the app.
+    if not isinstance(pin, str) or len(pin) < 6 or len(pin) > 64:
+        raise ValueError("PIN must be between 6 and 64 characters")
     salt = generate_salt()
     kwargs = {
         "enabled": True,
