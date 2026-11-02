@@ -280,3 +280,30 @@ def test_file_manager_service_routes_filesystem_operations_through_connection():
         ("rmdir", "/var/log/old-dir"),
         ("rename", "/var/log/a", "/var/log/b"),
     ]
+
+
+def test_command_worker_discards_result_after_connection_generation_changes(monkeypatch):
+    import pytest
+    import workers_parts.command as command_parts
+
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    first = FakeResource()
+    services = AppServices(connection)
+    original = connection.attach_ssh(first, host="first.example")
+    worker = services.commands.create_worker(None, "uname -a")
+    errors = []
+    worker.error.connect(errors.append)
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+    assert worker.connection_generation == original.generation
+    assert worker.connection_session_id == original.session_id
+    assert not worker._session_is_current()
+
+    monkeypatch.setattr(
+        command_parts,
+        "managed_exec_command",
+        lambda *_args, **_kwargs: pytest.fail("stale worker must not open an SSH channel"),
+    )
+    worker.run()
+
+    assert errors and "active connection changed" in errors[0].lower()
