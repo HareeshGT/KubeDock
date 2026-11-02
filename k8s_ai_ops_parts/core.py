@@ -2080,9 +2080,12 @@ def validate_action(data: dict):
     from ai_incident_workflow import ALLOWED_INCIDENT_RESOURCES, validate_incident_target
     if resource not in ALLOWED_INCIDENT_RESOURCES:
       raise ValueError(f"Root-cause investigation does not support resource type: {resource or '(missing)'}")
-    # An empty namespace is resolved from successful history by the UI handler;
-    # "default" here is only a syntactic placeholder for target validation.
-    validate_incident_target("", namespace or "default", resource, name)
+    # Follow-ups may omit the target name; the UI resolves that only from
+    # the active investigation in this exact cluster. Explicit names are validated here.
+    if name:
+      validate_incident_target("", namespace or "default", resource, name)
+    elif namespace:
+      validate_incident_target("", namespace, resource, "validation-placeholder")
     symptom = str(data.get("symptom", "general") or "general").strip().lower()
     if symptom not in {"memory", "cpu", "restarts", "unhealthy", "latency", "general"}:
       symptom = "general"
