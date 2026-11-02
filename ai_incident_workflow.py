@@ -60,16 +60,21 @@ def build_live_incident_command(context: str, namespace: str, resource_kind: str
             "ContainerNames={.spec.containers[*].name}{\"\\n\"}"
             "Images={.spec.containers[*].image}{\"\\n\"}"
             "ContainerStates={.status.containerStatuses[*].state}{\"\\n\"}"
+            "LastContainerStates={.status.containerStatuses[*].lastState}{\"\\n\"}"
+            "Owner={.metadata.ownerReferences[*].kind}/{.metadata.ownerReferences[*].name}{\"\\n\"}"
+            "Volumes={range .spec.volumes[*]}{.name}:{.persistentVolumeClaim.claimName};{end}{\"\\n\"}"
             "RestartCounts={.status.containerStatuses[*].restartCount}{\"\\n\"}"
             "Ready={.status.containerStatuses[*].ready}{\"\\n\"}"
-            "Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason}"
+            "Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason}{\"\\n\"}"
+            "Resources={range .spec.containers[*]}{.name} req_cpu={.resources.requests.cpu} req_memory={.resources.requests.memory} limit_cpu={.resources.limits.cpu} limit_memory={.resources.limits.memory};{end}"
         )
     elif target["resource_kind"] in {"deployment", "statefulset", "daemonset", "replicaset"}:
         summary = (
             "Name={.metadata.name}{\"\\n\"}Desired={.spec.replicas}{\"\\n\"}"
             "Ready={.status.readyReplicas}{\"\\n\"}Available={.status.availableReplicas}{\"\\n\"}"
             "Updated={.status.updatedReplicas}{\"\\n\"}Images={.spec.template.spec.containers[*].image}{\"\\n\"}"
-            "Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason}"
+            "Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason}{\"\\n\"}"
+            "Resources={range .spec.template.spec.containers[*]}{.name} req_cpu={.resources.requests.cpu} req_memory={.resources.requests.memory} limit_cpu={.resources.limits.cpu} limit_memory={.resources.limits.memory};{end}"
         )
     elif target["resource_kind"] == "service":
         summary = (
@@ -94,11 +99,31 @@ def build_live_incident_command(context: str, namespace: str, resource_kind: str
         "--no-headers 2>&1 | tail -n 30",
     ]
     if target["resource_kind"] == "pod":
+        node_context = "kubectl " + context_flag
+        node_jsonpath = (
+            "Name={.metadata.name};Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason};"
+            "Capacity=cpu:{.status.capacity.cpu},memory:{.status.capacity.memory};"
+            "Allocatable=cpu:{.status.allocatable.cpu},memory:{.status.allocatable.memory}"
+        )
         commands.extend([
             "printf '\\n%s\\n' '__KUBEDOCK_LOGS__'",
             base + " logs " + name + " --all-containers=true --prefix=true --tail=100 2>&1",
+            "printf '\\n%s\\n' '__KUBEDOCK_PREVIOUS_LOGS__'",
+            base + " logs " + name + " --all-containers=true --prefix=true --previous --tail=50 2>&1",
             "printf '\\n%s\\n' '__KUBEDOCK_METRICS__'",
             base + " top pod " + name + " --containers 2>&1",
+            "printf '\\n%s\\n' '__KUBEDOCK_NODE__'",
+            "node=$(" + base + " get pod " + name + " -o jsonpath=" + shlex.quote("{.spec.nodeName}") + " 2>/dev/null); "
+            + "if [ -n \"$node\" ]; then " + node_context + "get node \"$node\" -o jsonpath="
+            + shlex.quote(node_jsonpath) + " 2>&1; else echo 'Node assignment unavailable'; fi",
+            "printf '\\n%s\\n' '__KUBEDOCK_NODE_METRICS__'",
+            "if [ -n \"$node\" ]; then " + node_context + "top node \"$node\" 2>&1; "
+            + "else echo 'Node metrics unavailable'; fi",
+        ])
+    elif target["resource_kind"] in {"deployment", "statefulset", "daemonset", "replicaset", "job", "cronjob"}:
+        commands.extend([
+            "printf '\\n%s\\n' '__KUBEDOCK_METRICS__'",
+            base + " top pods --containers 2>&1 | head -n 60",
         ])
     elif target["resource_kind"] == "service":
         commands.extend([
@@ -140,6 +165,9 @@ def parse_live_incident_output(output: str, *, max_chars_per_section: int = 12_0
         "__KUBEDOCK_NAMESPACE_WARNINGS__": "namespace_warnings",
         "__KUBEDOCK_LOGS__": "logs",
         "__KUBEDOCK_METRICS__": "metrics",
+        "__KUBEDOCK_PREVIOUS_LOGS__": "previous_logs",
+        "__KUBEDOCK_NODE__": "node_summary",
+        "__KUBEDOCK_NODE_METRICS__": "node_metrics",
         "__KUBEDOCK_ENDPOINTS__": "endpoints",
     }
     result = {}
@@ -158,7 +186,7 @@ def parse_live_incident_output(output: str, *, max_chars_per_section: int = 12_0
     if "logs" not in result:
         result["logs"] = ""
     result["collection_note"] = (
-        "Collected read-only resource summary, bounded event excerpts, and pod logs/metrics where applicable. "
+        "Collected read-only resource state, container requests/limits, bounded events, logs, pod/node metrics and node conditions where applicable. "
         "Secret and ConfigMap values were not queried; unavailable evidence remains unknown."
     )
     return result

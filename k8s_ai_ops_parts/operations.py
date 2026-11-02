@@ -1,4 +1,12 @@
 import shlex
+from datetime import datetime, timezone
+
+import ai_incident_workflow
+import ai_intelligence
+from ops_mind_investigation import (
+    OpsMindInvestigationWorker,
+    calculate_resource_utilization,
+)
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -128,6 +136,12 @@ class K8sAIOpsOperationsMixin:
         if not request:
             return
         self._last_submitted_request = request
+        selected_context = self._kube_context()
+        if getattr(self, "_conversation_context_key", selected_context) != selected_context:
+            # Never carry transcript references or investigation evidence across clusters.
+            self._voice_conversation = []
+            self._active_investigation = None
+            self._conversation_context_key = selected_context
         if len(request) > MAX_PROMPT_CHARS:
             self._write_error(f'Request is too long. Maximum is {MAX_PROMPT_CHARS} characters.')
             return
@@ -219,6 +233,44 @@ class K8sAIOpsOperationsMixin:
             self._write_error('\n' + action['reason'])
             self._speak(action.get('reason') or "That operation isn't supported.")
             return
+        if action.get('kind') == 'investigation':
+            active = getattr(self, '_active_investigation', None)
+            current_context = self._kube_context()
+            if (
+                isinstance(active, dict)
+                and active.get('context') == current_context
+                and (not action.get('name') or action.get('name') == active.get('name'))
+                and action.get('resource') == active.get('resource')
+            ):
+                # Resolve natural-language follow-ups against the active investigation,
+                # not an unrelated previous kubectl operation.
+                if not action.get('name'):
+                    action['name'] = active.get('name', '')
+                if not action.get('namespace'):
+                    action['namespace'] = active.get('namespace', '')
+            if not action.get('name'):
+                reason = "Which Kubernetes resource should I investigate? Please provide its exact name and resource type."
+                self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+                self._remember_conversation_turn('assistant', reason)
+                self._write_info('\\n' + reason)
+                self._speak(reason)
+                self.request_input.setFocus()
+                return
+            if not action.get('namespace'):
+                target = resolve_target_from_history(action, self._history, current_context)
+                if target:
+                    action['namespace'], action['name'] = target
+            if not action.get('namespace'):
+                reason = "Please specify the namespace for this investigation, or refer to a resource from an earlier successful lookup."
+                self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+                self._remember_conversation_turn('assistant', reason)
+                self._write_info('\n' + reason)
+                self._speak(reason)
+                self.request_input.setFocus()
+                return
+            self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+            self._start_root_cause_investigation(action)
+            return
         if action.get('action') == 'logs' and not action.get('namespace'):
             target = resolve_target_from_history(action, self._history, self._kube_context())
             if target:
@@ -284,7 +336,231 @@ class K8sAIOpsOperationsMixin:
 
     def _on_ai_finished(self):
         self._ai_worker = None
-        if self._operation_worker is None:
+        if (
+            self._operation_worker is None
+            and self._investigation_collection_worker is None
+            and self._investigation_ai_worker is None
+        ):
+            self._set_busy(False)
+
+    def _start_root_cause_investigation(self, action: dict):
+        """Collect bounded read-only evidence, then analyze it with the deep-diagnosis profile."""
+        if self._investigation_collection_worker is not None or self._investigation_ai_worker is not None:
+            self._write_info("\nAn Ops Mind investigation is already running.")
+            return
+        try:
+            target = ai_incident_workflow.validate_incident_target(
+                self._kube_context(),
+                action.get("namespace", ""),
+                action.get("resource", ""),
+                action.get("name", ""),
+            )
+        except ValueError as exc:
+            self._write_error("\nCannot start investigation: " + str(exc))
+            self._set_busy(False)
+            return
+
+        fallback_provider = ai_assist.get_provider()
+        fallback_key = ai_assist.get_api_key(fallback_provider)
+        fallback_model = ai_assist.get_model(fallback_provider)
+        provider, api_key, model, selection_error = ai_assist._task_provider_selection(
+            "deep_diagnosis", fallback_provider, fallback_key, fallback_model
+        )
+        if selection_error:
+            self._write_error("\n" + selection_error)
+            self._set_busy(False)
+            return
+
+        settings = ai_assist.get_ai_settings()
+        if provider != "ollama":
+            if not settings.get("cloud_ai_enabled", True):
+                self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
+                self._set_busy(False)
+                return
+            consent = QMessageBox.question(
+                self,
+                "Share redacted investigation evidence?",
+                "Ops Mind will collect evidence using read-only Kubernetes commands, then send redacted resource state, events, bounded logs and metrics to the selected hosted AI provider. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if consent != QMessageBox.Yes:
+                self._write_info("\nInvestigation cancelled. No cluster evidence was collected or sent.")
+                self._set_busy(False)
+                return
+
+        try:
+            command = ai_incident_workflow.build_live_incident_command(
+                target["context"], target["namespace"], target["resource_kind"], target["resource_name"]
+            )
+        except ValueError as exc:
+            self._write_error("\nCannot build read-only evidence collector: " + str(exc))
+            self._set_busy(False)
+            return
+
+        try:
+            stored_settings = load_settings()
+            prometheus_url = str(stored_settings.get("prometheus_history_url", "") or "").strip()
+            history_days = int(stored_settings.get("prometheus_history_days", 7))
+            if not 1 <= history_days <= 30:
+                history_days = 7
+        except (TypeError, ValueError):
+            history_days = 7
+            try:
+                prometheus_url = str(load_settings().get("prometheus_history_url", "") or "").strip()
+            except Exception:
+                prometheus_url = ""
+        except Exception:
+            prometheus_url = ""
+            history_days = 7
+        self._pending_investigation = {
+            "target": target,
+            "question": str(action.get("question") or self._last_submitted_request or "")[:2000],
+            "symptom": str(action.get("symptom") or "general"),
+            "provider": provider,
+            "api_key": api_key,
+            "model": model,
+            "prometheus_url": prometheus_url,
+            "history_days": history_days,
+        }
+        self.output.append(
+            f"<br><span style='color:{T['ACCENT']}'>Ops Mind · read-only investigation</span><br>"
+            f"<span style='color:{T['TEXT_MUTED']}'>Target: {self._escape_html(target['resource_kind'])}/"
+            f"{self._escape_html(target['resource_name'])} · namespace {self._escape_html(target['namespace'])} · "
+            f"context {self._escape_html(target['context'] or 'current context')}</span>"
+        )
+        self._write_info("Collecting Kubernetes state, requests/limits, events, bounded logs, current metrics and node evidence where applicable…")
+        self._set_busy(True)
+        worker = CommandWorker(self.ssh, command + " 2>&1", timeout=60)
+        self._investigation_collection_worker = worker
+        worker.result.connect(self._on_root_cause_evidence_collected)
+        worker.error.connect(self._on_root_cause_collection_error)
+        worker.finished.connect(self._on_root_cause_collection_finished)
+        track_worker(self._workers, worker)
+        worker.start()
+
+    def _on_root_cause_evidence_collected(self, output: str, error: str, exit_code: int):
+        pending = getattr(self, "_pending_investigation", None)
+        if not isinstance(pending, dict):
+            self._write_error("\nInvestigation state was lost; collected output was discarded.")
+            return
+        target = dict(pending["target"])
+        raw = (output or "") + (("\n" + error) if error else "")
+        sections = ai_incident_workflow.parse_live_incident_output(raw)
+        logs = str(sections.get("logs", "") or "")
+        previous_logs = str(sections.get("previous_logs", "") or "")
+        events = "\n".join(
+            str(sections.get(key, "") or "")
+            for key in ("target_events", "namespace_warnings")
+        )
+        resource_summary = str(sections.get("resource_summary", "") or "")
+        metrics = str(sections.get("metrics", "") or "")
+        if exit_code != 0:
+            collection_note = "One or more read-only collector commands failed. Missing evidence is unknown, not healthy."
+        else:
+            collection_note = "Read-only collector exited successfully; individual sections may still report unavailable sources."
+        evidence = {
+            "reported_symptom": pending["symptom"],
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+            "resource_summary": ai_incident_workflow.compact_evidence_text(resource_summary, max_chars=7000),
+            "target_events": ai_incident_workflow.compact_evidence_text(sections.get("target_events", ""), max_chars=5000),
+            "namespace_warnings": ai_incident_workflow.compact_evidence_text(sections.get("namespace_warnings", ""), max_chars=5000),
+            "logs": ai_incident_workflow.compact_evidence_text(logs, max_chars=9000),
+            "previous_logs": ai_incident_workflow.compact_evidence_text(previous_logs, max_chars=5000),
+            "metrics": ai_incident_workflow.compact_evidence_text(metrics, max_chars=5000),
+            "node_summary": ai_incident_workflow.compact_evidence_text(sections.get("node_summary", ""), max_chars=2500),
+            "node_metrics": ai_incident_workflow.compact_evidence_text(sections.get("node_metrics", ""), max_chars=2500),
+            "endpoints": ai_incident_workflow.compact_evidence_text(sections.get("endpoints", ""), max_chars=2500),
+            "utilization": calculate_resource_utilization(resource_summary, metrics),
+            "candidate_signals": ai_intelligence.correlate_incident_signals(
+                logs=(logs + "\n" + previous_logs).splitlines(),
+                events=events.splitlines(),
+                metrics={"pod": metrics, "node": sections.get("node_metrics", "")},
+            ),
+            "collector_exit_code": int(exit_code),
+            "collection_note": collection_note,
+        }
+        if error:
+            evidence["collector_error"] = ai_intelligence.redact_evidence(error)[:1000]
+        self._active_investigation = {
+            "context": target["context"],
+            "namespace": target["namespace"],
+            "resource": target["resource_kind"],
+            "name": target["resource_name"],
+            "question": pending["question"],
+            "symptom": pending["symptom"],
+            "evidence": evidence,
+            "collected_at": evidence["collected_at"],
+        }
+        self._write_info("Live evidence collected. Sending the bounded, redacted evidence package for analysis…")
+        worker = OpsMindInvestigationWorker(
+            pending["provider"], pending["api_key"], pending["model"],
+            pending["question"], target, evidence,
+            prometheus_url=pending["prometheus_url"], history_days=pending["history_days"], parent=self,
+        )
+        self._investigation_ai_worker = worker
+        worker.done.connect(self._on_root_cause_investigation_done)
+        worker.error.connect(self._on_root_cause_investigation_error)
+        worker.finished.connect(self._on_root_cause_investigation_finished)
+        track_worker(self._workers, worker)
+        worker.start()
+
+    def _on_root_cause_collection_error(self, message: str):
+        self._pending_investigation = None
+        self._write_error("\nEvidence collection failed: " + ai_intelligence.redact_evidence(message)[:1000])
+
+    def _on_root_cause_collection_finished(self):
+        self._investigation_collection_worker = None
+        if self._investigation_ai_worker is None and self._ai_worker is None:
+            self._set_busy(False)
+
+    def _investigation_report_html(self, markdown_text: str) -> str:
+        """Render a small safe Markdown subset without allowing model HTML or links."""
+        rendered = []
+        for line in str(markdown_text or "").splitlines():
+            escaped = self._escape_html(line.strip())
+            if not escaped:
+                rendered.append("<div style='height:6px'></div>")
+            elif escaped.startswith("## "):
+                rendered.append(
+                    f"<div style='margin-top:10px;margin-bottom:4px;color:{T['ACCENT']};font-weight:700'>{escaped[3:]}</div>"
+                )
+            elif escaped.startswith("### "):
+                rendered.append(
+                    f"<div style='margin-top:7px;color:{T['TEXT_PRIMARY']};font-weight:700'>{escaped[4:]}</div>"
+                )
+            elif escaped.startswith("- ") or escaped.startswith("* "):
+                rendered.append(f"<div style='margin-left:14px'>• {escaped[2:]}</div>")
+            else:
+                rendered.append(f"<div>{escaped}</div>")
+        return "".join(rendered)
+
+    def _on_root_cause_investigation_done(self, answer: str, evidence: dict):
+        active = getattr(self, "_active_investigation", None) or {}
+        target_label = (
+            f"{active.get('resource', 'resource')}/{active.get('name', 'unknown')} "
+            f"in namespace {active.get('namespace', 'unknown')}"
+        )
+        self.output.append(
+            f"<br><span style='color:{T['ACCENT']};font-weight:700'>Ops Mind investigation report</span><br>"
+            f"<span style='color:{T['TEXT_MUTED']}'>{self._escape_html(target_label)} · "
+            f"{self._escape_html(active.get('context') or 'current context')}</span><br>"
+            f"<span style='color:{T['TEXT_PRIMARY']}'>{self._investigation_report_html(answer)}</span>"
+        )
+        if isinstance(active, dict):
+            active["answer"] = answer
+            active["evidence"] = evidence
+            self._active_investigation = active
+        self._remember_conversation_turn("assistant", f"Investigation report for {target_label}. {answer}")
+        self._speak("The investigation report is ready. Review the findings and recommended verification steps.")
+
+    def _on_root_cause_investigation_error(self, message: str):
+        self._write_error("\nInvestigation analysis failed: " + ai_intelligence.redact_evidence(message)[:1200])
+
+    def _on_root_cause_investigation_finished(self):
+        self._investigation_ai_worker = None
+        self._pending_investigation = None
+        if self._ai_worker is None and self._operation_worker is None:
             self._set_busy(False)
 
     def _execute_action(self, action: dict):
@@ -696,4 +972,11 @@ class K8sAIOpsOperationsMixin:
                 self._operation_worker.quit()
             except Exception:
                 pass
+        for worker_name in ("_investigation_collection_worker", "_investigation_ai_worker"):
+            worker = getattr(self, worker_name, None)
+            if worker is not None:
+                try:
+                    worker.quit()
+                except Exception:
+                    pass
         super().closeEvent(event)

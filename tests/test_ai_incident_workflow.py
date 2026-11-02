@@ -33,6 +33,11 @@ class IncidentWorkflowTests(unittest.TestCase):
         self.assertIn("__KUBEDOCK_LOGS__", command)
         self.assertIn("--tail=100", command)
         self.assertIn("top pod", command)
+        self.assertIn("limit_memory", command)
+        self.assertIn("__KUBEDOCK_PREVIOUS_LOGS__", command)
+        self.assertIn("__KUBEDOCK_NODE__", command)
+        self.assertIn("top node", command)
+        self.assertIn("lastState", command)
 
     def test_cross_system_collection_includes_host_docker_and_read_only_kubernetes(self):
         from ai_incident_workflow import build_cross_system_collection_command
