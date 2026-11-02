@@ -12,7 +12,21 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
-from console_ui import ConsoleUI
+try:
+    from console_ui import ConsoleUI
+except ModuleNotFoundError as import_error:
+    if import_error.name != "console_ui":
+        raise
+    import importlib.util
+
+    console_ui_path = Path(__file__).with_name("console_ui.py")
+    console_ui_spec = importlib.util.spec_from_file_location("console_ui", console_ui_path)
+    if console_ui_spec is None or console_ui_spec.loader is None:
+        raise RuntimeError(f"Installer console UI helper is missing: {console_ui_path}")
+    console_ui_module = importlib.util.module_from_spec(console_ui_spec)
+    sys.modules["console_ui"] = console_ui_module
+    console_ui_spec.loader.exec_module(console_ui_module)
+    ConsoleUI = console_ui_module.ConsoleUI
 
 UI = ConsoleUI()
 
