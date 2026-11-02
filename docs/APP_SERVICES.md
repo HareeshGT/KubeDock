@@ -67,7 +67,7 @@ bounded managed channel from the existing pool.
 | `KubernetesService` | Kubernetes command execution over the selected connection | Kubernetes resources, tunnels, Ops Mind |
 | `DockerService` | Docker command execution over the selected connection | Docker tab |
 | `DashboardService` | Host, process and cluster telemetry commands | Dashboard refresh pipeline |
-| `FileManagerService` | Filesystem access, directory listing and streaming file readers | Remote file manager |
+| `FileManagerService` | Filesystem access, path normalization, create/delete/rename, directory listing, and guarded streaming file readers | Remote file manager |
 | `TerminalService` | Integrated terminal and working-directory command workers | Main terminal |
 | `AIService` | Provider-backed explain, Kubernetes interpretation and investigation worker construction | Pod AI, terminal explain, Ops Mind |
 | `WebAppService` | Restricted access to the active session and shared backend command execution | Embedded FastAPI application |
@@ -75,9 +75,11 @@ bounded managed channel from the existing pool.
 Feature widgets receive the shared services from the main window. Their
 legacy `ssh` accessors now resolve through `ConnectionService`; the stored
 legacy value is only a compatibility fallback for standalone widget tests.
-Feature workers are created through their domain service in the desktop app.
+Feature command workers are created through their domain service in the desktop app. Command, directory, and file-stream workers capture the session generation and discard stale results after a reconnect. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while common path and mutation operations are service methods.
 The embedded Web App is passed `WebAppService` and resolves its active SSH
-client and command executor from the same `AppServices` instance.
+client and command executor from the same `AppServices` instance. It also
+retains the Qt desktop bridge for UI-affecting actions, and command dispatch is
+bound to the same SSH client that was validated for that request.
 
 ## Threading and security boundaries
 
@@ -90,6 +92,10 @@ client and command executor from the same `AppServices` instance.
   AI evidence redaction remain in their existing paths.
 - Service snapshots do not contain passwords, private-key contents, or
   private-key paths.
+- A feature service must not open its own SSH/FTP connection. Connection
+  workers establish sessions; `ConnectionService` adopts and owns them.
+- Async worker results are discarded when their captured session generation
+  is no longer current.
 - The one existing SSH health monitor is retained to avoid duplicate probes.
 
 ## Compatibility and next cleanup
