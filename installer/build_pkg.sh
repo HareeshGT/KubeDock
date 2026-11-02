@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
 INSTALLER="$SCRIPT_DIR/installer.sh"
+CONSOLE_UI="$SCRIPT_DIR/console_ui.sh"
 
 VERSION="${1:-1.0.0}"
 OUTPUT="${2:-$ROOT/dist/KubeDock-$VERSION.pkg}"
@@ -30,6 +31,11 @@ BRANCH_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/branches?per
 
 if [ ! -f "$INSTALLER" ]; then
   echo "ERROR: installer.sh not found: $INSTALLER"
+  exit 1
+fi
+
+if [ ! -f "$CONSOLE_UI" ]; then
+  echo "ERROR: console_ui.sh not found: $CONSOLE_UI"
   exit 1
 fi
 
@@ -78,7 +84,8 @@ if [ ! -f "$SCRIPT_DIR/installer.sh" ]; then
 fi
 
 cp "$SCRIPT_DIR/installer.sh" "$INSTALLER"
-chmod 755 "$INSTALLER"
+cp "$SCRIPT_DIR/console_ui.sh" "$WORK/console_ui.sh"
+chmod 755 "$INSTALLER" "$WORK/console_ui.sh"
 
 # --------------------------------------------------
 # Choose fast prebuilt install or developer source build
