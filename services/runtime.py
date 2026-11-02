@@ -6,6 +6,14 @@ import threading
 from typing import Optional
 
 from .connection import ConnectionService
+from .command import CommandService
+from .kubernetes import KubernetesService
+from .docker import DockerService
+from .dashboard import DashboardService
+from .files import FileManagerService
+from .terminal import TerminalService
+from .ai import AIService
+from .webapp import WebAppService
 
 
 class AppServices:
@@ -18,6 +26,15 @@ class AppServices:
 
     def __init__(self, connection: Optional[ConnectionService] = None):
         self.connection = connection or ConnectionService()
+        # One shared command executor backs every remote feature service.
+        self.commands = CommandService(self.connection)
+        self.kubernetes = KubernetesService(self.connection, self.commands)
+        self.docker = DockerService(self.connection, self.commands)
+        self.dashboard = DashboardService(self.connection, self.commands)
+        self.files = FileManagerService(self.connection, self.commands)
+        self.terminal = TerminalService(self.connection, self.commands)
+        self.ai = AIService()
+        self.webapp = WebAppService(self.connection, self.commands)
         self._lock = threading.Lock()
         self._stopped = False
 
