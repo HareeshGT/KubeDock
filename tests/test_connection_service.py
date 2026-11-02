@@ -346,3 +346,22 @@ def test_file_stream_reader_rejects_a_superseded_filesystem_session():
 
     assert errors and "connection changed" in errors[0].lower()
     assert first.calls == []
+
+
+def test_connection_service_owns_connection_and_health_worker_factories():
+    from workers import ConnectWorker, FTPConnectionWorker, ConnectionHealthWorker
+
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    ssh = connection.create_ssh_connect_worker(
+        "ssh.example", 22, "operator", "/tmp/operator.pem", "",
+    )
+    ftp = connection.create_file_connect_worker(
+        "ftp.example", 21, "operator", "secret", tls=False, passive=True,
+    )
+    assert isinstance(ssh, ConnectWorker)
+    assert isinstance(ftp, FTPConnectionWorker)
+
+    connection.attach_ssh(FakeResource(), host="ssh.example")
+    health = connection.create_health_worker()
+    assert isinstance(health, ConnectionHealthWorker)
+    assert health.connection_generation == connection.snapshot.generation
