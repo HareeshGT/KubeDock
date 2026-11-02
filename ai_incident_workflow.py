@@ -60,6 +60,9 @@ def build_live_incident_command(context: str, namespace: str, resource_kind: str
             "ContainerNames={.spec.containers[*].name}{\"\\n\"}"
             "Images={.spec.containers[*].image}{\"\\n\"}"
             "ContainerStates={.status.containerStatuses[*].state}{\"\\n\"}"
+            "LastContainerStates={.status.containerStatuses[*].lastState}{\"\\n\"}"
+            "Owner={.metadata.ownerReferences[*].kind}/{.metadata.ownerReferences[*].name}{\"\\n\"}"
+            "Volumes={range .spec.volumes[*]}{.name}:{.persistentVolumeClaim.claimName};{end}{\"\\n\"}"
             "RestartCounts={.status.containerStatuses[*].restartCount}{\"\\n\"}"
             "Ready={.status.containerStatuses[*].ready}{\"\\n\"}"
             "Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason}{\"\\n\"}"
@@ -101,7 +104,8 @@ def build_live_incident_command(context: str, namespace: str, resource_kind: str
             "Name={.metadata.name};Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason};"
             "Capacity=cpu:{.status.capacity.cpu},memory:{.status.capacity.memory};"
             "Allocatable=cpu:{.status.allocatable.cpu},memory:{.status.allocatable.memory}"
-        )        commands.extend([
+        )
+        commands.extend([
             "printf '\\n%s\\n' '__KUBEDOCK_LOGS__'",
             base + " logs " + name + " --all-containers=true --prefix=true --tail=100 2>&1",
             "printf '\\n%s\\n' '__KUBEDOCK_PREVIOUS_LOGS__'",
