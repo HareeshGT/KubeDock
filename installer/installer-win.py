@@ -239,7 +239,7 @@ def choose_branch(branches):
     UI.phase(4, 8, "Selecting source branch", "Choose the Git branch to package.")
     UI.info("Available Git branches:")
     for i, branch in enumerate(branches, 1):
-        UI._write(f"   {i:>2}  {branch}")
+        UI.menu_item(i, branch)
 
     while True:
         try:
