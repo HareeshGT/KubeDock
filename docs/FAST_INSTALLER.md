@@ -11,6 +11,19 @@ The source-build path remains available for users who need a specific branch or
 the optional Qwen3-TTS/Torch runtime. PyInstaller is installed from
 `requirements-build.txt`, not the core runtime dependency list.
 
+## Console installer experience
+
+Interactive terminal installs use a branded KubeDock console UI with numbered
+stages, progress bars, colored status messages, and spinners for long-running
+download, dependency-install, clone, and packaging commands. The Windows
+Python installer uses the same visual style and reports download progress.
+
+The installer automatically falls back to plain text when output is piped, the
+terminal is unavailable, `TERM=dumb`, or `NO_COLOR` is set. CI and cloud-init
+runs therefore remain non-interactive and do not require an ANSI-capable
+terminal. Set `KUBEDOCK_INSTALL_VERBOSE=1` to print successful command logs
+instead of keeping them quiet behind progress indicators.
+
 ## Install modes
 
 - `KUBEDOCK_INSTALL_MODE=auto` (default): try the prebuilt release, then use the source installer if no compatible bundle is published.
