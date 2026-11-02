@@ -460,6 +460,7 @@ class K8sAIOpsOperationsMixin:
             "resource": target["resource_kind"],
             "name": target["resource_name"],
             "question": pending["question"],
+            "symptom": pending["symptom"],
             "evidence": evidence,
             "collected_at": evidence["collected_at"],
         }
@@ -477,6 +478,7 @@ class K8sAIOpsOperationsMixin:
         worker.start()
 
     def _on_root_cause_collection_error(self, message: str):
+        self._pending_investigation = None
         self._write_error("\nEvidence collection failed: " + ai_intelligence.redact_evidence(message)[:1000])
 
     def _on_root_cause_collection_finished(self):
@@ -921,4 +923,11 @@ class K8sAIOpsOperationsMixin:
                 self._operation_worker.quit()
             except Exception:
                 pass
+        for worker_name in ("_investigation_collection_worker", "_investigation_ai_worker"):
+            worker = getattr(self, worker_name, None)
+            if worker is not None:
+                try:
+                    worker.quit()
+                except Exception:
+                    pass
         super().closeEvent(event)
