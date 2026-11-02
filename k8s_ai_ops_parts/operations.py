@@ -335,7 +335,7 @@ class K8sAIOpsOperationsMixin:
     def _start_root_cause_investigation(self, action: dict):
         """Collect bounded read-only evidence, then analyze it with the deep-diagnosis profile."""
         if self._investigation_collection_worker is not None or self._investigation_ai_worker is not None:
-            self._write_info("\\nAn Ops Mind investigation is already running.")
+            self._write_info("\nAn Ops Mind investigation is already running.")
             return
         try:
             target = ai_incident_workflow.validate_incident_target(
@@ -345,7 +345,7 @@ class K8sAIOpsOperationsMixin:
                 action.get("name", ""),
             )
         except ValueError as exc:
-            self._write_error("\\nCannot start investigation: " + str(exc))
+            self._write_error("\nCannot start investigation: " + str(exc))
             return
 
         fallback_provider = ai_assist.get_provider()
@@ -355,13 +355,13 @@ class K8sAIOpsOperationsMixin:
             "deep_diagnosis", fallback_provider, fallback_key, fallback_model
         )
         if selection_error:
-            self._write_error("\\n" + selection_error)
+            self._write_error("\n" + selection_error)
             return
 
         settings = ai_assist.get_ai_settings()
         if provider != "ollama":
             if not settings.get("cloud_ai_enabled", True):
-                self._write_error("\\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
+                self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
                 return
             consent = QMessageBox.question(
                 self,
@@ -371,7 +371,7 @@ class K8sAIOpsOperationsMixin:
                 QMessageBox.No,
             )
             if consent != QMessageBox.Yes:
-                self._write_info("\\nInvestigation cancelled. No cluster evidence was collected or sent.")
+                self._write_info("\nInvestigation cancelled. No cluster evidence was collected or sent.")
                 self._set_busy(False)
                 return
 
@@ -380,7 +380,7 @@ class K8sAIOpsOperationsMixin:
                 target["context"], target["namespace"], target["resource_kind"], target["resource_name"]
             )
         except ValueError as exc:
-            self._write_error("\\nCannot build read-only evidence collector: " + str(exc))
+            self._write_error("\nCannot build read-only evidence collector: " + str(exc))
             return
 
         try:
@@ -415,14 +415,14 @@ class K8sAIOpsOperationsMixin:
     def _on_root_cause_evidence_collected(self, output: str, error: str, exit_code: int):
         pending = getattr(self, "_pending_investigation", None)
         if not isinstance(pending, dict):
-            self._write_error("\\nInvestigation state was lost; collected output was discarded.")
+            self._write_error("\nInvestigation state was lost; collected output was discarded.")
             return
         target = dict(pending["target"])
-        raw = (output or "") + (("\\n" + error) if error else "")
+        raw = (output or "") + (("\n" + error) if error else "")
         sections = ai_incident_workflow.parse_live_incident_output(raw)
         logs = str(sections.get("logs", "") or "")
         previous_logs = str(sections.get("previous_logs", "") or "")
-        events = "\\n".join(
+        events = "\n".join(
             str(sections.get(key, "") or "")
             for key in ("target_events", "namespace_warnings")
         )
@@ -445,7 +445,7 @@ class K8sAIOpsOperationsMixin:
             "endpoints": ai_incident_workflow.compact_evidence_text(sections.get("endpoints", ""), max_chars=2500),
             "utilization": calculate_resource_utilization(resource_summary, metrics),
             "candidate_signals": ai_intelligence.correlate_incident_signals(
-                logs=(logs + "\\n" + previous_logs).splitlines(),
+                logs=(logs + "\n" + previous_logs).splitlines(),
                 events=events.splitlines(),
                 metrics={"pod": metrics, "node": sections.get("node_metrics", "")},
             ),
@@ -477,7 +477,7 @@ class K8sAIOpsOperationsMixin:
         worker.start()
 
     def _on_root_cause_collection_error(self, message: str):
-        self._write_error("\\nEvidence collection failed: " + ai_intelligence.redact_evidence(message)[:1000])
+        self._write_error("\nEvidence collection failed: " + ai_intelligence.redact_evidence(message)[:1000])
 
     def _on_root_cause_collection_finished(self):
         self._investigation_collection_worker = None
@@ -504,7 +504,7 @@ class K8sAIOpsOperationsMixin:
         self._speak("The investigation report is ready. Review the findings and recommended verification steps.")
 
     def _on_root_cause_investigation_error(self, message: str):
-        self._write_error("\\nInvestigation analysis failed: " + ai_intelligence.redact_evidence(message)[:1200])
+        self._write_error("\nInvestigation analysis failed: " + ai_intelligence.redact_evidence(message)[:1200])
 
     def _on_root_cause_investigation_finished(self):
         self._investigation_ai_worker = None
