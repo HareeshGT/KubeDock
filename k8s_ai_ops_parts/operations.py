@@ -357,6 +357,7 @@ class K8sAIOpsOperationsMixin:
             )
         except ValueError as exc:
             self._write_error("\nCannot start investigation: " + str(exc))
+            self._set_busy(False)
             return
 
         fallback_provider = ai_assist.get_provider()
@@ -367,12 +368,14 @@ class K8sAIOpsOperationsMixin:
         )
         if selection_error:
             self._write_error("\n" + selection_error)
+            self._set_busy(False)
             return
 
         settings = ai_assist.get_ai_settings()
         if provider != "ollama":
             if not settings.get("cloud_ai_enabled", True):
                 self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
+                self._set_busy(False)
                 return
             consent = QMessageBox.question(
                 self,
@@ -392,6 +395,7 @@ class K8sAIOpsOperationsMixin:
             )
         except ValueError as exc:
             self._write_error("\nCannot build read-only evidence collector: " + str(exc))
+            self._set_busy(False)
             return
 
         try:
