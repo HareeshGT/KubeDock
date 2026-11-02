@@ -155,7 +155,8 @@ class ConnectionService:
         # Teardown runs outside the state lock.
         if old_ssh is not None and old_ssh is not ssh:
             self._close_pool_quietly(old_ssh)
-            self._close_quietly(old_filesystem)
+            if old_filesystem is not filesystem:
+                self._close_quietly(old_filesystem)
             self._close_quietly(old_ssh)
         elif old_filesystem is not None and old_filesystem is not filesystem:
             self._close_quietly(old_filesystem)
