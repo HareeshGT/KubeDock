@@ -260,11 +260,9 @@ def test_file_manager_service_routes_filesystem_operations_through_connection():
     connection = ConnectionService()
     filesystem = FakeFilesystem()
     connection.attach_file_connection(
-        filesystem, protocol="sftp", host="files.example", port=22,
+        filesystem, protocol="ftp", host="files.example", port=22,
         username="operator",
     )
-    # The service intentionally accepts an SFTP-like filesystem under the
-    # SSH protocol in production; use FTP here to test its FS operation API.
     services = AppServices(connection)
 
     assert services.files.normalize("/var/log") == "/var/log"
