@@ -26,6 +26,12 @@ class OpsMindInvestigationTests(unittest.TestCase):
         self.assertEqual(action["kind"], "investigation")
         self.assertEqual(action["symptom"], "memory")
         self.assertEqual(action["namespace"], "apps")
+        followup = validate_action({
+            "action": "investigate", "resource": "pod",
+            "name": "", "namespace": "", "symptom": "memory",
+        })
+        self.assertEqual(followup["kind"], "investigation")
+        self.assertEqual(followup["name"], "")
         normal = validate_action({
             "action": "describe", "resource": "pod",
             "name": "api-7d9f", "namespace": "apps",
