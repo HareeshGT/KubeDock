@@ -433,22 +433,17 @@ EOF
   fi
 
   ui_phase 5 5 "Finishing installation" "Writing launch shortcuts and cleaning temporary files."
-  ui_complete "KubeDock installed from the verified prebuilt bundle"
   case "$OS" in
-    Darwin) echo "Installed: /Applications/KubeDock.app" ;;
-    Linux) echo "Installed: /opt/KubeDock"; echo "Launch with: kubedock" ;;
-    MINGW*|MSYS*|CYGWIN*) echo "Installed: C:\\Program Files\\KubeDock" ;;
+    Darwin) ui_success "Installed: /Applications/KubeDock.app" ;;
+    Linux) ui_success "Installed: /opt/KubeDock"; ui_info "Launch with: kubedock" ;;
+    MINGW*|MSYS*|CYGWIN*) ui_success "Installed: C:\\Program Files\\KubeDock" ;;
   esac
-  if [ -f "$target/KubeDock-BUILD-METADATA.json" ]; then
-    echo "Build metadata:"
-    cat "$target/KubeDock-BUILD-METADATA.json"
-  elif [ -f "$target/Contents/Resources/KubeDock-BUILD-METADATA.json" ]; then
-    echo "Build metadata:"
-    cat "$target/Contents/Resources/KubeDock-BUILD-METADATA.json"
+  if [ -f "$target/KubeDock-BUILD-METADATA.json" ] || [ -f "$target/Contents/Resources/KubeDock-BUILD-METADATA.json" ]; then
+    ui_info "Build metadata is included with the installed application."
   fi
-  echo
-  echo "Optional Qwen3-TTS is not included in the fast bundle. Set KUBEDOCK_INSTALL_MODE=source to build a custom branch/runtime."
+  ui_info "Optional Qwen3-TTS is not included in the fast bundle. Use source mode for a custom runtime."
   rm -rf "$tmp"
+  ui_complete "KubeDock installed from the verified prebuilt bundle"
   return 0
 }
 
@@ -615,6 +610,7 @@ if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
 else
   echo "Qwen3-TTS bundle: disabled (small default build)."
 fi
+ui_complete "KubeDock installed successfully"
 echo
 
 # --------------------------------------------------
@@ -1437,8 +1433,7 @@ Darwin)
   swap_install "$STAGED_APP" "/Applications/KubeDock.app"
 
   echo
-  echo "Installed:"
-  echo "/Applications/KubeDock.app"
+  ui_success "Installed: /Applications/KubeDock.app"
   ;;
 
 Linux)
@@ -1495,9 +1490,8 @@ EOF
   fi
 
   echo
-  echo "Installed:"
-  echo "/opt/KubeDock"
-  echo "Run from any terminal with: kubedeck"
+  ui_success "Installed: /opt/KubeDock"
+  ui_info "Run from any terminal with: kubedeck"
   ;;
 
 MINGW*|MSYS*|CYGWIN*)
@@ -1520,8 +1514,7 @@ MINGW*|MSYS*|CYGWIN*)
   swap_install "$STAGED_DIR" "$INSTALL_DIR"
 
   echo
-  echo "Installed to:"
-  echo "$INSTALL_DIR"
+  ui_success "Installed to: $INSTALL_DIR"
   ;;
 
 *)
@@ -1542,7 +1535,6 @@ esac
 # success and on failure alike.
 
 echo
-ui_complete "KubeDock installed successfully"
 echo
 echo "Built from GitHub branch:"
 echo " $SELECTED_BRANCH"
@@ -1551,17 +1543,17 @@ echo "Included:"
 echo " [OK] Kubernetes Ops Mind"
 echo " [OK] Google Web Speech voice input"
 if [[ "$HAVE_PYAUDIO" == "1" ]]; then
-  echo " [OK] PyAudio microphone support"
+  ui_success "PyAudio microphone support"
 else
-  echo " [INFO] PyAudio not installed - microphone voice input is unavailable"
+  ui_info "PyAudio not installed; microphone voice input is unavailable"
 fi
-echo " [OK] Native FLAC support"
-echo " [OK] AI operation history"
-echo " [OK] Current Web App UI"
-echo " [OK] Embedded Web App static assets"
+ui_success "Native FLAC support"
+ui_success "AI operation history"
+ui_success "Current Web App UI"
+ui_success "Embedded Web App static assets"
 if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
-  echo " [OK] Qwen3-TTS runtime bundled (weights download on first launch)"
+  ui_success "Qwen3-TTS runtime bundled (weights download on first launch)"
 else
-  echo " [INFO] Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
+  ui_info "Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
 fi
 echo
