@@ -94,5 +94,14 @@ class InstallerConsoleUITests(unittest.TestCase):
         self.assertNotIn("\033[", stream.getvalue())
 
 
+    def test_dumb_terminal_disables_ansi(self):
+        stream = io.StringIO()
+        with patch.dict(os.environ, {"TERM": "dumb"}, clear=False):
+            ui = ConsoleUI(stream=stream, interactive=True)
+        ui.success("Ready")
+        self.assertFalse(ui.color)
+        self.assertNotIn("\033[", stream.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
