@@ -42,3 +42,38 @@ class FileManagerService:
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
         )
+
+    def normalize(self, path):
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        return filesystem.normalize(path or "")
+
+    def mkdir(self, path):
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        return filesystem.mkdir(path)
+
+    def create_empty_file(self, path):
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        if hasattr(filesystem, "write_bytes"):
+            return filesystem.write_bytes(path, b"")
+        handle = filesystem.open(path, "w")
+        handle.close()
+
+    def delete(self, path, *, is_directory=False):
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        if is_directory:
+            return filesystem.rmdir(path)
+        return filesystem.remove(path)
+
+    def rename(self, old_path, new_path):
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        return filesystem.rename(old_path, new_path)
