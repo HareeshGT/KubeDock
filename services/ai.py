@@ -31,3 +31,14 @@ class AIService:
             provider, api_key, ai_assist.get_model(provider),
             command, exit_code, stderr, stdout,
         )
+
+    def create_explain_worker(self, pod, namespace, context, log_text):
+        import ai_assist
+        provider = ai_assist.get_provider()
+        api_key = ai_assist.get_api_key(provider)
+        if not api_key:
+            raise RuntimeError("Configure an AI provider API key in Settings")
+        return ai_assist.AIExplainWorker(
+            provider, api_key, ai_assist.get_model(provider),
+            pod, namespace, context, log_text,
+        )
