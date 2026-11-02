@@ -534,7 +534,13 @@ class KubernetesCoreMixin:
     started = time.monotonic()
     self._active_command_count = getattr(self, "_active_command_count", 0) + 1
     self.progress.show()
-    worker = CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
+    worker = (
+      self.kubernetes_service.create_worker(
+        None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
+      )
+      if self.kubernetes_service is not None
+      else CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
+    )
 
     def release_progress():
       self._active_command_count = max(0, getattr(self, "_active_command_count", 1) - 1)
