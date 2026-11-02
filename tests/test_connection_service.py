@@ -213,3 +213,72 @@ def test_command_service_rejects_execution_without_active_ssh():
     import pytest
     with pytest.raises(RuntimeError, match="Connect to an SSH host"):
         services.commands.create_worker(None, "uname -a")
+
+
+class FakeFilesystem(FakeResource):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def normalize(self, path):
+        self.calls.append(("normalize", path))
+        return path or "/"
+
+    def mkdir(self, path):
+        self.calls.append(("mkdir", path))
+
+    def write_bytes(self, path, payload):
+        self.calls.append(("write_bytes", path, payload))
+
+    def rmdir(self, path):
+        self.calls.append(("rmdir", path))
+
+    def remove(self, path):
+        self.calls.append(("remove", path))
+
+    def rename(self, old_path, new_path):
+        self.calls.append(("rename", old_path, new_path))
+
+
+def test_connection_session_getters_return_matching_snapshot_atomically():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    first, second = FakeResource(), FakeResource()
+
+    first_snapshot = connection.attach_ssh(first, host="first")
+    client, snapshot = connection.get_ssh_session()
+    assert client is first
+    assert snapshot == first_snapshot
+
+    second_snapshot = connection.attach_ssh(second, host="second")
+    client, snapshot = connection.get_ssh_session()
+    assert client is second
+    assert snapshot == second_snapshot
+    assert snapshot.generation == first_snapshot.generation + 1
+
+
+def test_file_manager_service_routes_filesystem_operations_through_connection():
+    connection = ConnectionService()
+    filesystem = FakeFilesystem()
+    connection.attach_file_connection(
+        filesystem, protocol="sftp", host="files.example", port=22,
+        username="operator",
+    )
+    # The service intentionally accepts an SFTP-like filesystem under the
+    # SSH protocol in production; use FTP here to test its FS operation API.
+    services = AppServices(connection)
+
+    assert services.files.normalize("/var/log") == "/var/log"
+    services.files.mkdir("/var/log/new")
+    services.files.create_empty_file("/var/log/new/empty.txt")
+    services.files.delete("/var/log/old.txt")
+    services.files.delete("/var/log/old-dir", is_directory=True)
+    services.files.rename("/var/log/a", "/var/log/b")
+
+    assert filesystem.calls == [
+        ("normalize", "/var/log"),
+        ("mkdir", "/var/log/new"),
+        ("write_bytes", "/var/log/new/empty.txt", b""),
+        ("remove", "/var/log/old.txt"),
+        ("rmdir", "/var/log/old-dir"),
+        ("rename", "/var/log/a", "/var/log/b"),
+    ]
