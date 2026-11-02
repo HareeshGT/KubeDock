@@ -938,7 +938,7 @@ OUTPUT FORMAT
 
 ACTIONS AND RESOURCES
 Use lowercase, singular values from these lists exactly.
-action: scale | restart | delete | get | describe | rollout_status | logs
+action: scale | restart | delete | get | describe | rollout_status | logs | investigate
 resource: deployment | statefulset | daemonset | pod | service | ingress | configmap | secret | job | cronjob | hpa | pvc | pv
 
 Which resources each action accepts:
@@ -946,6 +946,7 @@ Which resources each action accepts:
 - restart: deployment, statefulset, daemonset
 - delete: pod, deployment, statefulset, daemonset, service, ingress, configmap, secret, job, cronjob, hpa, pvc (NOT pv)
 - get, describe: any listed resource
+- investigate: pod, deployment, statefulset, daemonset, replicaset, service, ingress, job, cronjob
 - logs: pod only
 - rollout_status: deployment, statefulset, daemonset
 - logs: pod only; requires an explicit namespace or one unambiguous target resolved from conversation/history
