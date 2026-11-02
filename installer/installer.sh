@@ -19,6 +19,28 @@ REPO="https://github.com/HareeshGT/KubeDock.git"
 
 OS="$(uname -s)"
 
+# Load the branded console UI when this installer is run from a checkout or
+# package. A lightweight fallback keeps curl | bash and CI execution supported.
+INSTALLER_SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P || pwd)"
+if [ -f "$INSTALLER_SCRIPT_DIR/console_ui.sh" ]; then
+  . "$INSTALLER_SCRIPT_DIR/console_ui.sh"
+else
+  ui_init() { UI_COLOR=0; UI_INTERACTIVE=0; }
+  ui_banner() { printf '\n=== KubeDock Installer ===\n%s\n\n' "$1"; }
+  ui_phase() { printf '\n[%s/%s] %s\n' "$1" "$2" "$3"; [ -z "$4" ] || printf '  %s\n' "$4"; }
+  ui_info() { printf '[INFO] %s\n' "$*"; }
+  ui_success() { printf '[OK] %s\n' "$*"; }
+  ui_warn() { printf '[WARN] %s\n' "$*"; }
+  ui_error() { printf '[ERROR] %s\n' "$*" >&2; }
+  ui_run_step() { local label="$1"; shift; printf '[RUN] %s\n' "$label"; "$@"; }
+  ui_complete() { printf '\n=== %s ===\n' "$1"; }
+  ui_failed() { printf '\n[ERROR] Installation stopped (exit code %s).\n' "$1" >&2; }
+fi
+
+ui_init
+ui_banner "Fast prebuilt install or guided source build"
+ui_info "Detected platform: $OS"
+
 # Never block on a Git credential prompt (CI, cloud-init, curl | bash).
 export GIT_TERMINAL_PROMPT=0
 
@@ -36,7 +58,6 @@ if [[ "$OS" == "Darwin" ]]; then
   export HOMEBREW_NO_ENV_HINTS=1
 fi
 
-echo "Detected OS: $OS"
 
 # --------------------------------------------------
 # Privilege helper
@@ -176,12 +197,15 @@ fi
 SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-${KUBEDOCK_BRANCH:-}}}"
 KUBEDOCK_INSTALL_MODE="${KUBEDOCK_INSTALL_MODE:-auto}"
 
+ui_info "Install mode: $KUBEDOCK_INSTALL_MODE"
+
 if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release" && "$KUBEDOCK_INSTALL_MODE" != "source" ]]; then
   echo "ERROR: KUBEDOCK_INSTALL_MODE must be auto, release, or source."
   exit 1
 fi
 
 install_prebuilt_bundle() {
+  ui_phase 1 5 "Checking platform" "Selecting a compatible prebuilt KubeDock release."
   local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
   base="https://github.com/HareeshGT/KubeDock/releases/latest/download"
 
@@ -235,10 +259,9 @@ install_prebuilt_bundle() {
   archive="$tmp/$asset"
   url="$base/$asset"
 
-  echo
-  echo "Fast install: downloading prebuilt KubeDock bundle..."
-  echo "Platform asset: $asset"
-  if ! curl -fL --retry 2 --retry-delay 2 --connect-timeout 10 --max-time 900 "$url" -o "$archive"; then
+  ui_phase 2 5 "Downloading the KubeDock release" "Fetching the platform-specific prebuilt bundle."
+  ui_info "Release asset: $asset"
+  if ! ui_run_step "Download application bundle" curl -fL --retry 2 --retry-delay 2 --connect-timeout 10 --max-time 900 "$url" -o "$archive"; then
     echo "Prebuilt bundle is not available yet (or could not be downloaded)." >&2
     rm -rf "$tmp"
     return 1
@@ -250,7 +273,7 @@ install_prebuilt_bundle() {
   fi
 
   checksum_file="$tmp/SHA256SUMS"
-  if ! curl -fL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 60 "$base/SHA256SUMS" -o "$checksum_file"; then
+  if ! ui_run_step "Download SHA-256 manifest" curl -fL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 60 "$base/SHA256SUMS" -o "$checksum_file"; then
     echo "Could not download the prebuilt bundle checksum file." >&2
     rm -rf "$tmp"
     return 1
@@ -280,7 +303,8 @@ install_prebuilt_bundle() {
     rm -rf "$tmp"
     return 1
   fi
-  echo "SHA-256 checksum verified."
+  ui_phase 3 5 "Verifying package integrity" "Validating SHA-256 before installing files."
+  ui_success "SHA-256 checksum verified."
 
   if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     archive_win="$(cygpath -w "$archive")"
@@ -357,6 +381,8 @@ install_prebuilt_bundle() {
       ;;
   esac
 
+  ui_phase 4 5 "Installing KubeDock" "Staging the verified application and replacing the previous version safely."
+
   # Atomic-ish replace: move the current install aside first and restore it if
   # the new staged directory cannot be moved into place.
   $SUDO rm -rf "$backup"
@@ -406,25 +432,18 @@ EOF
     fi
   fi
 
-  echo
-  echo "=========================================="
-  echo "KubeDock installed from prebuilt bundle!"
-  echo "=========================================="
+  ui_phase 5 5 "Finishing installation" "Writing launch shortcuts and cleaning temporary files."
   case "$OS" in
-    Darwin) echo "Installed: /Applications/KubeDock.app" ;;
-    Linux) echo "Installed: /opt/KubeDock"; echo "Launch with: kubedock" ;;
-    MINGW*|MSYS*|CYGWIN*) echo "Installed: C:\\Program Files\\KubeDock" ;;
+    Darwin) ui_success "Installed: /Applications/KubeDock.app" ;;
+    Linux) ui_success "Installed: /opt/KubeDock"; ui_info "Launch with: kubedock" ;;
+    MINGW*|MSYS*|CYGWIN*) ui_success "Installed: C:\\Program Files\\KubeDock" ;;
   esac
-  if [ -f "$target/KubeDock-BUILD-METADATA.json" ]; then
-    echo "Build metadata:"
-    cat "$target/KubeDock-BUILD-METADATA.json"
-  elif [ -f "$target/Contents/Resources/KubeDock-BUILD-METADATA.json" ]; then
-    echo "Build metadata:"
-    cat "$target/Contents/Resources/KubeDock-BUILD-METADATA.json"
+  if [ -f "$target/KubeDock-BUILD-METADATA.json" ] || [ -f "$target/Contents/Resources/KubeDock-BUILD-METADATA.json" ]; then
+    ui_info "Build metadata is included with the installed application."
   fi
-  echo
-  echo "Optional Qwen3-TTS is not included in the fast bundle. Set KUBEDOCK_INSTALL_MODE=source to build a custom branch/runtime."
+  ui_info "Optional Qwen3-TTS is not included in the fast bundle. Use source mode for a custom runtime."
   rm -rf "$tmp"
+  ui_complete "KubeDock installed from the verified prebuilt bundle"
   return 0
 }
 
@@ -443,8 +462,8 @@ if [[ "$KUBEDOCK_INSTALL_MODE" != "source" && -z "$SELECTED_BRANCH" ]]; then
       exit 1
     fi
     echo
-    echo "Prebuilt bundle unavailable; falling back to the existing source installer."
-    echo "The source build can take significantly longer because it installs dependencies and runs PyInstaller."
+    ui_warn "Prebuilt bundle unavailable; switching to the source-build installer."
+    ui_info "The source build installs dependencies and runs PyInstaller, so it takes longer."
     echo
   fi
 fi
@@ -469,8 +488,7 @@ SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-${KUBEDOCK_BRANCH:-}}}"
 
 echo
 echo "=========================================="
-echo "KubeDock GitHub Branch Selection"
-echo "=========================================="
+ui_info "KubeDock source branch selection"
 echo
 
 if ! command -v git >/dev/null 2>&1; then
@@ -479,7 +497,7 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 # Retrieve remote branches from GitHub.
-echo "Fetching available branches from GitHub..."
+ui_phase 1 8 "Selecting source branch" "Fetching repository branches and resolving the version to build."
 echo
 
 # A single network round trip returns both the branch list and the default
@@ -511,7 +529,7 @@ if [ -n "$SELECTED_BRANCH" ]; then
   if ! printf '%s\n' "$BRANCH_LIST" | grep -Fxq "$SELECTED_BRANCH"; then
     echo "ERROR: Branch '$SELECTED_BRANCH' does not exist in the repository."
     echo
-    echo "Available branches:"
+    ui_info "Available Git branches:"
     printf '%s\n' "$BRANCH_LIST" | sed 's/^/ - /'
     exit 1
   fi
@@ -562,8 +580,7 @@ else
 fi
 
 echo
-echo "Selected branch:"
-echo " $SELECTED_BRANCH"
+ui_success "Selected branch: $SELECTED_BRANCH"
 echo
 
 # --------------------------------------------------
@@ -614,16 +631,17 @@ cleanup() {
     echo "Build directory kept: $BUILD_ROOT" >&2
   else
     rm -rf "$BUILD_ROOT"
-    if [ "$rc" -ne 0 ]; then
-      echo "Install failed (exit $rc). Re-run with KUBEDOCK_KEEP_BUILD=1 to keep the build directory." >&2
-    fi
+  fi
+  if [ "$rc" -ne 0 ]; then
+    ui_failed "$rc"
+    echo "Install failed (exit $rc). Re-run with KUBEDOCK_KEEP_BUILD=1 to keep the build directory." >&2
   fi
 }
 trap cleanup EXIT
 
 # Only the tip of the selected branch is needed to build.
-echo "Cloning KubeDock branch '$SELECTED_BRANCH' (shallow)..."
-git clone --depth 1 --branch "$SELECTED_BRANCH" --single-branch "$REPO" "$DIR"
+ui_phase 2 8 "Preparing source" "Cloning the selected branch into a temporary build directory."
+ui_run_step "Clone branch $SELECTED_BRANCH" git clone --depth 1 --branch "$SELECTED_BRANCH" --single-branch "$REPO" "$DIR"
 cd "$DIR"
 
 echo
@@ -647,7 +665,7 @@ echo
 if [[ "$OS" == "Darwin" ]]; then
 
   echo
-  echo "Checking Homebrew..."
+  ui_phase 3 8 "Preparing native dependencies" "Checking Homebrew, PortAudio, FFmpeg and FLAC."
 
   if ! command -v brew >/dev/null 2>&1; then
     echo
@@ -714,7 +732,7 @@ if [[ "$OS" == "Darwin" ]]; then
   if [ "${#FORMULAE_TO_INSTALL[@]}" -gt 0 ]; then
     echo
     echo "Installing Homebrew packages: ${FORMULAE_TO_INSTALL[*]}"
-    brew_install "${FORMULAE_TO_INSTALL[@]}"
+    ui_run_step "Install Homebrew packages" brew_install "${FORMULAE_TO_INSTALL[@]}"
   fi
 
   FORMULA_PREFIX="$(brew --prefix "$PYTHON_FORMULA")"
@@ -828,7 +846,7 @@ if [[ "$OS" == "Darwin" ]]; then
 elif [[ "$OS" == "Linux" ]]; then
 
   echo
-  echo "Checking Linux native dependencies..."
+  ui_phase 3 8 "Preparing native dependencies" "Checking PortAudio, FLAC and FFmpeg using the detected package manager."
 
   # PyAudio needs PortAudio development headers. Covering apt/dnf/yum/
   # pacman/zypper/apk means this works unmodified on Debian/Ubuntu,
@@ -887,18 +905,18 @@ elif [[ "$OS" == "Linux" ]]; then
           # Install first without refreshing the package lists; refresh only if
           # that fails (fresh images have no lists, old lists can 404).
           APT_ENV=(env DEBIAN_FRONTEND=noninteractive)
-          if ! $SUDO "${APT_ENV[@]}" apt-get install -y "${LINUX_PKGS[@]}"; then
+          if ! ui_run_step "Install native Linux packages" $SUDO "${APT_ENV[@]}" apt-get install -y "${LINUX_PKGS[@]}"; then
             echo
             echo "Install failed; refreshing package lists and retrying once..."
-            $SUDO "${APT_ENV[@]}" apt-get update
-            $SUDO "${APT_ENV[@]}" apt-get install -y "${LINUX_PKGS[@]}"
+            ui_run_step "Refresh package lists" $SUDO "${APT_ENV[@]}" apt-get update
+            ui_run_step "Install native Linux packages" $SUDO "${APT_ENV[@]}" apt-get install -y "${LINUX_PKGS[@]}"
           fi
           ;;
-        dnf)    $SUDO dnf install -y "${LINUX_PKGS[@]}" ;;
-        yum)    $SUDO yum install -y "${LINUX_PKGS[@]}" ;;
-        pacman) $SUDO pacman -Sy --noconfirm "${LINUX_PKGS[@]}" ;;
-        zypper) $SUDO zypper --non-interactive install "${LINUX_PKGS[@]}" ;;
-        apk)    $SUDO apk add --no-cache "${LINUX_PKGS[@]}" ;;
+        dnf)    ui_run_step "Install native Linux packages" $SUDO dnf install -y "${LINUX_PKGS[@]}" ;;
+        yum)    ui_run_step "Install native Linux packages" $SUDO yum install -y "${LINUX_PKGS[@]}" ;;
+        pacman) ui_run_step "Install native Linux packages" $SUDO pacman -Sy --noconfirm "${LINUX_PKGS[@]}" ;;
+        zypper) ui_run_step "Install native Linux packages" $SUDO zypper --non-interactive install "${LINUX_PKGS[@]}" ;;
+        apk)    ui_run_step "Install native Linux packages" $SUDO apk add --no-cache "${LINUX_PKGS[@]}" ;;
       esac
 
     fi
@@ -951,16 +969,16 @@ if [ ! -f requirements.txt ]; then
 fi
 
 echo
-echo "Installing core Python requirements..."
+ui_phase 4 8 "Installing Python packages" "Installing the core runtime and build tooling."
 
-pip_install -r requirements.txt
+ui_run_step "Install core Python requirements" pip_install -r requirements.txt
 
 # PyInstaller is a build tool, not a runtime requirement for launching KubeDock.
 if [ -f requirements-build.txt ]; then
-  pip_install -r requirements-build.txt
+  ui_run_step "Install PyInstaller build tools" pip_install -r requirements-build.txt
 else
   # Compatibility for older branches that predate the build requirements file.
-  pip_install "PyInstaller>=6.0"
+  ui_run_step "Install PyInstaller build tools" pip_install "PyInstaller>=6.0"
 fi
 
 # Qt WebEngine/Chromium is large. The built-in editor works without it; install
@@ -971,7 +989,7 @@ if [[ "${KUBEDOCK_ENABLE_WEBENGINE:-0}" == "1" ]]; then
     exit 1
   fi
   echo "Installing optional Qt WebEngine/Monaco editor..."
-  pip_install -r requirements-editor.txt
+  ui_run_step "Install optional WebEngine editor" pip_install -r requirements-editor.txt
 else
   echo "Skipping optional Qt WebEngine; the built-in editor remains available."
 fi
@@ -981,8 +999,8 @@ fi
 if [ -f requirements-voice.txt ]; then
   echo
   echo "Installing optional voice-input requirements..."
-  pip_install -r requirements-voice.txt \
-    || echo "WARNING: voice-input packages failed to install; voice input will be unavailable."
+  ui_run_step "Install optional voice-input packages" pip_install -r requirements-voice.txt \
+    || ui_warn "Voice-input packages were unavailable; the rest of KubeDock can still be installed."
 fi
 
 # Optional local Qwen runtime. This is deliberately opt-in because PyTorch,
@@ -994,7 +1012,7 @@ if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
   fi
   echo
   echo "Installing optional Qwen3-TTS runtime (Python 3.12; PyTorch/Transformers)..."
-  pip_install -r requirements-qwen-tts.txt
+  ui_run_step "Install optional Qwen3-TTS runtime" pip_install -r requirements-qwen-tts.txt
   "$PYTHON" -c "import torch, qwen_tts; print('[OK] Qwen3-TTS runtime:', getattr(qwen_tts, '__version__', 'installed')); print('[OK] PyTorch:', torch.__version__)"
 fi
 
@@ -1003,7 +1021,7 @@ fi
 # --------------------------------------------------
 
 echo
-echo "Verifying Python dependencies..."
+ui_phase 5 8 "Verifying runtime" "Checking required Python modules and optional capabilities."
 
 "$PYTHON" - <<'PY'
 import sys
@@ -1089,7 +1107,7 @@ fi
 # --------------------------------------------------
 
 echo
-echo "Preparing KubeDock Web UI assets..."
+ui_phase 6 8 "Preparing application assets" "Synchronizing the embedded web interface and checking refactored packages."
 
 WEBAPP_INDEX="webapp/static/index.html"
 
@@ -1165,7 +1183,7 @@ esac
 # --------------------------------------------------
 
 echo
-echo "Verifying refactored Python packages..."
+ui_info "Checking refactored Python packages..."
 
 REFACTORED_PACKAGES=(
   dialogs_parts
@@ -1189,7 +1207,7 @@ done
 # --------------------------------------------------
 
 echo
-echo "Building application..."
+ui_phase 7 8 "Building KubeDock" "Packaging the desktop application with PyInstaller. This may take several minutes."
 
 # PyInstaller separates --add-data source and destination with ";" on Windows
 # and ":" everywhere else.
@@ -1276,7 +1294,7 @@ if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
   )
 fi
 
-"$PYTHON" -m PyInstaller "${PYI_ARGS[@]}" main.py
+ui_run_step "Build KubeDock application bundle" "$PYTHON" -m PyInstaller "${PYI_ARGS[@]}" main.py
 
 # --------------------------------------------------
 # macOS privacy + Apple Silicon voice support
@@ -1367,6 +1385,8 @@ fi
 # Install
 # --------------------------------------------------
 
+ui_phase 8 8 "Installing application" "Moving the new build into its final location while preserving the previous copy."
+
 # Replace <target> with <staged> without ever leaving the machine with no
 # working install: the old copy is renamed aside first and restored if the final
 # rename fails. (Previously the old install was deleted BEFORE the new one was
@@ -1412,8 +1432,7 @@ Darwin)
   swap_install "$STAGED_APP" "/Applications/KubeDock.app"
 
   echo
-  echo "Installed:"
-  echo "/Applications/KubeDock.app"
+  ui_success "Installed: /Applications/KubeDock.app"
   ;;
 
 Linux)
@@ -1470,9 +1489,8 @@ EOF
   fi
 
   echo
-  echo "Installed:"
-  echo "/opt/KubeDock"
-  echo "Run from any terminal with: kubedeck"
+  ui_success "Installed: /opt/KubeDock"
+  ui_info "Run from any terminal with: kubedeck"
   ;;
 
 MINGW*|MSYS*|CYGWIN*)
@@ -1495,8 +1513,7 @@ MINGW*|MSYS*|CYGWIN*)
   swap_install "$STAGED_DIR" "$INSTALL_DIR"
 
   echo
-  echo "Installed to:"
-  echo "$INSTALL_DIR"
+  ui_success "Installed to: $INSTALL_DIR"
   ;;
 
 *)
@@ -1517,9 +1534,6 @@ esac
 # success and on failure alike.
 
 echo
-echo "=========================================="
-echo "KubeDock installed successfully!"
-echo "=========================================="
 echo
 echo "Built from GitHub branch:"
 echo " $SELECTED_BRANCH"
@@ -1528,17 +1542,19 @@ echo "Included:"
 echo " [OK] Kubernetes Ops Mind"
 echo " [OK] Google Web Speech voice input"
 if [[ "$HAVE_PYAUDIO" == "1" ]]; then
-  echo " [OK] PyAudio microphone support"
+  ui_success "PyAudio microphone support"
 else
-  echo " [INFO] PyAudio not installed - microphone voice input is unavailable"
+  ui_info "PyAudio not installed; microphone voice input is unavailable"
 fi
-echo " [OK] Native FLAC support"
-echo " [OK] AI operation history"
-echo " [OK] Current Web App UI"
-echo " [OK] Embedded Web App static assets"
+ui_success "Native FLAC support"
+ui_success "AI operation history"
+ui_success "Current Web App UI"
+ui_success "Embedded Web App static assets"
 if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
-  echo " [OK] Qwen3-TTS runtime bundled (weights download on first launch)"
+  ui_success "Qwen3-TTS runtime bundled (weights download on first launch)"
 else
-  echo " [INFO] Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
+  ui_info "Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
 fi
+echo
+ui_complete "KubeDock installed successfully"
 echo
