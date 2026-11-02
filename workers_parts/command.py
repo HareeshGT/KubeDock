@@ -59,12 +59,34 @@ class CommandWorker(QThread):
         # `echo $HOME` / `export PATH=...` preamble, which cmd.exe/PowerShell
         # (Windows SSH hosts) cannot run.
         self.raw       = raw
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = getattr(self, "_session_guard", None)
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            _LOG.debug("Unable to validate command session generation", exc_info=True)
+            return False
+
+    def _discard_stale_result(self):
+        if self._session_is_current():
+            return False
+        self.error.emit(
+            "The active connection changed while this command was running; "
+            "the stale result was discarded."
+        )
+        return True
 
     def run(self):
         started = time.monotonic()
         operation = command_operation_label(self.cmd)
         try:
+            if self._discard_stale_result():
+                return
             if self.raw:
                 self._run_raw()
                 return
@@ -91,6 +113,8 @@ class CommandWorker(QThread):
                     exit_code = stdout.channel.recv_exit_status()
                 except Exception:
                     exit_code = -1
+            if self._discard_stale_result():
+                return
             self.result.emit(out, err, exit_code)
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
         except Exception as e:
@@ -114,6 +138,8 @@ class CommandWorker(QThread):
                 exit_code = stdout.channel.recv_exit_status()
             except Exception:
                 exit_code = -1
+        if self._discard_stale_result():
+            return
         self.result.emit(out, err, exit_code)
         self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
 
