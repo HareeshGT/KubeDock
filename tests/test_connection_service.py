@@ -139,3 +139,18 @@ def test_app_services_shutdown_is_idempotent():
     assert app_services.stopped
     assert ssh.close_calls == 1
     assert connection.snapshot.state == "disconnected"
+
+
+def test_pool_teardown_failure_does_not_skip_primary_resource_cleanup():
+    ssh = FakeResource()
+    filesystem = FakeResource()
+
+    def broken_pool_close(_ssh):
+        raise RuntimeError("pool close failed")
+
+    service = ConnectionService(pool_closer=broken_pool_close)
+    service.attach_ssh(ssh, filesystem, host="node")
+    service.disconnect()
+
+    assert filesystem.close_calls == 1
+    assert ssh.close_calls == 1
