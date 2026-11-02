@@ -274,10 +274,43 @@ def collect_prometheus_history(base_url: str, namespace: str, pod: str, days: in
     return result
 
 
+def _redact_investigation_value(value, *, max_text_chars: int = 3200):
+    """Redact nested fields independently so large logs cannot hide later metrics."""
+    if isinstance(value, str):
+        return ai_intelligence.redact_evidence(value)[:max_text_chars]
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in list(value.items())[:60]:
+            safe_key = ai_intelligence.redact_evidence(str(key))[:100]
+            cleaned[safe_key] = _redact_investigation_value(item, max_text_chars=max_text_chars)
+        return cleaned
+    if isinstance(value, (list, tuple)):
+        return [
+            _redact_investigation_value(item, max_text_chars=max_text_chars)
+            for item in list(value)[:100]
+        ]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return ai_intelligence.redact_evidence(str(value))[:max_text_chars]
+
+
 def build_investigation_prompt(question: str, target: dict, evidence: dict) -> str:
     """Build an evidence-first prompt; all cluster output is explicitly untrusted."""
-    evidence_json = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
-    evidence_json = ai_intelligence.redact_evidence(evidence_json)[:36_000]
+    priority_keys = (
+        "reported_symptom", "collected_at", "resource_summary", "metrics",
+        "utilization", "prometheus_history", "candidate_signals", "target_events",
+        "node_summary", "node_metrics", "namespace_warnings", "logs",
+        "previous_logs", "endpoints", "collector_exit_code", "collection_note",
+        "collector_error",
+    )
+    selected_evidence = {
+        key: evidence[key] for key in priority_keys if key in evidence
+    }
+    selected_evidence.update({
+        key: value for key, value in evidence.items() if key not in selected_evidence
+    })
+    redacted_evidence = _redact_investigation_value(selected_evidence)
+    evidence_json = json.dumps(redacted_evidence, ensure_ascii=False, separators=(",", ":"), default=str)
     request = ai_intelligence.redact_evidence(str(question or ""))[:2_000]
     identity = {
         "context": ai_intelligence.redact_evidence(str(target.get("context") or ""))[:256],
