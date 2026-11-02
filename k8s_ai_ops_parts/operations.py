@@ -486,6 +486,28 @@ class K8sAIOpsOperationsMixin:
         if self._investigation_ai_worker is None and self._ai_worker is None:
             self._set_busy(False)
 
+    @staticmethod
+    def _investigation_report_html(markdown_text: str) -> str:
+        """Render a small safe Markdown subset without allowing model HTML or links."""
+        rendered = []
+        for line in str(markdown_text or "").splitlines():
+            escaped = K8sAIOpsOperationsMixin._escape_html(line.strip())
+            if not escaped:
+                rendered.append("<div style='height:6px'></div>")
+            elif escaped.startswith("## "):
+                rendered.append(
+                    f"<div style='margin-top:10px;margin-bottom:4px;color:{T['ACCENT']};font-weight:700'>{escaped[3:]}</div>"
+                )
+            elif escaped.startswith("### "):
+                rendered.append(
+                    f"<div style='margin-top:7px;color:{T['TEXT_PRIMARY']};font-weight:700'>{escaped[4:]}</div>"
+                )
+            elif escaped.startswith("- ") or escaped.startswith("* "):
+                rendered.append(f"<div style='margin-left:14px'>• {escaped[2:]}</div>")
+            else:
+                rendered.append(f"<div>{escaped}</div>")
+        return "".join(rendered)
+
     def _on_root_cause_investigation_done(self, answer: str, evidence: dict):
         active = getattr(self, "_active_investigation", None) or {}
         target_label = (
@@ -496,7 +518,7 @@ class K8sAIOpsOperationsMixin:
             f"<br><span style='color:{T['ACCENT']};font-weight:700'>Ops Mind investigation report</span><br>"
             f"<span style='color:{T['TEXT_MUTED']}'>{self._escape_html(target_label)} · "
             f"{self._escape_html(active.get('context') or 'current context')}</span><br>"
-            f"<span style='color:{T['TEXT_PRIMARY']}'>{self._escape_html(answer).replace(chr(10), '<br>')}</span>"
+            f"<span style='color:{T['TEXT_PRIMARY']}'>{self._investigation_report_html(answer)}</span>"
         )
         if isinstance(active, dict):
             active["answer"] = answer
