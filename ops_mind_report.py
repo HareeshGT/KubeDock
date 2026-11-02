@@ -10,6 +10,7 @@ _HEADING = re.compile(r"^(#{1,4})\s+(.+?)\s*#*\s*$")
 _ORDERED = re.compile(r"^\s*\d+[.)]\s+(.+)$")
 _UNORDERED = re.compile(r"^\s*[-*+]\s+(.+)$")
 _TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_SINGLE_TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*\|?\s*$")
 _CODE = re.compile(r"\x60([^\x60\n]+)\x60")
 
 
@@ -289,7 +290,7 @@ def _without_model_resource_section(markdown_text: str) -> str:
             skipping = False
         if not skipping:
             kept.append(line)
-    return "\\n".join(kept)
+    return "\n".join(kept)
 
 
 def render_investigation_report(
