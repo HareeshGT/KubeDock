@@ -978,6 +978,9 @@ CHOOSING A READ ACTION
 - get: show, list, get, what is, value of a key, replica count, pod status.
 - describe: describe, details of, events for, why is X failing, inspect.
 - rollout_status: rollout status, is X rolled out, deployment progress (deployment, statefulset or daemonset only).
+- investigate: use this for a root-cause question that needs correlated live evidence, such as why a pod uses unusually high memory/CPU, repeatedly restarts, is unhealthy, or behaves unexpectedly. Do NOT substitute a plain describe for these investigations.
+- An explicit request to "describe" or "show details" remains a normal describe operation. A conceptual follow-up about an earlier report can remain conversational when no fresh cluster evidence is requested.
+- For investigate, return action "investigate", the exact resource/name/namespace, a symptom from memory | cpu | restarts | unhealthy | latency | general, and the user's original question. Do not invent target names or namespaces. Use history to resolve an unambiguous "it"/"that pod"; otherwise ask for clarification.
 
 SCALE
 1. Absolute: the user gives an exact target (e.g. "scale my-app to 5"). Return "mode":"absolute" and an integer "replicas" from 0 through 100. "Scale to zero" or "turn off" means replicas 0.
@@ -1026,6 +1029,8 @@ Previous container logs:
 Read with no namespace given (searches all namespaces):
 {{"action":"get","resource":"deployment","name":"my-app","namespace":""}}
 Describe:
+Root-cause investigation:
+{{"action":"investigate","resource":"pod","name":"my-app-123","namespace":"test-ns","symptom":"memory","question":"Why is this pod consuming so much memory?"}}
 {{"action":"describe","resource":"pod","name":"my-app","namespace":"test-ns"}}
 Rollout status:
 {{"action":"rollout_status","resource":"deployment","name":"my-app","namespace":"test-ns"}}
@@ -2065,6 +2070,30 @@ def validate_action(data: dict):
         "reason",
         "This Kubernetes operation is not supported.",
       )).strip(),
+    }
+
+  if action == "investigate":
+    resource = str(data.get("resource", "")).strip().lower()
+    name = str(data.get("name", "")).strip()
+    namespace = str(data.get("namespace", "")).strip()
+    from ai_incident_workflow import ALLOWED_INCIDENT_RESOURCES, validate_incident_target
+    if resource not in ALLOWED_INCIDENT_RESOURCES:
+      raise ValueError(f"Root-cause investigation does not support resource type: {resource or '(missing)'}")
+    # An empty namespace is resolved from successful history by the UI handler;
+    # "default" here is only a syntactic placeholder for target validation.
+    validate_incident_target("", namespace or "default", resource, name)
+    symptom = str(data.get("symptom", "general") or "general").strip().lower()
+    if symptom not in {"memory", "cpu", "restarts", "unhealthy", "latency", "general"}:
+      symptom = "general"
+    question = str(data.get("question", "") or "").strip()[:2000]
+    return {
+      "kind": "investigation",
+      "action": "investigate",
+      "resource": resource,
+      "name": name,
+      "namespace": namespace,
+      "symptom": symptom,
+      "question": question,
     }
 
   if action not in ALLOWED_ACTIONS:
