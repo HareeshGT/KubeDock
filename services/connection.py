@@ -185,6 +185,33 @@ class ConnectionService:
             alias=alias,
         )
 
+    @staticmethod
+    def create_ssh_connect_worker(host, port, username, key_path="", password=""):
+        """Create the existing background SSH handshake worker."""
+        from workers import ConnectWorker
+
+        return ConnectWorker(host, port, username, key_path or "", password or "")
+
+    @staticmethod
+    def create_file_connect_worker(host, port, username, password, *, tls=False, passive=True):
+        """Create the existing background FTP/FTPS handshake worker."""
+        from workers import FTPConnectionWorker
+
+        return FTPConnectionWorker(
+            host, port, username, password, tls=bool(tls), passive=bool(passive),
+        )
+
+    def create_health_worker(self):
+        """Create the single heartbeat worker bound to the active SSH generation."""
+        ssh, snapshot = self.get_ssh_session()
+        if ssh is None:
+            raise RuntimeError("An active SSH session is required for connection health monitoring")
+        from workers import ConnectionHealthWorker
+
+        worker = ConnectionHealthWorker(ssh)
+        worker.connection_generation = snapshot.generation
+        return worker
+
     def attach_file_connection(
         self,
         filesystem,
