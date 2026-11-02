@@ -398,10 +398,6 @@ class KubernetesResourcesMixin:
       self._pod_ai_dialog.set_loading()
 
     provider = ai_assist.get_provider()
-    worker = (
-      self.kubernetes_service and self.kubernetes_service.connection
-      and getattr(getattr(self, "_services", None), "ai", None)
-    )
     ai_service = getattr(getattr(self, "_services", None), "ai", None)
     worker = (
       ai_service.create_explain_worker(pod, ns, None, log_text)
