@@ -80,9 +80,7 @@ def main() -> int:
         window = KubeDockWindow()
         window_ref["window"] = window
         if load_settings().get("webapp_enabled", False):
-            webapp_app.start_server(
-                lambda: window.connection_service.get_ssh_client()
-            )
+            webapp_app.start_server(window.services.webapp.ssh_provider)
 
         window.setWindowOpacity(0.0)
         window.showFullScreen()
