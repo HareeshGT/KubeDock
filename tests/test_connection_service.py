@@ -307,3 +307,42 @@ def test_command_worker_discards_result_after_connection_generation_changes(monk
     worker.run()
 
     assert errors and "active connection changed" in errors[0].lower()
+
+
+class FakeDirectoryFilesystem(FakeFilesystem):
+    def listdir_attr(self, path):
+        self.calls.append(("listdir_attr", path))
+        return []
+
+
+def test_directory_worker_does_not_read_after_session_replacement():
+    connection = ConnectionService()
+    first = FakeDirectoryFilesystem()
+    connection.attach_file_connection(first, protocol="ftp", host="first.example")
+    services = AppServices(connection)
+    worker = services.files.create_directory_worker(None, "/")
+
+    connection.attach_file_connection(
+        FakeDirectoryFilesystem(), protocol="ftp", host="second.example",
+    )
+    worker.run()
+
+    assert ("listdir_attr", "/") not in first.calls
+
+
+def test_file_stream_reader_rejects_a_superseded_filesystem_session():
+    connection = ConnectionService()
+    first = FakeFilesystem()
+    connection.attach_file_connection(first, protocol="ftp", host="first.example")
+    services = AppServices(connection)
+    worker = services.files.create_stream_reader("/tmp/test.txt")
+    errors = []
+    worker.finished_err.connect(errors.append)
+
+    connection.attach_file_connection(
+        FakeFilesystem(), protocol="ftp", host="second.example",
+    )
+    worker.run()
+
+    assert errors and "connection changed" in errors[0].lower()
+    assert first.calls == []
