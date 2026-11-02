@@ -432,7 +432,7 @@ class K8sAIOpsOperationsMixin:
         )
         self._write_info("Collecting Kubernetes state, requests/limits, events, bounded logs, current metrics and node evidence where applicable…")
         self._set_busy(True)
-        worker = CommandWorker(self.ssh, command + " 2>&1", timeout=60)
+        worker = self.create_command_worker(command + " 2>&1", timeout=60)
         self._investigation_collection_worker = worker
         worker.result.connect(self._on_root_cause_evidence_collected)
         worker.error.connect(self._on_root_cause_collection_error)
@@ -652,7 +652,7 @@ class K8sAIOpsOperationsMixin:
         ctx_flag = '--context {} '.format(shlex.quote(str(ctx or ''))) if ctx else ''
         probe = f'kubectl {ctx_flag} -n {shlex.quote(namespace)} get {resource}/{name} -o jsonpath={{.spec.replicas}}'
         self.status_lbl.setText('Reading current replicas…')
-        worker = CommandWorker(self.ssh, probe)
+        worker = self.create_command_worker(probe)
         self._scale_previous_worker = worker
         worker._k8s_probe_action = action
         worker.result.connect(self._on_previous_replicas_result)
@@ -708,7 +708,7 @@ class K8sAIOpsOperationsMixin:
     def _start_kubectl_operation(self, action: dict, command: str):
         self.status_lbl.setText('Executing kubectl…')
         self._speak(_spoken_start_phrase(action))
-        worker = CommandWorker(self.ssh, command + ' 2>&1')
+        worker = self.create_command_worker(command + ' 2>&1')
         worker._k8s_action = action
         worker._k8s_command = command
         worker._k8s_confirmed = bool(action.get('_confirmed', False))
@@ -842,7 +842,7 @@ class K8sAIOpsOperationsMixin:
             return
 
         self.status_lbl.setText('Verifying Kubernetes change…')
-        worker = CommandWorker(self.ssh, probe + ' 2>&1', timeout=35)
+        worker = self.create_command_worker(probe + ' 2>&1', timeout=35)
         self._verification_worker = worker
         frozen_action = dict(action)
         worker.result.connect(
