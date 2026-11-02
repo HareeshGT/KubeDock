@@ -34,7 +34,7 @@ class InstallerConsoleUITests(unittest.TestCase):
             line for line in rows
             if line.startswith("  ╭") or line.startswith("  ╰") or line.startswith("  │")
         ]
-        self.assertEqual(len(frame), 9)
+        self.assertEqual(len(frame), 10)
         self.assertEqual({len(line) for line in frame}, {75})
         logo_rows = [line for line in frame if "██" in line or "╚═╝" in line]
         self.assertEqual(len(logo_rows), 6)
