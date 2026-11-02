@@ -636,10 +636,10 @@ cleanup() {
     echo "Build directory kept: $BUILD_ROOT" >&2
   else
     rm -rf "$BUILD_ROOT"
-    if [ "$rc" -ne 0 ]; then
-      ui_failed "$rc"
-      echo "Install failed (exit $rc). Re-run with KUBEDOCK_KEEP_BUILD=1 to keep the build directory." >&2
-    fi
+  fi
+  if [ "$rc" -ne 0 ]; then
+    ui_failed "$rc"
+    echo "Install failed (exit $rc). Re-run with KUBEDOCK_KEEP_BUILD=1 to keep the build directory." >&2
   fi
 }
 trap cleanup EXIT
