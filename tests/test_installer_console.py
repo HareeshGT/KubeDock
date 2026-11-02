@@ -29,7 +29,8 @@ class InstallerConsoleUITests(unittest.TestCase):
         stream = io.StringIO()
         ui = ConsoleUI(stream=stream, interactive=False, color=False)
         ui.banner()
-        rows = stream.getvalue().splitlines()
+        rendered = stream.getvalue()
+        rows = rendered.splitlines()
         frame = [
             line for line in rows
             if line.startswith("  ╭") or line.startswith("  ╰") or line.startswith("  │")
