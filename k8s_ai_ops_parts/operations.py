@@ -236,15 +236,26 @@ class K8sAIOpsOperationsMixin:
         if action.get('kind') == 'investigation':
             active = getattr(self, '_active_investigation', None)
             current_context = self._kube_context()
-            if isinstance(active, dict) and active.get('context') == current_context:
+            if (
+                isinstance(active, dict)
+                and active.get('context') == current_context
+                and (not action.get('name') or action.get('name') == active.get('name'))
+                and action.get('resource') == active.get('resource')
+            ):
                 # Resolve natural-language follow-ups against the active investigation,
                 # not an unrelated previous kubectl operation.
                 if not action.get('name'):
                     action['name'] = active.get('name', '')
                 if not action.get('namespace'):
                     action['namespace'] = active.get('namespace', '')
-                if not action.get('resource'):
-                    action['resource'] = active.get('resource', '')
+            if not action.get('name'):
+                reason = "Which Kubernetes resource should I investigate? Please provide its exact name and resource type."
+                self._remember_conversation_turn('user', getattr(self, '_last_submitted_request', ''))
+                self._remember_conversation_turn('assistant', reason)
+                self._write_info('\\n' + reason)
+                self._speak(reason)
+                self.request_input.setFocus()
+                return
             if not action.get('namespace'):
                 target = resolve_target_from_history(action, self._history, current_context)
                 if target:
