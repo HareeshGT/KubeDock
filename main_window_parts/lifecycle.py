@@ -49,6 +49,8 @@ from settings_dialog import SettingsDialog
 from lock_screen import AppLockDialog
 import security
 
+from services import AppServices
+
 _EXECUTABLE_EXTS = {
     ".py", ".sh", ".bash", ".rb", ".js", ".ts", ".php", ".pl",
     ".lua", ".r", ".go", ".java", ".kt", ".rs", ".c", ".cpp", ".swift",
@@ -60,6 +62,9 @@ _MEDIA_KINDS = {"video", "audio"}
 class LifecycleMixin:
     def __init__(self):
       super().__init__()
+      # All feature modules share this process-local service composition root.
+      self.services = AppServices()
+      self.connection_service = self.services.connection
       self.ssh      = None
       self.sftp     = None
       self._health_worker = None
@@ -141,9 +146,10 @@ class LifecycleMixin:
           worker = self._health_worker
           self._health_worker = None
           worker.stop() # don't leave the heartbeat thread running into interpreter teardown
-        if self.ssh: close_ssh_connection_pool(self.ssh)
-        if self.sftp: self.sftp.close()
-        if self.ssh: self.ssh.close()
+        # ConnectionService owns both the primary session and its managed
+        # secondary SSH pool. It closes them once, in the correct order.
+        self.services.shutdown()
+        self.ssh = self.sftp = None
       except Exception:
         pass
       event.accept()
