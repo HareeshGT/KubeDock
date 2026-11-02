@@ -188,11 +188,16 @@ class ConnectionMixin:
       host, port, user, pem, alias = info["host"], info["port"], info["user"], info["pem"], info["alias"]
       password = info.get("password")
 
-      self.ssh = ssh
-      self.sftp = SudoFS(sftp, ssh)
+      filesystem = SudoFS(sftp, ssh)
+      # Adopt the newly created adapter directly. Reading self.sftp here
+      # would resolve the previous service-owned session through its
+      # compatibility property and could accidentally hand the old adapter
+      # (or None on first connect) back to ConnectionService.
       self.connection_service.attach_ssh(
-        ssh, self.sftp, host=host, port=port, username=user, alias=alias,
+        ssh, filesystem, host=host, port=port, username=user, alias=alias,
       )
+      self.ssh = ssh
+      self.sftp = filesystem
       self._conn_protocol = "ssh"
       # Use alias as the display label when set, else user@host
       self.host_label = alias if alias else "{}@{}".format(user, host)
