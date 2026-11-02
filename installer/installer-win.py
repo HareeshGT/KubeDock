@@ -528,6 +528,7 @@ def install_prebuilt_release() -> Path:
     """Download and install the ready-to-run Windows bundle without pip/PyInstaller."""
     asset = "KubeDock-windows-x86_64.zip"
     temp_dir = Path(tempfile.mkdtemp(prefix="KubeDockFastInstall-"))
+    UI.phase(1, 4, "Checking release", "Resolving the latest stable version for Windows.")
     archive = temp_dir / asset
     try:
         # Resolve latest once so the binary and SHA256SUMS always come from
@@ -599,8 +600,8 @@ def install_prebuilt_release() -> Path:
             raise RuntimeError("The downloaded archive does not contain KubeDock.exe.")
         metadata_path = output_dir / "KubeDock-BUILD-METADATA.json"
         if metadata_path.is_file():
-            print("\\nPrebuilt bundle metadata:")
-            print(metadata_path.read_text(encoding="utf-8"))
+            UI.info("Build metadata:")
+            UI._write(metadata_path.read_text(encoding="utf-8").rstrip())
 
         UI.phase(4, 4, "Installing application", "Placing the verified app bundle in its destination.")
         destination = install_application(output_dir)
@@ -615,7 +616,7 @@ def install_prebuilt_release() -> Path:
 
 def main():
     UI.banner(f"Windows installer · {BUILD_ID}")
-    UI.phase(1, 7, "Checking platform and permissions", "Confirming Windows support and Administrator access.")
+    UI.phase(1, 8, "Checking platform and permissions", "Confirming Windows support and Administrator access.")
 
     if platform.system() != "Windows":
         raise RuntimeError("This installer is Windows-only. Do not run it inside WSL.")
@@ -635,10 +636,10 @@ def main():
             UI.warning(f"Prebuilt bundle unavailable; falling back to source build: {exc}")
             UI.info("The source path installs Python requirements and runs PyInstaller.")
 
-    UI.phase(2, 7, "Selecting install options", "Choose the lightweight installation or optional local Qwen3-TTS runtime.")
+    UI.phase(2, 8, "Selecting install options", "Choose the lightweight installation or optional local Qwen3-TTS runtime.")
     include_qwen = choose_qwen_tts()
 
-    UI.phase(3, 7, "Detecting Python runtime", "Selecting a supported 64-bit Python version.")
+    UI.phase(3, 8, "Detecting Python runtime", "Selecting a supported 64-bit Python version.")
     python = find_python(include_qwen=include_qwen)
     selected = python_version(python)
     UI.success(f"Python runtime selected: {selected} · {python}")
@@ -680,7 +681,7 @@ def main():
         UI.info(f"Executable: {destination / 'KubeDock.exe'}")
         UI.info("Qwen3-TTS local voice included: " + ("YES" if include_qwen else "NO (default lightweight build)"))
         if include_qwen:
-            print("Note: Qwen model weights download on first launch; model weights are not embedded in the installer.")
+            UI.info("Qwen model weights download on first launch; model weights are not embedded in the installer.")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
