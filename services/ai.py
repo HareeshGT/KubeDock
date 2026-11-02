@@ -42,3 +42,25 @@ class AIService:
             provider, api_key, ai_assist.get_model(provider),
             pod, namespace, context, log_text,
         )
+
+    def create_kubernetes_interpret_worker(
+        self, provider, api_key, model, request_text, namespace,
+        context, history, *, conversation=None,
+    ):
+        from k8s_ai_ops import K8sAIInterpretWorker
+        return K8sAIInterpretWorker(
+            provider, api_key, model, request_text, namespace, context,
+            history, conversation=conversation,
+        )
+
+    def create_investigation_worker(
+        self, provider, api_key, model, question, target, evidence,
+        *, prometheus_url="", history_days=7, parent=None,
+    ):
+        from ops_mind_investigation import OpsMindInvestigationWorker
+        return OpsMindInvestigationWorker(
+            provider, api_key, model, question, target, evidence,
+            prometheus_url=prometheus_url,
+            history_days=history_days,
+            parent=parent,
+        )
