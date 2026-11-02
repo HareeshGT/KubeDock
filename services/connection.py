@@ -209,23 +209,31 @@ class ConnectionService:
             alias=alias,
         )
 
+    def get_ssh_session(self):
+        """Atomically return the active SSH client and its immutable snapshot."""
+        with self._lock:
+            if not self._snapshot.is_active:
+                return None, self._snapshot
+            return self._ssh, self._snapshot
+
     def get_ssh_client(self):
         """Return raw SSH for legacy adapters during incremental migration.
 
         New services should prefer operation-specific methods and should not
         expose this object to UI or HTTP request handlers.
         """
+        return self.get_ssh_session()[0]
+
+    def get_filesystem_session(self):
+        """Atomically return the filesystem adapter and its snapshot."""
         with self._lock:
             if not self._snapshot.is_active:
-                return None
-            return self._ssh
+                return None, self._snapshot
+            return self._filesystem, self._snapshot
 
     def get_filesystem(self):
         """Return the active app-facing filesystem adapter, if any."""
-        with self._lock:
-            if not self._snapshot.is_active:
-                return None
-            return self._filesystem
+        return self.get_filesystem_session()[0]
 
     def is_current(self, generation: int) -> bool:
         """Check whether an asynchronous result belongs to the live session."""
