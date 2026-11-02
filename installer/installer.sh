@@ -197,7 +197,7 @@ fi
 SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-${KUBEDOCK_BRANCH:-}}}"
 KUBEDOCK_INSTALL_MODE="${KUBEDOCK_INSTALL_MODE:-auto}"
 
-ui_phase 1 8 "Preparing installation" "Checking install mode and platform compatibility."
+ui_info "Install mode: $KUBEDOCK_INSTALL_MODE"
 
 if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release" && "$KUBEDOCK_INSTALL_MODE" != "source" ]]; then
   echo "ERROR: KUBEDOCK_INSTALL_MODE must be auto, release, or source."
@@ -205,6 +205,7 @@ if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release
 fi
 
 install_prebuilt_bundle() {
+  ui_phase 1 5 "Checking platform" "Selecting a compatible prebuilt KubeDock release."
   local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
   base="https://github.com/HareeshGT/KubeDock/releases/latest/download"
 
@@ -492,8 +493,7 @@ SELECTED_BRANCH="${1:-${KUBEDECK_BRANCH:-${KUBEDOCK_BRANCH:-}}}"
 
 echo
 echo "=========================================="
-echo "KubeDock GitHub Branch Selection"
-echo "=========================================="
+ui_info "KubeDock source branch selection"
 echo
 
 if ! command -v git >/dev/null 2>&1; then
