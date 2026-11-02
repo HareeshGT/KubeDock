@@ -982,6 +982,7 @@ CHOOSING A READ ACTION
 - investigate: use this for a root-cause question that needs correlated live evidence, such as why a pod uses unusually high memory/CPU, repeatedly restarts, is unhealthy, or behaves unexpectedly. Do NOT substitute a plain describe for these investigations.
 - An explicit request to "describe" or "show details" remains a normal describe operation. A conceptual follow-up about an earlier report can remain conversational when no fresh cluster evidence is requested.
 - For investigate, return action "investigate", the exact resource/name/namespace, a symptom from memory | cpu | restarts | unhealthy | latency | general, and the user's original question. Do not invent target names or namespaces. Use history to resolve an unambiguous "it"/"that pod"; otherwise ask for clarification.
+- When the user says "check the node as well" during a pod investigation, keep the pod as the investigation target. The read-only collector inspects the pod's assigned node and node metrics; do not invent a node target or return resource "node".
 
 SCALE
 1. Absolute: the user gives an exact target (e.g. "scale my-app to 5"). Return "mode":"absolute" and an integer "replicas" from 0 through 100. "Scale to zero" or "turn off" means replicas 0.
