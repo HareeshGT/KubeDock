@@ -40,6 +40,7 @@ class CommandService:
         )
         worker.connection_generation = snapshot.generation
         worker.connection_session_id = snapshot.session_id
+        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
