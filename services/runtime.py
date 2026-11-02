@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from .connection import ConnectionService
@@ -17,14 +18,17 @@ class AppServices:
 
     def __init__(self, connection: Optional[ConnectionService] = None):
         self.connection = connection or ConnectionService()
+        self._lock = threading.Lock()
         self._stopped = False
 
     def shutdown(self) -> None:
-        if self._stopped:
-            return
-        self._stopped = True
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
         self.connection.disconnect()
 
     @property
     def stopped(self) -> bool:
-        return self._stopped
+        with self._lock:
+            return self._stopped
