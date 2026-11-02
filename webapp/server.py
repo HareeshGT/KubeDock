@@ -419,6 +419,7 @@ def _exec(
             # opening a request-specific Paramiko connection/channel here.
             code, out, err = _WEBAPP_SERVICE.execute(
                 command, timeout=timeout, input_data=input_data,
+                expected_ssh=ssh,
             )
         elif managed_exec_command is None:
             stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
