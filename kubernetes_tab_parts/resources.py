@@ -398,9 +398,18 @@ class KubernetesResourcesMixin:
       self._pod_ai_dialog.set_loading()
 
     provider = ai_assist.get_provider()
-    worker = ai_assist.AIExplainWorker(
-      provider, ai_assist.get_api_key(provider), ai_assist.get_model(provider),
-      pod, ns, None, log_text,
+    worker = (
+      self.kubernetes_service and self.kubernetes_service.connection
+      and getattr(getattr(self, "_services", None), "ai", None)
+    )
+    ai_service = getattr(getattr(self, "_services", None), "ai", None)
+    worker = (
+      ai_service.create_explain_worker(pod, ns, None, log_text)
+      if ai_service is not None
+      else ai_assist.AIExplainWorker(
+        provider, ai_assist.get_api_key(provider), ai_assist.get_model(provider),
+        pod, ns, None, log_text,
+      )
     )
     worker.done.connect(self._on_pod_ai_done)
     worker.error.connect(self._on_pod_ai_error)
