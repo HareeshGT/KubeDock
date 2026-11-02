@@ -53,7 +53,7 @@ class CommandService:
         stderr pipe blocking stdout (or the reverse), and a timer closes a
         stalled channel at the requested deadline.
         """
-        ssh, _snapshot = self.connection.get_ssh_session()
+        ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
         from workers import managed_exec_command
@@ -122,4 +122,9 @@ class CommandService:
             finally:
                 timer.cancel()
 
+        if not self.connection.is_current(snapshot.generation):
+            raise RuntimeError(
+                "The active connection changed while the remote command was running; "
+                "the stale result was discarded."
+            )
         return code, out, err
