@@ -76,7 +76,7 @@ class ConnectionService:
 
     def _close_pool_quietly(self, ssh) -> None:
         try:
-            self._close_pool_quietly(ssh)
+            self._pool_closer(ssh)
         except Exception:
             # A pool teardown problem must not prevent primary resources
             # from being closed.
@@ -293,7 +293,7 @@ class ConnectionService:
         # that are being closed.
         self._notify(listeners, snapshot)
         if ssh is not None:
-            self._pool_closer(ssh)
+            self._close_pool_quietly(ssh)
         self._close_quietly(filesystem)
         if ssh is not None:
             self._close_quietly(ssh)
