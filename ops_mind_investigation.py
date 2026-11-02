@@ -200,6 +200,21 @@ def summarize_historical_series(parsed: dict, metric: str) -> dict:
     else:
         trend = "stable_or_variable"
     suffix = "bytes" if metric == "memory" else ("cores" if metric == "cpu" else "percent")
+    daily = defaultdict(list)
+    for point in points:
+        stamp = int(point.get("timestamp", 0) or 0)
+        value = float(point.get("value", 0) or 0)
+        day = time.strftime("%Y-%m-%d", time.gmtime(stamp))
+        daily[day].append(value)
+    daily_averages = [
+        {
+            "date_utc": day,
+            "average": round(mean(day_values), 3),
+            "peak": round(max(day_values), 3),
+            "sample_count": len(day_values),
+        }
+        for day, day_values in sorted(daily.items())
+    ][-30:]
     return {
         "status": "available",
         "metric": metric,
@@ -211,6 +226,7 @@ def summarize_historical_series(parsed: dict, metric: str) -> dict:
         "minimum": round(min(values), 3),
         "maximum": round(max(values), 3),
         "trend": trend,
+        "daily_averages": daily_averages,
         "start_timestamp": points[0].get("timestamp"),
         "end_timestamp": points[-1].get("timestamp"),
         "window_note": (
