@@ -117,7 +117,11 @@ class FileManagerMixin:
       self.preview.clear()
       self.search_bar.clear()
 
-      worker = DirectoryListWorker(self.sftp, path)
+      worker = (
+        self.services.files.create_directory_worker(None, path)
+        if getattr(self, "services", None) is not None
+        else DirectoryListWorker(self.sftp, path)
+      )
       self._directory_worker = worker
       track_worker(self._workers, worker)
       worker.result.connect(
@@ -485,9 +489,15 @@ class FileManagerMixin:
           self.preview.show_text(message)
         self._preview_worker = None
 
-      worker = FileStreamReadWorker(
-        self.sftp, self.ssh, remote,
-        sudo_user=self._sudo_user, max_bytes=32768,
+      worker = (
+        self.services.files.create_stream_reader(
+          remote, sudo_user=self._sudo_user, max_bytes=32768,
+        )
+        if getattr(self, "services", None) is not None
+        else FileStreamReadWorker(
+          self.sftp, self.ssh, remote,
+          sudo_user=self._sudo_user, max_bytes=32768,
+        )
       )
       worker.chunk_ready.connect(_on_chunk)
       worker.finished_ok.connect(_on_finished)
