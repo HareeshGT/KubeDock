@@ -250,10 +250,12 @@ POSTINSTALL
 # --------------------------------------------------
 
 cp "$INSTALLER" "$SCRIPTS/installer.sh"
+cp "$CONSOLE_UI" "$SCRIPTS/console_ui.sh"
 
 chmod 755 \
   "$SCRIPTS/postinstall" \
-  "$SCRIPTS/installer.sh"
+  "$SCRIPTS/installer.sh" \
+  "$SCRIPTS/console_ui.sh"
 
 # --------------------------------------------------
 # Build package
