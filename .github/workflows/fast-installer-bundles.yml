@@ -24,6 +24,7 @@ on:
       - "installer/**"
       - "tests/test_db_paths.py"
       - "tests/test_installer_builder.py"
+      - "tests/test_installer_console.py"
       - "tests/test_release_version.py"
       - "docs/FAST_INSTALLER.md"
       - "README.md"
