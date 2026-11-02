@@ -12,6 +12,10 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
+from console_ui import ConsoleUI
+
+UI = ConsoleUI()
+
 REPO = "https://github.com/HareeshGT/KubeDock.git"
 APP = "KubeDock"
 ICON = "KubeDock.ico"
@@ -95,8 +99,8 @@ def relaunch_as_admin():
 
 def ensure_admin():
     if not is_admin():
-        print("\nAdministrator permissions are required to install KubeDock into Program Files.")
-        print("Requesting Windows UAC elevation...\n")
+        UI.warning("Administrator permissions are required to install KubeDock into Program Files.")
+        UI.info("Requesting Windows UAC elevation...")
         relaunch_as_admin()
         raise SystemExit(0)
 
@@ -108,14 +112,13 @@ def choose_qwen_tts() -> bool:
     if value in {"0", "n", "no", "false", "off"}:
         return False
     if not sys.stdin.isatty():
-        print("Non-interactive install: skipping optional Qwen3-TTS. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to include it.")
+        UI.info("Non-interactive install: skipping optional Qwen3-TTS. Set KUBEDOCK_ENABLE_QWEN_TTS=1 to include it.")
         return False
     answer = input("Include local Qwen3-TTS voice support? This adds several GB to the app build [y/N]: ").strip().lower()
     return answer in {"y", "yes"}
 
 def run(cmd, cwd=None, check=True):
-    print("\n>", " ".join(map(str, cmd)))
-    return subprocess.run(cmd, cwd=cwd, check=check)
+    return UI.run(cmd, cwd=cwd, check=check)
 
 
 def python_version(python):
@@ -190,7 +193,7 @@ def find_python(include_qwen: bool = False):
                 stderr=subprocess.DEVNULL,
             ).strip()
 
-            print(f"Candidate Python: {p} | version={v} | bits={bits}")
+            UI.info(f"Python candidate: {p} | version={v} | architecture={bits}-bit")
 
             if bits == "64" and ((include_qwen and v == "3.12") or (not include_qwen and v in {"3.13", "3.12", "3.11"})):
                 return p
@@ -233,9 +236,8 @@ def get_branches():
 
 
 def choose_branch(branches):
-    print("\n==========================================")
-    print("KubeDock GitHub Branch Selection")
-    print("==========================================\n")
+    UI.phase(3, 7, "Selecting source branch", "Choose the Git branch to package.")
+    UI.info("Available Git branches:")
     for i, branch in enumerate(branches, 1):
         print(f" [{i}] {branch}")
 
@@ -259,9 +261,7 @@ def install_requirements(python, repo, include_qwen: bool = False):
         [python, "-c", "import struct; print(struct.calcsize('P') * 8)"],
         text=True,
     ).strip()
-    print(f"\nSELECTED PYTHON: {python}")
-    print(f"PYTHON VERSION: {v}")
-    print(f"PYTHON ARCH: {bits}-bit")
+    UI.success(f"Selected Python {v} ({bits}-bit): {python}")
 
     # Absolute guard: never allow a future/stale build to run pip under 3.14+.
     if v not in {"3.13", "3.12", "3.11"} or bits != "64":
@@ -280,8 +280,9 @@ def install_requirements(python, repo, include_qwen: bool = False):
     generated = Path(repo) / "requirements.windows.generated.txt"
     generated.write_text("\n".join(filtered) + "\n", encoding="utf-8")
 
-    print(f"\nInstalling Windows requirements from: {generated}")
-    print("PyAudio entries removed from generated requirements: YES")
+    UI.phase(4, 7, "Installing Python dependencies", "Installing core, build and optional feature requirements.")
+    UI.info(f"Installing Windows requirements from: {generated}")
+    UI.success("PyAudio source-build entries excluded; a binary wheel is installed separately.")
     run([python, "-m", "pip", "install", "-r", str(generated)])
 
     # PyInstaller is needed only for source packaging, not as a KubeDock runtime dependency.
@@ -307,19 +308,19 @@ def install_requirements(python, repo, include_qwen: bool = False):
         editor_req = Path(repo) / "requirements-editor.txt"
         if not editor_req.is_file():
             raise RuntimeError("KUBEDOCK_ENABLE_WEBENGINE was set but requirements-editor.txt is missing.")
-        print("\nInstalling optional Qt WebEngine/Monaco editor. This increases package size.")
+        UI.info("Installing optional Qt WebEngine/Monaco editor. This increases package size.")
         run([python, "-m", "pip", "install", "-r", str(editor_req)])
     else:
-        print("\nSkipping optional Qt WebEngine; the built-in editor remains available.")
+        UI.info("Skipping optional Qt WebEngine; the built-in editor remains available.")
 
-    print("\nInstalling PyAudio as a binary wheel only...")
+    UI.info("Installing PyAudio as a binary wheel only...")
     run([python, "-m", "pip", "install", "--only-binary=:all:", "PyAudio==0.2.14"])
 
     if include_qwen:
         qwen_req = Path(repo) / "requirements-qwen-tts.txt"
         if not qwen_req.is_file():
             raise RuntimeError("The selected branch does not include requirements-qwen-tts.txt.")
-        print("\nInstalling optional local Qwen3-TTS runtime. This can download several GB of Python packages.")
+        UI.warning("Installing optional local Qwen3-TTS runtime. This can download several GB of Python packages.")
         run([python, "-m", "pip", "install", "-r", str(qwen_req)])
         # Fail before PyInstaller if the Qwen package or the pinned Transformers
         # compatibility stack cannot actually import in this Python environment.
@@ -358,7 +359,7 @@ def sync_webapp(repo):
         ")).decode(\"utf-8\")\n",
         encoding="utf-8",
     )
-    print("[OK] Web UI fallback synchronized")
+    UI.success("Web UI fallback synchronized")
 
 
 def build(python, repo, include_qwen: bool = False):
@@ -535,7 +536,7 @@ def install_prebuilt_release() -> Path:
         url = release_asset_url(release_tag, asset)
         archive.parent.mkdir(parents=True, exist_ok=True)
         request = urllib.request.Request(url, headers={"User-Agent": "KubeDock-Installer"})
-        print(f"Downloading prebuilt bundle: {url}")
+        UI.phase(2, 4, "Downloading KubeDock release", f"Release: {release_tag} · Windows x86-64 bundle")
         with urllib.request.urlopen(request, timeout=45) as response, archive.open("wb") as output:
             total = int(response.headers.get("Content-Length", "0") or 0)
             downloaded = 0
@@ -549,10 +550,12 @@ def install_prebuilt_release() -> Path:
                 if total:
                     percent = int(downloaded * 100 / total)
                     if percent >= last_percent + 10:
-                        print(f"  Download: {percent}%")
+                        UI.progress("Downloading", percent, downloaded, total)
                         last_percent = percent
                 elif downloaded // (50 * 1024 * 1024) != (downloaded - len(chunk)) // (50 * 1024 * 1024):
-                    print(f"  Downloaded {downloaded / (1024 * 1024):.0f} MiB")
+                    UI.info(f"Downloaded {downloaded / (1024 * 1024):.0f} MiB")
+        UI.clear_progress()
+        UI.success("Release bundle downloaded")
         if not archive.is_file() or archive.stat().st_size == 0:
             raise RuntimeError("The downloaded KubeDock bundle is empty.")
 
@@ -573,7 +576,8 @@ def install_prebuilt_release() -> Path:
                 digest.update(chunk)
         if digest.hexdigest() != expected_hash:
             raise RuntimeError("SHA-256 verification failed for the downloaded Windows bundle.")
-        print("[OK] SHA-256 checksum verified.")
+        UI.phase(3, 4, "Verifying package integrity", "Checking the downloaded archive against the release SHA-256 manifest.")
+        UI.success("SHA-256 checksum verified")
 
         extract_root = temp_dir / "extracted"
         extract_root.mkdir(parents=True, exist_ok=True)
