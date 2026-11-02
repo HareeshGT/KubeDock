@@ -74,6 +74,14 @@ class ConnectionService:
         except Exception:
             _LOG.exception("Unable to close the managed SSH connection pool")
 
+    def _close_pool_quietly(self, ssh) -> None:
+        try:
+            self._close_pool_quietly(ssh)
+        except Exception:
+            # A pool teardown problem must not prevent primary resources
+            # from being closed.
+            _LOG.exception("Managed SSH pool teardown failed")
+
     @property
     def snapshot(self) -> ConnectionSnapshot:
         with self._lock:
@@ -146,7 +154,7 @@ class ConnectionService:
         # Do not close an object deliberately reused as the new resource.
         # Teardown runs outside the state lock.
         if old_ssh is not None and old_ssh is not ssh:
-            self._pool_closer(old_ssh)
+            self._close_pool_quietly(old_ssh)
             self._close_quietly(old_filesystem)
             self._close_quietly(old_ssh)
         elif old_filesystem is not None and old_filesystem is not filesystem:
