@@ -253,8 +253,25 @@ class DockerResourceCard(ResourceCard):
 class DockerTab(QWidget):
   status_msg = pyqtSignal(str)
 
+  @property
+  def ssh(self):
+    services = getattr(self, "_services", None)
+    if services is not None:
+      return services.connection.get_ssh_client()
+    return getattr(self, "_ssh_compat", None)
+
+  @ssh.setter
+  def ssh(self, value):
+    self._ssh_compat = value
+
+  def set_services(self, services):
+    self._services = services
+    self.docker_service = services.docker
+
   def __init__(self, parent=None):
     super().__init__(parent)
+    self._services = None
+    self.docker_service = None
     self.ssh = None
     self._connection_generation = 0
     self._sudo_user = None
