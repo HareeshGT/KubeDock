@@ -98,11 +98,10 @@ def build_live_incident_command(context: str, namespace: str, resource_kind: str
     if target["resource_kind"] == "pod":
         node_context = "kubectl " + context_flag
         node_jsonpath = (
-            "Name={.metadata.name}{\\"\\n\\"}Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason}{\\"\\n\\"}"
-            "Capacity=cpu:{.status.capacity.cpu},memory:{.status.capacity.memory}{\\"\\n\\"}"
+            "Name={.metadata.name};Conditions={.status.conditions[*].type}:{.status.conditions[*].status}:{.status.conditions[*].reason};"
+            "Capacity=cpu:{.status.capacity.cpu},memory:{.status.capacity.memory};"
             "Allocatable=cpu:{.status.allocatable.cpu},memory:{.status.allocatable.memory}"
-        )
-        commands.extend([
+        )        commands.extend([
             "printf '\\n%s\\n' '__KUBEDOCK_LOGS__'",
             base + " logs " + name + " --all-containers=true --prefix=true --tail=100 2>&1",
             "printf '\\n%s\\n' '__KUBEDOCK_PREVIOUS_LOGS__'",
