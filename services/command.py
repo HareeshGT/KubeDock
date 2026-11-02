@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import threading
 
 
 class CommandService:
@@ -37,29 +38,88 @@ class CommandService:
             ssh, command, cwd=cwd, sudo_user=sudo_user,
             timeout=timeout, raw=raw,
         )
+        snapshot = self.connection.snapshot
+        worker.connection_generation = snapshot.generation
+        worker.connection_session_id = snapshot.session_id
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
 
     def execute(self, command: str, *, timeout: int = 30, input_data: bytes = None):
-        """Execute a bounded command synchronously for non-UI service callers.
+        """Execute a bounded command synchronously for backend/service callers.
 
         UI features should use create_worker() so they never block the Qt
-        event loop. This path is intended for backend/service adapters.
+        event loop. Output streams are drained concurrently to avoid a full
+        stderr pipe blocking stdout (or the reverse), and a timer closes a
+        stalled channel at the requested deadline.
         """
         ssh = self.connection.get_ssh_client()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
         from workers import managed_exec_command
 
-        with managed_exec_command(ssh, command, channel_timeout=timeout) as (stdin, stdout, stderr):
-            for stream in (stdout, stderr):
-                stream.channel.settimeout(max(0.1, float(timeout)))
-            if input_data is not None:
-                stdin.write(input_data)
-                stdin.flush()
-                stdin.channel.shutdown_write()
-            out = stdout.read().decode("utf-8", errors="replace")
-            err = stderr.read().decode("utf-8", errors="replace")
-            code = stdout.channel.recv_exit_status()
+        deadline = max(0.1, float(timeout))
+        with managed_exec_command(
+            ssh, command, channel_timeout=deadline,
+        ) as (stdin, stdout, stderr):
+            channel = stdout.channel
+            timed_out = threading.Event()
+            drain_errors = []
+            out_chunks = []
+            err_chunks = []
+
+            def abort_channel():
+                timed_out.set()
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+
+            def drain(stream, chunks):
+                try:
+                    chunks.append(stream.read())
+                except Exception as exc:
+                    drain_errors.append(exc)
+
+            timer = threading.Timer(deadline, abort_channel)
+            timer.daemon = True
+            timer.start()
+            out_thread = threading.Thread(
+                target=drain, args=(stdout, out_chunks), daemon=True,
+            )
+            err_thread = threading.Thread(
+                target=drain, args=(stderr, err_chunks), daemon=True,
+            )
+            try:
+                channel.settimeout(deadline)
+                if input_data is not None:
+                    stdin.write(input_data)
+                    stdin.flush()
+                    channel.shutdown_write()
+                out_thread.start()
+                err_thread.start()
+                code = channel.recv_exit_status()
+                out_thread.join(timeout=deadline)
+                err_thread.join(timeout=deadline)
+                if timed_out.is_set():
+                    raise TimeoutError(
+                        "Remote command timed out after {} seconds".format(timeout)
+                    )
+                if out_thread.is_alive() or err_thread.is_alive():
+                    raise TimeoutError(
+                        "Remote command output did not close after {} seconds".format(timeout)
+                    )
+                if drain_errors:
+                    raise drain_errors[0]
+                out = b"".join(out_chunks).decode("utf-8", errors="replace")
+                err = b"".join(err_chunks).decode("utf-8", errors="replace")
+            except Exception as exc:
+                if timed_out.is_set():
+                    raise TimeoutError(
+                        "Remote command timed out after {} seconds".format(timeout)
+                    ) from exc
+                raise
+            finally:
+                timer.cancel()
+
         return code, out, err
