@@ -34,8 +34,25 @@ class KubernetesTab(KubernetesCoreMixin, KubernetesUiMixin, KubernetesWorkloadsM
   # the default limit even on servers with other channels already open.
   MAX_CONCURRENT_TUNNEL_RESTARTS = 4
 
+  @property
+  def ssh(self):
+    services = getattr(self, "_services", None)
+    if services is not None:
+      return services.connection.get_ssh_client()
+    return getattr(self, "_ssh_compat", None)
+
+  @ssh.setter
+  def ssh(self, value):
+    self._ssh_compat = value
+
+  def set_services(self, services):
+    self._services = services
+    self.kubernetes_service = services.kubernetes
+
   def __init__(self, parent=None):
     super().__init__(parent)
+    self._services = None
+    self.kubernetes_service = None
     self.ssh     = None
     self._sudo_user = None
     self._current_ns = "default"
