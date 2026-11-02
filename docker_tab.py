@@ -508,7 +508,13 @@ class DockerTab(QWidget):
 
   # ── running remote commands ────────────────────────────────
   def _worker(self, cmd, timeout=None):
-    w = CommandWorker(self.ssh, cmd, sudo_user=self._sudo_user, timeout=timeout)
+    w = (
+      self.docker_service.create_worker(
+        None, cmd, sudo_user=self._sudo_user, timeout=timeout
+      )
+      if self.docker_service is not None
+      else CommandWorker(self.ssh, cmd, sudo_user=self._sudo_user, timeout=timeout)
+    )
     track_worker(self._workers, w)
     return w
 
