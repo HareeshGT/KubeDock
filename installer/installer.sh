@@ -610,7 +610,6 @@ if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
 else
   echo "Qwen3-TTS bundle: disabled (small default build)."
 fi
-ui_complete "KubeDock installed successfully"
 echo
 
 # --------------------------------------------------
@@ -1556,4 +1555,6 @@ if [[ "$ENABLE_QWEN_TTS" == "1" ]]; then
 else
   ui_info "Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
 fi
+echo
+ui_complete "KubeDock installed successfully"
 echo
