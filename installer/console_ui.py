@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
 from typing import Callable, TextIO
 
 
@@ -112,6 +111,9 @@ class ConsoleUI:
 
     def info(self, message: str) -> None:
         self._write(self._paint("  i  ", "36") + str(message))
+
+    def menu_item(self, number: int, label: str) -> None:
+        self._write(self._paint(f"   {number:>2}  ", "38;5;141") + str(label))
 
     def success(self, message: str) -> None:
         self._write(self._paint("  ✓  ", "32;1") + str(message))
