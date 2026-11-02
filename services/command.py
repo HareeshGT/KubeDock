@@ -27,7 +27,7 @@ class CommandService:
         timeout: Optional[int] = None,
         raw: bool = False,
     ):
-        ssh = self.connection.get_ssh_client()
+        ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
 
@@ -38,7 +38,6 @@ class CommandService:
             ssh, command, cwd=cwd, sudo_user=sudo_user,
             timeout=timeout, raw=raw,
         )
-        snapshot = self.connection.snapshot
         worker.connection_generation = snapshot.generation
         worker.connection_session_id = snapshot.session_id
         if worker_pool is not None:
@@ -53,7 +52,7 @@ class CommandService:
         stderr pipe blocking stdout (or the reverse), and a timer closes a
         stalled channel at the requested deadline.
         """
-        ssh = self.connection.get_ssh_client()
+        ssh, _snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
         from workers import managed_exec_command
