@@ -135,6 +135,10 @@ def build_prometheus_range_query(namespace: str, pod: str, metric: str) -> str:
         return f"sum by (container) (container_memory_working_set_bytes{{{labels}}})"
     if metric == "cpu":
         return f"sum by (container) (rate(container_cpu_usage_seconds_total{{{labels}}}[5m]))"
+    if metric == "cpu_throttling":
+        throttled = f"sum by (container) (rate(container_cpu_cfs_throttled_periods_total{{{labels}}}[5m]))"
+        periods = f"sum by (container) (rate(container_cpu_cfs_periods_total{{{labels}}}[5m]))"
+        return f"100 * ({throttled} / clamp_min({periods}, 1))"
     raise ValueError("Unsupported historical metric.")
 
 
@@ -189,7 +193,7 @@ def summarize_historical_series(parsed: dict, metric: str) -> dict:
         trend = "declining"
     else:
         trend = "stable_or_variable"
-    suffix = "bytes" if metric == "memory" else "cores"
+    suffix = "bytes" if metric == "memory" else ("cores" if metric == "cpu" else "percent")
     return {
         "status": "available",
         "metric": metric,
@@ -237,21 +241,30 @@ def collect_prometheus_history(base_url: str, namespace: str, pod: str, days: in
         "metrics": {},
     }
     opener = urllib.request.build_opener(_NoRedirectHandler())
-    for metric in ("memory", "cpu"):
-        params = dict(params_common)
-        params["query"] = build_prometheus_range_query(namespace, pod, metric)
-        url = base + "/api/v1/query_range?" + urllib.parse.urlencode(params)
-        request = urllib.request.Request(
-            url,
-            headers={"Accept": "application/json", "User-Agent": "KubeDock/OpsMind"},
-        )
-        with opener.open(request, timeout=15) as response:
-            body = response.read(MAX_PROMETHEUS_RESPONSE_BYTES + 1)
-        if len(body) > MAX_PROMETHEUS_RESPONSE_BYTES:
-            raise ValueError("Prometheus response exceeded the 2 MiB limit.")
-        payload = json.loads(body.decode("utf-8"))
-        parsed = _parse_prometheus_range(payload)
-        result["metrics"][metric] = summarize_historical_series(parsed, metric)
+    for metric in ("memory", "cpu", "cpu_throttling"):
+        try:
+            params = dict(params_common)
+            params["query"] = build_prometheus_range_query(namespace, pod, metric)
+            url = base + "/api/v1/query_range?" + urllib.parse.urlencode(params)
+            request = urllib.request.Request(
+                url,
+                headers={"Accept": "application/json", "User-Agent": "KubeDock/OpsMind"},
+            )
+            with opener.open(request, timeout=15) as response:
+                body = response.read(MAX_PROMETHEUS_RESPONSE_BYTES + 1)
+            if len(body) > MAX_PROMETHEUS_RESPONSE_BYTES:
+                raise ValueError("Prometheus response exceeded the 2 MiB limit.")
+            payload = json.loads(body.decode("utf-8"))
+            parsed = _parse_prometheus_range(payload)
+            result["metrics"][metric] = summarize_historical_series(parsed, metric)
+        except Exception as exc:
+            result["metrics"][metric] = {
+                "status": "unavailable",
+                "reason": ai_intelligence.redact_evidence(str(exc))[:400],
+            }
+    if not any(item.get("status") == "available" for item in result["metrics"].values()):
+        result["status"] = "unavailable"
+        result["reason"] = "No usable historical CPU or memory metric series were returned."
     return result
 
 
@@ -286,6 +299,7 @@ SAFETY AND EVIDENCE RULES:
 - Missing data, RBAC denials, failed collectors and unavailable Prometheus data mean unknown, not healthy.
 - Distinguish usage, request, limit and node capacity. Do not treat a request as a limit.
 - Memory utilization percentages must use measured container memory divided by that container's configured memory limit. Do not calculate a percentage when the limit or measurement is absent.
+- Use CPU throttling history only when a valid throttling metric is present. Do not interpret missing throttling telemetry as no throttling.
 - A high memory value alone is not evidence of a leak. A leak hypothesis requires sustained growth across enough historical samples and should remain a hypothesis unless application-level evidence supports it.
 - Consider per-container values, OOMKilled/restart history, node pressure, warning events and application logs when they are available.
 - Do not recommend retrieving Secret values, dumping ConfigMaps, exec-ing into containers, or running arbitrary shell commands.
