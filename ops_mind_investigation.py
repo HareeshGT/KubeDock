@@ -54,7 +54,13 @@ def parse_container_resource_limits(resource_summary: str) -> dict:
             continue
         values = found.groupdict()
         name = values.pop("name")
-        result[name] = {key: _optional_quantity(value) for key, value in values.items()}
+        normalized = {
+            "request_cpu": values.get("req_cpu"),
+            "request_memory": values.get("req_memory"),
+            "limit_cpu": values.get("limit_cpu"),
+            "limit_memory": values.get("limit_memory"),
+        }
+        result[name] = {key: _optional_quantity(value) for key, value in normalized.items()}
     return result
 
 
