@@ -25,6 +25,25 @@ class InstallerConsoleUITests(unittest.TestCase):
         self.assertIn("Progress: 50%", rendered)
         self.assertNotIn("\033[", rendered)
 
+    def test_ascii_wordmark_spells_kubedock_and_fits_its_frame(self):
+        stream = io.StringIO()
+        ui = ConsoleUI(stream=stream, interactive=False, color=False)
+        ui.banner()
+        rows = stream.getvalue().splitlines()
+        frame = [
+            line for line in rows
+            if line.startswith("  ╭") or line.startswith("  ╰") or line.startswith("  │")
+        ]
+        self.assertEqual(len(frame), 9)
+        self.assertEqual({len(line) for line in frame}, {75})
+        logo_rows = [line for line in frame if "██" in line or "╚═╝" in line]
+        self.assertEqual(len(logo_rows), 6)
+        self.assertTrue(logo_rows[-1].endswith("╚═╝  ╚═╝ │"))
+
+        shell_ui = (INSTALLER_DIR / "console_ui.sh").read_text(encoding="utf-8")
+        self.assertIn("██████╗ ██╗  ██╗ │", shell_ui)
+        self.assertIn("╚═════╝ ╚═╝  ╚═╝ │", shell_ui)
+
     def test_status_messages_are_consistent(self):
         stream = io.StringIO()
         ui = ConsoleUI(stream=stream, interactive=False, color=False)
