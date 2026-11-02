@@ -58,8 +58,56 @@ _MEDIA_KINDS = {"video", "audio"}
 
 
 class FileManagerMixin:
+    def _file_service(self):
+      services = getattr(self, "services", None)
+      return services.files if services is not None else None
+
+    def _filesystem(self):
+      service = self._file_service()
+      return service.filesystem if service is not None else getattr(self, "sftp", None)
+
+    def _file_ssh(self):
+      service = self._file_service()
+      return service.ssh_client if service is not None else getattr(self, "ssh", None)
+
+    def _normalize_remote(self, path):
+      service = self._file_service()
+      if service is not None:
+        return service.normalize(path)
+      return self._filesystem().normalize(path or "")
+
+    def _mkdir_remote(self, path):
+      service = self._file_service()
+      if service is not None:
+        return service.mkdir(path)
+      return self._filesystem().mkdir(path)
+
+    def _create_empty_remote_file(self, path):
+      service = self._file_service()
+      if service is not None:
+        return service.create_empty_file(path)
+      filesystem = self._filesystem()
+      if hasattr(filesystem, "write_bytes"):
+        return filesystem.write_bytes(path, b"")
+      handle = filesystem.open(path, "w")
+      handle.close()
+
+    def _delete_remote(self, path, is_directory=False):
+      service = self._file_service()
+      if service is not None:
+        return service.delete(path, is_directory=is_directory)
+      if is_directory:
+        return self._filesystem().rmdir(path)
+      return self._filesystem().remove(path)
+
+    def _rename_remote(self, old_path, new_path):
+      service = self._file_service()
+      if service is not None:
+        return service.rename(old_path, new_path)
+      return self._filesystem().rename(old_path, new_path)
+
     def _nav_to(self, path):
-      if not self.sftp:
+      if not self._filesystem():
         return
       try:
         resolved = self.sftp.normalize(path or "")
@@ -378,7 +426,7 @@ class FileManagerMixin:
         )
         return
       FileEditorDialog.open_remote(
-        self, self.sftp, self.ssh, remote,
+        self, self.sftp, self._file_ssh(), remote,
         sudo_user=self._sudo_user,
       )
 
