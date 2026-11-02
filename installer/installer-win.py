@@ -632,7 +632,7 @@ def main():
         except Exception as exc:
             if install_mode == "release":
                 raise RuntimeError(f"Prebuilt installation failed: {exc}") from exc
-                UI.warning(f"Prebuilt bundle unavailable; falling back to source build: {exc}")
+            UI.warning(f"Prebuilt bundle unavailable; falling back to source build: {exc}")
             UI.info("The source path installs Python requirements and runs PyInstaller.")
 
     UI.phase(2, 7, "Selecting install options", "Choose the lightweight installation or optional local Qwen3-TTS runtime.")
