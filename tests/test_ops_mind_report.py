@@ -9,7 +9,7 @@ class OpsMindReportRenderingTests(unittest.TestCase):
         markdown = f"""## Investigation summary
 The **worker** is using {tick}4.6 GiB{tick} against a {tick}5 GiB{tick} limit.
 
-## Current resource utilization
+## Additional resource comparison
 | Metric | Current | Limit |
 |---|---:|---:|
 | **Memory** | 4.6 GiB | 5 GiB |
