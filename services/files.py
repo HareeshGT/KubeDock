@@ -17,26 +17,29 @@ class FileManagerService:
         return self.connection.get_ssh_client()
 
     def create_directory_worker(self, worker_pool, path):
-        filesystem = self.filesystem
+        filesystem, snapshot = self.connection.get_filesystem_session()
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         from workers import DirectoryListWorker, track_worker
 
         worker = DirectoryListWorker(filesystem, path)
+        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
 
     def create_stream_reader(self, path, *, sudo_user=None, max_bytes=None):
-        filesystem = self.filesystem
+        filesystem, ssh, snapshot = self.connection.get_file_session()
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         from workers import FileStreamReadWorker
 
-        return FileStreamReadWorker(
-            filesystem, self.ssh_client, path,
+        worker = FileStreamReadWorker(
+            filesystem, ssh, path,
             sudo_user=sudo_user, max_bytes=max_bytes,
         )
+        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        return worker
 
     def create_command_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
         return self.commands.create_worker(
