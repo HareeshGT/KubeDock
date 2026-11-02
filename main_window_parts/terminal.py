@@ -114,7 +114,13 @@ class TerminalMixin:
 
       self.progress.show()
 
-      worker = CommandWorker(self.ssh, cmd, cwd=self._terminal_cwd, sudo_user=self._sudo_user)
+      worker = (
+        self.services.terminal.create_command_worker(
+          None, cmd, cwd=self._terminal_cwd, sudo_user=self._sudo_user
+        )
+        if getattr(self, "services", None) is not None
+        else CommandWorker(self.ssh, cmd, cwd=self._terminal_cwd, sudo_user=self._sudo_user)
+      )
       worker.result.connect(lambda out, err, code, cmd=cmd: self._on_terminal_result(cmd, out, err, code))
       worker.done.connect(lambda out: self._cmd_done(out, cmd))
       worker.error.connect(lambda e: self._cmd_done("[error] {}".format(e), cmd))
@@ -152,10 +158,17 @@ class TerminalMixin:
 
       self.terminal_explain_btn.setEnabled(False)
 
-      worker = ai_assist.AICommandExplainWorker(
-        provider, api_key, ai_assist.get_model(provider),
-        self._last_term_cmd, self._last_term_exit_code,
-        self._last_term_stderr, self._last_term_stdout,
+      worker = (
+        self.services.ai.create_command_explain_worker(
+          self._last_term_cmd, self._last_term_exit_code,
+          self._last_term_stderr, self._last_term_stdout,
+        )
+        if getattr(self, "services", None) is not None
+        else ai_assist.AICommandExplainWorker(
+          provider, api_key, ai_assist.get_model(provider),
+          self._last_term_cmd, self._last_term_exit_code,
+          self._last_term_stderr, self._last_term_stdout,
+        )
       )
       worker.done.connect(self._on_terminal_explain_done)
       worker.error.connect(self._on_terminal_explain_error)
@@ -229,7 +242,13 @@ class TerminalMixin:
         return False
       cwd_prefix = "cd {} 2>/dev/null; ".format(self._terminal_cwd) if self._terminal_cwd else ""
       full    = "{}{}> /dev/null 2>&1; pwd".format(cwd_prefix, cmd + " ")
-      worker   = CommandWorker(self.ssh, full, sudo_user=self._sudo_user)
+      worker   = (
+        self.services.terminal.create_command_worker(
+          None, full, sudo_user=self._sudo_user
+        )
+        if getattr(self, "services", None) is not None
+        else CommandWorker(self.ssh, full, sudo_user=self._sudo_user)
+      )
 
       def on_done(out):
         self._set_terminal_cwd(out.strip().splitlines()[-1] if out.strip() else "")
