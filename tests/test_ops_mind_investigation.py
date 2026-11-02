@@ -123,7 +123,7 @@ class OpsMindInvestigationTests(unittest.TestCase):
         self.assertEqual(summarize_historical_series(growth, "memory")["trend"], "sustained_growth")
 
     def test_insufficient_historical_samples_are_not_accepted(self):
-        with self.assertRaisesRegex(ValueError, "Fewer than five"):
+        with self.assertRaisesRegex(ValueError, "Fewer than twelve"):
             _parse_prometheus_range({
                 "status": "success",
                 "data": {"result": [{"values": [[1, "10"], [2, "11"]] }]},
