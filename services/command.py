@@ -45,7 +45,10 @@ class CommandService:
             track_worker(worker_pool, worker)
         return worker
 
-    def execute(self, command: str, *, timeout: int = 30, input_data: bytes = None):
+    def execute(
+        self, command: str, *, timeout: int = 30, input_data: bytes = None,
+        expected_generation: int = None, expected_ssh=None,
+    ):
         """Execute a bounded command synchronously for backend/service callers.
 
         UI features should use create_worker() so they never block the Qt
@@ -56,6 +59,10 @@ class CommandService:
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
+        if expected_generation is not None and snapshot.generation != expected_generation:
+            raise RuntimeError("The active connection changed before the command could start.")
+        if expected_ssh is not None and ssh is not expected_ssh:
+            raise RuntimeError("The active connection changed before the command could start.")
         from workers import managed_exec_command
 
         deadline = max(0.1, float(timeout))
