@@ -141,6 +141,21 @@ class OpsMindInvestigationTests(unittest.TestCase):
         self.assertNotIn("secret-value", prompt)
         self.assertIn("delete pods", prompt)
 
+    def test_large_logs_do_not_truncate_later_prometheus_history(self):
+        prompt = build_investigation_prompt(
+            "Why is memory rising?",
+            {"context": "dev", "namespace": "apps", "resource_kind": "pod", "resource_name": "api-123"},
+            {
+                "logs": "ordinary log line\\n" * 4000,
+                "prometheus_history": {
+                    "status": "available",
+                    "metrics": {"memory": {"trend": "sustained_growth", "sample_count": 672}},
+                },
+            },
+        )
+        self.assertIn("sustained_growth", prompt)
+        self.assertIn("sample_count", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
