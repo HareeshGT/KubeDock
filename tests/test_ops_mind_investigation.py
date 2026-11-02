@@ -119,8 +119,12 @@ class OpsMindInvestigationTests(unittest.TestCase):
                 "values": [[index * 900, str(100 + index * 25)] for index in range(12)],
             }]},
         })
-        self.assertEqual(summarize_historical_series(stable, "memory")["trend"], "stable_or_variable")
-        self.assertEqual(summarize_historical_series(growth, "memory")["trend"], "sustained_growth")
+        stable_summary = summarize_historical_series(stable, "memory")
+        growth_summary = summarize_historical_series(growth, "memory")
+        self.assertEqual(stable_summary["trend"], "stable_or_variable")
+        self.assertEqual(growth_summary["trend"], "sustained_growth")
+        self.assertEqual(len(growth_summary["daily_averages"]), 1)
+        self.assertEqual(growth_summary["daily_averages"][0]["sample_count"], 12)
 
     def test_insufficient_historical_samples_are_not_accepted(self):
         with self.assertRaisesRegex(ValueError, "Fewer than twelve"):
