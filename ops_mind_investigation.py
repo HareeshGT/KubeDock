@@ -429,7 +429,7 @@ class OpsMindInvestigationWorker(QThread):
         if selection_error:
             self.error.emit(selection_error)
             return
-        answer, error = ai_assist._call_provider(provider, api_key, model, prompt)
+        answer, error = ai_assist._call_provider(provider, api_key, model, prompt, timeout_seconds=90)
         if error:
             self.error.emit(error)
         else:
