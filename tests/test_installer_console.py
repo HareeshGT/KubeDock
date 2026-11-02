@@ -42,12 +42,13 @@ class InstallerConsoleUITests(unittest.TestCase):
         self.assertTrue(logo_rows[-1].endswith("╚═╝  ╚═╝ │"))
         # The B must have a joined lower bowl, not the split feet that made it
         # look like an R in the previous console banner.
-        self.assertIn("██║   ██║██║  ██║█████╗", rendered)
+        self.assertIn("██║   ██║██████╔╝█████╗", rendered)
         self.assertIn("╚═════╝ ██████╔╝╚══════╝", rendered)
+        self.assertNotIn("██║   ██║██║  ██║█████╗", rendered)
 
         shell_ui = (INSTALLER_DIR / "console_ui.sh").read_text(encoding="utf-8")
         self.assertIn("██████╗ ██╗  ██╗ │", shell_ui)
-        self.assertIn("██║   ██║██║  ██║█████╗", shell_ui)
+        self.assertIn("██║   ██║██████╔╝█████╗", shell_ui)
         self.assertIn("╚═════╝ ██████╔╝╚══════╝", shell_ui)
 
     def test_status_messages_are_consistent(self):
