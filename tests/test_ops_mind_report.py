@@ -80,7 +80,7 @@ The **worker** is using {tick}4.6 GiB{tick} against a {tick}5 GiB{tick} limit.
             }
         }
         html = render_investigation_report(
-            "## Investigation summary\\nThe memory use is high.",
+            "## Investigation summary\nThe memory use is high.",
             target="pod/cowrustfs",
             context="dev-cc",
             evidence=evidence,
