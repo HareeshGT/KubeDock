@@ -34,9 +34,10 @@ class ConsoleUI:
                 interactive = False
         self.interactive = bool(interactive)
         no_color = bool(os.environ.get("NO_COLOR"))
+        dumb_terminal = os.environ.get("TERM", "").strip().lower() == "dumb"
         self.color = (
-            self.interactive and not no_color
-        ) if color is None else bool(color and not no_color)
+            self.interactive and not no_color and not dumb_terminal
+        ) if color is None else bool(color and not no_color and not dumb_terminal)
         self._enable_windows_vt()
 
     def _enable_windows_vt(self) -> None:
