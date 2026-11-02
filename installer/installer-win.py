@@ -239,7 +239,7 @@ def choose_branch(branches):
     UI.phase(3, 7, "Selecting source branch", "Choose the Git branch to package.")
     UI.info("Available Git branches:")
     for i, branch in enumerate(branches, 1):
-        print(f" [{i}] {branch}")
+        UI._write(f"   {i:>2}  {branch}")
 
     while True:
         try:
@@ -248,7 +248,7 @@ def choose_branch(branches):
                 return branches[number - 1]
         except ValueError:
             pass
-        print("Invalid selection.")
+        UI.warning("Invalid selection. Enter one of the listed numbers.")
 
 
 def install_requirements(python, repo, include_qwen: bool = False):
@@ -602,22 +602,20 @@ def install_prebuilt_release() -> Path:
             print("\\nPrebuilt bundle metadata:")
             print(metadata_path.read_text(encoding="utf-8"))
 
+        UI.phase(4, 4, "Installing application", "Placing the verified app bundle in its destination.")
         destination = install_application(output_dir)
-        print("\\n==========================================")
-        print("KubeDock installed from prebuilt bundle!")
-        print("==========================================")
-        print("Installed to:", destination)
-        print("Executable:", destination / "KubeDock.exe")
-        print("Optional Qwen3-TTS is not included in the fast bundle.")
+        UI.complete("KubeDock installed from the verified prebuilt bundle")
+        UI.success(f"Installed to: {destination}")
+        UI.info(f"Executable: {destination / 'KubeDock.exe'}")
+        UI.info("Optional Qwen3-TTS is not included in the fast bundle.")
         return destination
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def main():
-    print("==========================================")
-    print(f"KubeDock Installer: {BUILD_ID}")
-    print("==========================================")
+    UI.banner(f"Windows installer · {BUILD_ID}")
+    UI.phase(1, 7, "Checking platform and permissions", "Confirming Windows support and Administrator access.")
 
     if platform.system() != "Windows":
         raise RuntimeError("This installer is Windows-only. Do not run it inside WSL.")
@@ -634,15 +632,16 @@ def main():
         except Exception as exc:
             if install_mode == "release":
                 raise RuntimeError(f"Prebuilt installation failed: {exc}") from exc
-            print("\\n[INFO] Prebuilt bundle unavailable; falling back to the source build.")
-            print("       The source path installs Python requirements and runs PyInstaller.")
+                UI.warning(f"Prebuilt bundle unavailable; falling back to source build: {exc}")
+            UI.info("The source path installs Python requirements and runs PyInstaller.")
 
+    UI.phase(2, 7, "Selecting install options", "Choose the lightweight installation or optional local Qwen3-TTS runtime.")
     include_qwen = choose_qwen_tts()
 
+    UI.phase(3, 7, "Detecting Python runtime", "Selecting a supported 64-bit Python version.")
     python = find_python(include_qwen=include_qwen)
     selected = python_version(python)
-    print("\nFINAL PYTHON SELECTED:", python)
-    print("FINAL PYTHON VERSION:", selected)
+    UI.success(f"Python runtime selected: {selected} · {python}")
     expected_python = "3.12" if include_qwen else RECOMMENDED_PYTHON
     if selected != expected_python:
         if include_qwen:
@@ -658,6 +657,7 @@ def main():
 
     branches = get_branches()
     branch = choose_branch(branches)
+    UI.success(f"Source branch selected: {branch}")
 
     root = Path(tempfile.mkdtemp(prefix="KubeDeckInstaller-"))
     repo = root / "VM-Visualizer"
@@ -665,18 +665,19 @@ def main():
     try:
         run(["git", "clone", "--branch", branch, "--single-branch", REPO, str(repo)])
         install_requirements(python, repo, include_qwen=include_qwen)
+        UI.phase(5, 7, "Verifying application", "Checking required imports and synchronizing the embedded web UI.")
         verify(python, include_qwen=include_qwen)
         sync_webapp(repo)
+        UI.phase(6, 7, "Building KubeDock", "Packaging the desktop app. This can take several minutes.")
         output = build(python, repo, include_qwen=include_qwen)
 
+        UI.phase(7, 7, "Installing application", "Copying the completed build into its destination.")
         destination = install_application(output)
 
-        print("\n==========================================")
-        print("KubeDock installed successfully!")
-        print("==========================================")
-        print("Installed to:", destination)
-        print("Executable:", destination / "KubeDock.exe")
-        print("Qwen3-TTS local voice included:", "YES" if include_qwen else "NO (default lightweight build)")
+        UI.complete("KubeDock installed successfully")
+        UI.success(f"Installed to: {destination}")
+        UI.info(f"Executable: {destination / 'KubeDock.exe'}")
+        UI.info("Qwen3-TTS local voice included: " + ("YES" if include_qwen else "NO (default lightweight build)"))
         if include_qwen:
             print("Note: Qwen model weights download on first launch; model weights are not embedded in the installer.")
     finally:
@@ -687,6 +688,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print("\nERROR:", exc)
-        input("\nPress Enter to exit...")
+        UI.failed(str(exc))
+        if sys.stdin.isatty():
+            input("\nPress Enter to exit...")
         sys.exit(1)
