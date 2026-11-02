@@ -47,6 +47,11 @@ class K8sAIOpsUIMixin:
         self._workers = []
         self._ai_worker = None
         self._operation_worker = None
+        self._investigation_collection_worker = None
+        self._investigation_ai_worker = None
+        self._pending_investigation = None
+        self._active_investigation = None
+        self._conversation_context_key = self._kube_context()
         self._scale_previous_worker = None
         self._pending_scale_action = None
         self._voice_worker = None
