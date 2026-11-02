@@ -154,3 +154,15 @@ def test_pool_teardown_failure_does_not_skip_primary_resource_cleanup():
 
     assert filesystem.close_calls == 1
     assert ssh.close_calls == 1
+
+
+def test_reused_filesystem_is_not_closed_when_replacing_ssh_client():
+    first_ssh, second_ssh = FakeResource(), FakeResource()
+    shared_filesystem = FakeResource()
+    service = ConnectionService(pool_closer=lambda _ssh: None)
+    service.attach_ssh(first_ssh, shared_filesystem, host="one")
+    service.attach_ssh(second_ssh, shared_filesystem, host="two")
+
+    assert first_ssh.close_calls == 1
+    assert shared_filesystem.close_calls == 0
+    assert service.get_filesystem() is shared_filesystem
