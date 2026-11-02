@@ -231,6 +231,13 @@ class ConnectionService:
                 return None, self._snapshot
             return self._filesystem, self._snapshot
 
+    def get_file_session(self):
+        """Atomically return filesystem, SSH client, and the owning snapshot."""
+        with self._lock:
+            if not self._snapshot.is_active:
+                return None, None, self._snapshot
+            return self._filesystem, self._ssh, self._snapshot
+
     def get_filesystem(self):
         """Return the active app-facing filesystem adapter, if any."""
         return self.get_filesystem_session()[0]
