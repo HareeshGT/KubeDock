@@ -444,6 +444,7 @@ class K8sAIOpsOperationsMixin:
         else:
             collection_note = "Read-only collector exited successfully; individual sections may still report unavailable sources."
         evidence = {
+            "reported_symptom": pending["symptom"],
             "collected_at": datetime.now(timezone.utc).isoformat(),
             "resource_summary": ai_incident_workflow.compact_evidence_text(resource_summary, max_chars=7000),
             "target_events": ai_incident_workflow.compact_evidence_text(sections.get("target_events", ""), max_chars=5000),
