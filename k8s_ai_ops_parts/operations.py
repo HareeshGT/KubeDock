@@ -515,12 +515,21 @@ class K8sAIOpsOperationsMixin:
         if self._investigation_ai_worker is None and self._ai_worker is None:
             self._set_busy(False)
 
-    def _investigation_report_html(self, markdown_text: str, target_label: str, context: str) -> str:
-        """Render the AI report as a safe, theme-aware rich investigation card."""
+    def _investigation_report_html(
+        self,
+        markdown_text: str,
+        target_label: str,
+        context: str,
+        evidence: dict = None,
+        analysis_error: str = None,
+    ) -> str:
+        """Render the report and locally collected measurements in one safe card."""
         return render_investigation_report(
             markdown_text,
             target=target_label,
             context=context,
+            evidence=evidence,
+            analysis_error=analysis_error,
         )
 
     def _on_root_cause_investigation_done(self, answer: str, evidence: dict):
@@ -534,6 +543,7 @@ class K8sAIOpsOperationsMixin:
                 answer,
                 target_label,
                 active.get("context") or "current context",
+                evidence=evidence,
             )
         )
         if isinstance(active, dict):
@@ -544,7 +554,28 @@ class K8sAIOpsOperationsMixin:
         self._speak("The investigation report is ready. Review the findings and recommended verification steps.")
 
     def _on_root_cause_investigation_error(self, message: str):
-        self._write_error("\nInvestigation analysis failed: " + ai_intelligence.redact_evidence(message)[:1200])
+        active = getattr(self, "_active_investigation", None) or {}
+        safe_error = ai_intelligence.redact_evidence(message)[:1200]
+        if isinstance(active, dict) and active.get("evidence"):
+            target_label = (
+                f"{active.get('resource', 'resource')}/{active.get('name', 'unknown')} "
+                f"in namespace {active.get('namespace', 'unknown')}"
+            )
+            self.output.append(
+                self._investigation_report_html(
+                    "",
+                    target_label,
+                    active.get("context") or "current context",
+                    evidence=active.get("evidence"),
+                    analysis_error=safe_error,
+                )
+            )
+            self._remember_conversation_turn(
+                "assistant",
+                f"AI analysis did not complete for {target_label}; the read-only evidence was collected and preserved.",
+            )
+        else:
+            self._write_error("\nInvestigation analysis failed: " + safe_error)
 
     def _on_root_cause_investigation_finished(self):
         self._investigation_ai_worker = None
