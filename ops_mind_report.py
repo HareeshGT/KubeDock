@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from html import escape
+from html import escape, unescape
 
 from themes import T
 
@@ -10,6 +10,7 @@ _HEADING = re.compile(r"^(#{1,4})\s+(.+?)\s*#*\s*$")
 _ORDERED = re.compile(r"^\s*\d+[.)]\s+(.+)$")
 _UNORDERED = re.compile(r"^\s*[-*+]\s+(.+)$")
 _TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_SINGLE_TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*\|?\s*$")
 _CODE = re.compile(r"\x60([^\x60\n]+)\x60")
 
 
@@ -39,6 +40,12 @@ def _inline(value: str) -> str:
 def _cells(line: str) -> list[str]:
     value = line.strip().strip("|")
     return [cell.strip() for cell in value.split("|")]
+
+
+def _is_empty_placeholder(value: str) -> bool:
+    """Recognize blank cells emitted by broken model-generated tables."""
+    normalized = unescape(str(value or "")).replace("\\u00a0", " ").strip().lower()
+    return normalized in {"", "&#x20;", "&nbsp;", "&#160;", "—", "-"}
 
 
 def _table(rows: list[str]) -> str:
@@ -143,15 +150,39 @@ def _render_blocks(markdown: str) -> str:
             i += 1
             continue
 
+        # Some model responses contain empty one-column "tables" such as
+        # | &#x20; | / | ------ | between every label and value. Drop these
+        # presentation artifacts instead of rendering empty table fragments.
+        if (
+            i + 1 < len(lines)
+            and "|" in line
+            and _SINGLE_TABLE_SEPARATOR.match(lines[i + 1].strip())
+            and len(_cells(line)) == 1
+            and _is_empty_placeholder(_cells(line)[0])
+        ):
+            flush_paragraph()
+            flush_list()
+            i += 2
+            continue
+
+        if _SINGLE_TABLE_SEPARATOR.match(line):
+            i += 1
+            continue
+
         if i + 1 < len(lines) and "|" in line and _TABLE_SEPARATOR.match(lines[i + 1].strip()):
             flush_paragraph()
             flush_list()
             rows = [line]
             i += 2
             while i < len(lines) and lines[i].strip() and "|" in lines[i]:
+                if _SINGLE_TABLE_SEPARATOR.match(lines[i].strip()):
+                    break
                 rows.append(lines[i])
                 i += 1
-            output.append(_table(rows))
+            # Ignore a malformed single-column table. Real report tables must
+            # have at least two meaningful columns.
+            if len(_cells(rows[0])) >= 2:
+                output.append(_table(rows))
             continue
 
         ordered = _ORDERED.match(line)
@@ -175,11 +206,120 @@ def _render_blocks(markdown: str) -> str:
     return "".join(output)
 
 
-def render_investigation_report(markdown_text: str, *, target: str, context: str) -> str:
-    """Build a theme-aware report card; model-authored HTML is always escaped."""
+def _render_live_utilization(evidence: dict | None) -> str:
+    """Render measured usage and configured requests/limits from local evidence."""
+    evidence = evidence if isinstance(evidence, dict) else {}
+    utilization = evidence.get("utilization") or {}
+    containers = utilization.get("containers") or []
+    if not containers:
+        return (
+            f"<div style='margin:16px 0 8px;padding:12px 14px;background:{T['BG_DARK']};"
+            f"border:1px solid {T['BORDER']};border-radius:8px'>"
+            f"<div style='font-size:13px;font-weight:700;color:{T['TEXT_PRIMARY']}'>"
+            "Live resource utilization</div>"
+            f"<p style='margin:7px 0 0;color:{T['TEXT_MUTED']};font-size:12px'>"
+            "Container metrics were not available. This is unknown, not zero usage.</p></div>"
+        )
+
+    parts = [
+        f"<div style='margin:16px 0 9px;padding:13px 14px;background:{T['BG_DARK']};"
+        f"border:1px solid {T['BORDER']};border-radius:9px'>",
+        f"<div style='font-size:13px;font-weight:750;color:{T['TEXT_PRIMARY']}'>"
+        "Live resource utilization</div>",
+        f"<div style='font-size:11px;color:{T['TEXT_MUTED']};margin:4px 0 9px'>"
+        "Measured container usage compared with its configured Kubernetes requests and limits.</div>",
+    ]
+    for container in containers[:20]:
+        name = escape(str(container.get("container") or "container"), quote=True)
+        parts.append(
+            f"<div style='margin:9px 0 5px;font-size:12px;font-weight:700;"
+            f"color:{T['ACCENT2']}'>{name}</div>"
+        )
+        parts.append(
+            f"<table style='width:100%;border-collapse:collapse;table-layout:fixed;"
+            f"font-size:11px;border:1px solid {T['BORDER']}'>"
+            "<thead><tr>"
+        )
+        headers = ("Metric", "Measured", "Request", "Limit", "% of request", "% of limit")
+        for header in headers:
+            parts.append(
+                f"<th style='text-align:left;padding:7px 6px;background:{T['BG_ITEM']};"
+                f"color:{T['TEXT_PRIMARY']};border-bottom:1px solid {T['BORDER']}'>"
+                f"{header}</th>"
+            )
+        parts.append("</tr></thead><tbody>")
+        for metric, usage_key in (("Memory", "memory"), ("CPU", "cpu")):
+            measured = escape(str(container.get(usage_key) or "Not collected"), quote=True)
+            request = escape(str(container.get(f"request_{usage_key}") or "Not configured"), quote=True)
+            limit = escape(str(container.get(f"limit_{usage_key}") or "Not configured"), quote=True)
+            request_pct = container.get(f"{usage_key}_request_utilization_percent")
+            limit_pct = container.get(f"{usage_key}_limit_utilization_percent")
+            request_text = f"{request_pct:.1f}%" if isinstance(request_pct, (int, float)) else "—"
+            limit_text = f"{limit_pct:.1f}%" if isinstance(limit_pct, (int, float)) else "—"
+            parts.append("<tr>")
+            for cell in (metric, measured, request, limit, request_text, limit_text):
+                color = T["TEXT_PRIMARY"] if cell in {measured, metric} else T["TEXT_DIM"]
+                parts.append(
+                    f"<td style='padding:7px 6px;vertical-align:top;background:{T['BG_PANEL']};"
+                    f"color:{color};border-bottom:1px solid {T['BORDER']};"
+                    "white-space:normal;word-wrap:break-word'>"
+                    f"{cell}</td>"
+                )
+            parts.append("</tr>")
+        parts.append("</tbody></table>")
+    parts.append(
+        f"<div style='font-size:10px;line-height:1.45;color:{T['TEXT_MUTED']};margin-top:8px'>"
+        "Utilization is measured usage ÷ request or limit. A request is not a limit; "
+        "— means no valid comparison could be calculated.</div></div>"
+    )
+    return "".join(parts)
+
+
+def _without_model_resource_section(markdown_text: str) -> str:
+    """Avoid duplicate AI-authored metric tables; the app renders these from evidence."""
+    lines = str(markdown_text or "").splitlines()
+    kept = []
+    skipping = False
+    for line in lines:
+        heading = _HEADING.match(line.strip())
+        if heading:
+            title = heading.group(2).strip().rstrip("#").strip().lower()
+            if title == "current resource utilization":
+                skipping = True
+                continue
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def render_investigation_report(
+    markdown_text: str,
+    *,
+    target: str,
+    context: str,
+    evidence: dict | None = None,
+    analysis_error: str | None = None,
+) -> str:
+    """Build a theme-aware report card with measured resource data rendered locally."""
     target_html = escape(str(target or "Kubernetes resource"), quote=True)
     context_html = escape(str(context or "Current context"), quote=True)
-    body = _render_blocks(markdown_text)
+    body = _render_blocks(_without_model_resource_section(markdown_text))
+    live_utilization = _render_live_utilization(evidence)
+    error_html = ""
+    if analysis_error:
+        safe_error = escape(str(analysis_error), quote=True)
+        error_html = (
+            f"<div style='margin:12px 0 6px;padding:11px 13px;border-radius:8px;"
+            f"border:1px solid {T['WARNING']};background:{T['BG_DARK']}'>"
+            f"<div style='font-size:12px;font-weight:750;color:{T['WARNING']}'>"
+            "AI analysis did not complete</div>"
+            f"<div style='font-size:12px;line-height:1.5;color:{T['TEXT_DIM']};margin-top:4px'>"
+            f"{safe_error}</div>"
+            f"<div style='font-size:11px;color:{T['TEXT_MUTED']};margin-top:5px'>"
+            "The Kubernetes evidence above is preserved. You can run the investigation again; "
+            "no cluster changes were made.</div></div>"
+        )
     return (
         f"<div style='margin:7px 0 15px;font-family:Inter,-apple-system,BlinkMacSystemFont,"
         f"Segoe UI,Arial,sans-serif;color:{T['TEXT_PRIMARY']}'>"
@@ -201,7 +341,7 @@ def render_investigation_report(markdown_text: str, *, target: str, context: str
         "EVIDENCE-BASED</span></div></div>"
         f"<div style='padding:3px 16px 14px;background:{T['BG_PANEL']};"
         f"border:1px solid {T['BORDER']};border-top:0;border-radius:0 0 10px 10px'>"
-        f"{body}</div></div>"
+        f"{live_utilization}{error_html}{body}</div></div>"
     )
 
 

@@ -144,6 +144,10 @@ class OpsMindInvestigationTests(unittest.TestCase):
         self.assertIn("memory leak", prompt)
         self.assertNotIn("secret-value", prompt)
         self.assertIn("delete pods", prompt)
+        self.assertIn("Do NOT create Markdown pipe tables", prompt)
+        self.assertIn("one-third of the limit", prompt)
+        self.assertIn("Do not recommend kubectl exec", prompt)
+        self.assertNotIn("## Current resource utilization", prompt)
 
     def test_large_logs_do_not_truncate_later_prometheus_history(self):
         prompt = build_investigation_prompt(

@@ -1117,8 +1117,10 @@ def _build_followup_prompt(source_context: str, conversation: list, question: st
     )
 
 # ─── Shared provider call ────────────────────────────────────────
-def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str):
+def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str, timeout_seconds=None):
     """Send bounded, redacted prompt data to the explicitly selected provider."""
+    request_timeout = PROVIDER_TIMEOUT_SECONDS if timeout_seconds is None else int(timeout_seconds)
+    request_timeout = max(10, min(request_timeout, 180))
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return None, f"Unknown AI provider: {provider_id!r}"
@@ -1150,7 +1152,7 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str)
         try:
             with urllib.request.urlopen(
                 req,
-                timeout=PROVIDER_TIMEOUT_SECONDS,
+                timeout=request_timeout,
                 context=_provider_ssl_context(),
             ) as resp:
                 raw_bytes = resp.read(MAX_RESPONSE_BYTES + 1)
@@ -1236,10 +1238,10 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str)
         )
     return text, None
 
-def _call_provider(provider_id: str, api_key: str, model: str, prompt: str):
+def _call_provider(provider_id: str, api_key: str, model: str, prompt: str, timeout_seconds=None):
     """Call the selected provider and optionally record aggregate local telemetry."""
     started = time.monotonic()
-    answer, error = _call_provider_impl(provider_id, api_key, model, prompt)
+    answer, error = _call_provider_impl(provider_id, api_key, model, prompt, timeout_seconds=timeout_seconds)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     try:
         stored = get_ai_settings()

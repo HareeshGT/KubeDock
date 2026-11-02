@@ -290,7 +290,7 @@ def collect_prometheus_history(base_url: str, namespace: str, pod: str, days: in
     return result
 
 
-def _redact_investigation_value(value, *, max_text_chars: int = 3200):
+def _redact_investigation_value(value, *, max_text_chars: int = 2000):
     """Redact nested fields independently so large logs cannot hide later metrics."""
     if isinstance(value, str):
         return ai_intelligence.redact_evidence(value)[:max_text_chars]
@@ -362,16 +362,24 @@ SAFETY AND EVIDENCE RULES:
 - All automatic collection was read-only. Do not claim to have restarted, scaled, deleted or modified anything.
 - Recommend remediation only as a human-reviewed proposal, with relevant risks and verification steps.
 
-Return a practical Markdown report using these headings:
+Return a concise Markdown report using these headings:
 ## Investigation summary
-## Current resource utilization
 ## Confirmed findings
 ## Likely root cause and alternatives
 ## Risk assessment
 ## Unknowns and next verification steps
 ## Recommended actions
 
-State whether the cause is confirmed, probable or undetermined. Use High/Medium/Low confidence with a brief evidence-based rationale, not arbitrary percentages. Keep the report concise but technically specific.
+REPORT FORMATTING AND NUMERIC ACCURACY:
+- Do NOT create Markdown pipe tables, HTML tables, ASCII tables, or column-aligned text. The application renders current CPU/memory measurements and request/limit percentages separately from the exact collected evidence.
+- Under "Risk assessment", use a short bullet list. Under other sections, use short paragraphs and concise bullet/numbered lists.
+- Do not repeat a utilization table or invent a current usage value. When a numeric value is important, quote the exact raw measurement from the evidence and identify its source.
+- Keep request, limit, capacity, and measured usage distinct. A CPU request of 1000m and a CPU limit of 3000m means the request is one-third of the limit; it does NOT mean the request exceeds the limit. Only say a request exceeds a limit when the actual configured request value is numerically greater.
+- Do not call utilization "safe", "acceptable", or "non-critical" based only on a percentage. Explain proximity to the limit and the unknowns.
+- Never claim filesystem scan activity caused memory consumption based only on coincident log messages. Label it as a plausible workload correlation unless metrics or application-level profiling establishes causality.
+- Do not recommend kubectl exec, shell commands inside containers, profiling binaries inside pods, reading Secret values, or dumping ConfigMaps. Do not invent kubectl flags or commands.
+- Keep remediation human-reviewed, conservative, and tied to observed evidence. Do not recommend raising a memory limit solely because the current usage is high; mention capacity and regression risk.
+- State whether the cause is confirmed, probable or undetermined. Use High/Medium/Low confidence with a brief evidence-based rationale, not arbitrary percentages. Keep the report concise (preferably under 700 words) and technically specific.
 """.strip()
 
 
@@ -421,7 +429,7 @@ class OpsMindInvestigationWorker(QThread):
         if selection_error:
             self.error.emit(selection_error)
             return
-        answer, error = ai_assist._call_provider(provider, api_key, model, prompt)
+        answer, error = ai_assist._call_provider(provider, api_key, model, prompt, timeout_seconds=90)
         if error:
             self.error.emit(error)
         else:
