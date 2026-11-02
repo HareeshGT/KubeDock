@@ -317,8 +317,8 @@ def render_investigation_report(
             f"<div style='font-size:12px;line-height:1.5;color:{T['TEXT_DIM']};margin-top:4px'>"
             f"{safe_error}</div>"
             f"<div style='font-size:11px;color:{T['TEXT_MUTED']};margin-top:5px'>"
-            "The Kubernetes evidence above is preserved. You can retry the analysis without "
-            "changing the cluster.</div></div>"
+            "The Kubernetes evidence above is preserved. You can run the investigation again; "
+            "no cluster changes were made.</div></div>"
         )
     return (
         f"<div style='margin:7px 0 15px;font-family:Inter,-apple-system,BlinkMacSystemFont,"
