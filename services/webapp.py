@@ -21,5 +21,8 @@ class WebAppService:
     def filesystem_provider(self):
         return self.connection.get_filesystem()
 
-    def execute(self, command, *, timeout=30, input_data=None):
-        return self.commands.execute(command, timeout=timeout, input_data=input_data)
+    def execute(self, command, *, timeout=30, input_data=None, expected_ssh=None):
+        return self.commands.execute(
+            command, timeout=timeout, input_data=input_data,
+            expected_ssh=expected_ssh,
+        )
