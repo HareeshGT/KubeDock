@@ -48,6 +48,8 @@ class KubernetesTab(KubernetesCoreMixin, KubernetesUiMixin, KubernetesWorkloadsM
   def set_services(self, services):
     self._services = services
     self.kubernetes_service = services.kubernetes
+    if hasattr(self, "k8s_ai_ops"):
+      self.k8s_ai_ops.set_services(services)
 
   def __init__(self, parent=None):
     super().__init__(parent)
