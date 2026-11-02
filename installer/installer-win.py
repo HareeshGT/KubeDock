@@ -236,7 +236,7 @@ def get_branches():
 
 
 def choose_branch(branches):
-    UI.phase(3, 7, "Selecting source branch", "Choose the Git branch to package.")
+    UI.phase(4, 8, "Selecting source branch", "Choose the Git branch to package.")
     UI.info("Available Git branches:")
     for i, branch in enumerate(branches, 1):
         UI._write(f"   {i:>2}  {branch}")
@@ -280,7 +280,7 @@ def install_requirements(python, repo, include_qwen: bool = False):
     generated = Path(repo) / "requirements.windows.generated.txt"
     generated.write_text("\n".join(filtered) + "\n", encoding="utf-8")
 
-    UI.phase(4, 7, "Installing Python dependencies", "Installing core, build and optional feature requirements.")
+    UI.phase(5, 8, "Installing Python dependencies", "Installing core, build and optional feature requirements.")
     UI.info(f"Installing Windows requirements from: {generated}")
     UI.success("PyAudio source-build entries excluded; a binary wheel is installed separately.")
     run([python, "-m", "pip", "install", "-r", str(generated)])
@@ -655,6 +655,7 @@ def main():
         )
     subprocess.run([python, "--version"], check=True)
 
+    UI.info("Connecting to GitHub to retrieve available branches...")
     branches = get_branches()
     branch = choose_branch(branches)
     UI.success(f"Source branch selected: {branch}")
@@ -665,13 +666,13 @@ def main():
     try:
         run(["git", "clone", "--branch", branch, "--single-branch", REPO, str(repo)])
         install_requirements(python, repo, include_qwen=include_qwen)
-        UI.phase(5, 7, "Verifying application", "Checking required imports and synchronizing the embedded web UI.")
+        UI.phase(6, 8, "Verifying application", "Checking required imports and synchronizing the embedded web UI.")
         verify(python, include_qwen=include_qwen)
         sync_webapp(repo)
-        UI.phase(6, 7, "Building KubeDock", "Packaging the desktop app. This can take several minutes.")
+        UI.phase(7, 8, "Building KubeDock", "Packaging the desktop app. This can take several minutes.")
         output = build(python, repo, include_qwen=include_qwen)
 
-        UI.phase(7, 7, "Installing application", "Copying the completed build into its destination.")
+        UI.phase(8, 8, "Installing application", "Copying the completed build into its destination.")
         destination = install_application(output)
 
         UI.complete("KubeDock installed successfully")
