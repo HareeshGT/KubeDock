@@ -395,9 +395,20 @@ class K8sAIOpsOperationsMixin:
             return
 
         try:
-            prometheus_url = str(load_settings().get("prometheus_history_url", "") or "").strip()
+            stored_settings = load_settings()
+            prometheus_url = str(stored_settings.get("prometheus_history_url", "") or "").strip()
+            history_days = int(stored_settings.get("prometheus_history_days", 7))
+            if not 1 <= history_days <= 30:
+                history_days = 7
+        except (TypeError, ValueError):
+            history_days = 7
+            try:
+                prometheus_url = str(load_settings().get("prometheus_history_url", "") or "").strip()
+            except Exception:
+                prometheus_url = ""
         except Exception:
             prometheus_url = ""
+            history_days = 7
         self._pending_investigation = {
             "target": target,
             "question": str(action.get("question") or self._last_submitted_request or "")[:2000],
@@ -406,6 +417,7 @@ class K8sAIOpsOperationsMixin:
             "api_key": api_key,
             "model": model,
             "prometheus_url": prometheus_url,
+            "history_days": history_days,
         }
         self.output.append(
             f"<br><span style='color:{T['ACCENT']}'>Ops Mind · read-only investigation</span><br>"
@@ -480,7 +492,7 @@ class K8sAIOpsOperationsMixin:
         worker = OpsMindInvestigationWorker(
             pending["provider"], pending["api_key"], pending["model"],
             pending["question"], target, evidence,
-            prometheus_url=pending["prometheus_url"], history_days=7, parent=self,
+            prometheus_url=pending["prometheus_url"], history_days=pending["history_days"], parent=self,
         )
         self._investigation_ai_worker = worker
         worker.done.connect(self._on_root_cause_investigation_done)
