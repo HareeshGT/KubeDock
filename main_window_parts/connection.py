@@ -145,6 +145,12 @@ class ConnectionMixin:
       info = self._pending_conn
       host, port, user = info["host"], info["port"], info["user"]
       protocol = info["protocol"]
+      # A switch from SSH to FTP/FTPS replaces the old SSH transport. Stop
+      # its heartbeat before ConnectionService tears that transport down.
+      if self._health_worker:
+        worker = self._health_worker
+        self._health_worker = None
+        worker.stop()
       self.ssh = None
       self.sftp = fs
       self._conn_protocol = protocol
