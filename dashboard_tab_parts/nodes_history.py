@@ -24,7 +24,11 @@ class DashboardNodesHistoryMixin:
         f"spec.nodeName={safe_node} -o json 2>/dev/null"
       )
   
-      worker = CommandWorker(self.ssh, command, timeout=20)
+      worker = (
+        self.dashboard_service.create_worker(None, command, timeout=20)
+        if getattr(self, "dashboard_service", None) is not None
+        else CommandWorker(self.ssh, command, timeout=20)
+      )
   
       def on_done(out, target=win, target_name=node_name):
         if self._node_windows.get(target_name) is not target:
