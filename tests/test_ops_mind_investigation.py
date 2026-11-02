@@ -26,6 +26,12 @@ class OpsMindInvestigationTests(unittest.TestCase):
         self.assertEqual(action["kind"], "investigation")
         self.assertEqual(action["symptom"], "memory")
         self.assertEqual(action["namespace"], "apps")
+        normal = validate_action({
+            "action": "describe", "resource": "pod",
+            "name": "api-7d9f", "namespace": "apps",
+        })
+        self.assertEqual(normal["kind"], "operation")
+        self.assertEqual(normal["action"], "describe")
 
     def test_investigation_rejects_secret_targets_and_invalid_names(self):
         with self.assertRaisesRegex(ValueError, "does not support resource"):
@@ -86,6 +92,9 @@ class OpsMindInvestigationTests(unittest.TestCase):
         self.assertIn("container_memory_working_set_bytes", query)
         with self.assertRaises(ValueError):
             build_prometheus_range_query("apps;rm", "api-123", "memory")
+        throttling = build_prometheus_range_query("apps", "api-123", "cpu_throttling")
+        self.assertIn("container_cpu_cfs_throttled_periods_total", throttling)
+        self.assertIn("container_cpu_cfs_periods_total", throttling)
         with self.assertRaises(ValueError):
             build_prometheus_range_query("apps", "api-123", "other")
 
