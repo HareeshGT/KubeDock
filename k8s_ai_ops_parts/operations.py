@@ -498,12 +498,11 @@ class K8sAIOpsOperationsMixin:
         if self._investigation_ai_worker is None and self._ai_worker is None:
             self._set_busy(False)
 
-    @staticmethod
-    def _investigation_report_html(markdown_text: str) -> str:
+    def _investigation_report_html(self, markdown_text: str) -> str:
         """Render a small safe Markdown subset without allowing model HTML or links."""
         rendered = []
         for line in str(markdown_text or "").splitlines():
-            escaped = K8sAIOpsOperationsMixin._escape_html(line.strip())
+            escaped = self._escape_html(line.strip())
             if not escaped:
                 rendered.append("<div style='height:6px'></div>")
             elif escaped.startswith("## "):
