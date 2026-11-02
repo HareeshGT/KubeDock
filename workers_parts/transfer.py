@@ -23,12 +23,6 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from .ssh import open_managed_session, close_managed_session
 from elevated_read import ElevatedReadError, download_elevated, is_permission_denied
 
-            while True:
-                self._ensure_session_current()
-            while True:
-                self._ensure_session_current()
-            while True:
-                self._ensure_session_current()
 class FileStreamReadWorker(QThread):
     """Reads a remote file in 64KB chunks on a background QThread.
 
@@ -138,6 +132,7 @@ class FileStreamReadWorker(QThread):
         self._handle = reader
         try:
             while True:
+                self._ensure_session_current()
                 if self._cancelled or (self._max_bytes and done >= self._max_bytes):
                     break
                 try:
@@ -204,6 +199,7 @@ class FileStreamReadWorker(QThread):
             # read(CHUNK_SIZE) below never has more than one request
             # outstanding, so there's nothing to mis-file.
             while True:
+                self._ensure_session_current()
                 if self._cancelled:
                     return
                 try:
@@ -252,6 +248,7 @@ class FileStreamReadWorker(QThread):
             channel.exec_command(cmd)
             done = 0
             while True:
+                self._ensure_session_current()
                 if self._cancelled:
                     return
                 try:
