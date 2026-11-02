@@ -82,6 +82,7 @@ def main() -> int:
         if load_settings().get("webapp_enabled", False):
             webapp_app.start_server(
                 window.services.webapp.ssh_provider,
+                app_provider=lambda: window,
                 webapp_service=window.services.webapp,
             )
 
