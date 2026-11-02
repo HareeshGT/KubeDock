@@ -373,8 +373,60 @@ class K8sAIOpsUIMixin:
 
         self.output = QTextBrowser()
         self.output.setOpenExternalLinks(False)
-        self.output.setFont(monospace_font(11))
-        self.output.setStyleSheet(f"background: {T['BG_DARK']}; color: {T['TEXT_PRIMARY']}; border: 1px solid {T['BORDER']}; border-radius: 8px; padding: 12px;")
+        self.output.setFont(monospace_font(10))
+        self.output.setStyleSheet(f"""
+            QTextBrowser {{
+                background: {T['BG_DARK']};
+                color: {T['TEXT_PRIMARY']};
+                border: 1px solid {T['BORDER']};
+                border-radius: 10px;
+                padding: 14px;
+                selection-background-color: {T['BG_ITEM_SEL']};
+                selection-color: {T['TEXT_PRIMARY']};
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 10px;
+                margin: 3px 2px 3px 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {T['BG_HOVER']};
+                min-height: 28px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {T['ACCENT']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+                border: none;
+                background: transparent;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
+            QScrollBar:horizontal {{
+                background: transparent;
+                height: 10px;
+                margin: 2px 3px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {T['BG_HOVER']};
+                min-width: 28px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background: {T['ACCENT']};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0;
+                border: none;
+                background: transparent;
+            }}
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+                background: transparent;
+            }}
+        """)
         root.addWidget(self.output, 1)
         self._update_history_label()
         self._write_info('Ops Mind is ready.\n\nPrevious operations are remembered and used as context for follow-up requests.\nTry: scale deployment my-app to 3 replicas\n   scale up my-app by 2\n   scale down my-app by 1\n   scale it back\n   repeat that\n')

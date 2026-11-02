@@ -7,6 +7,7 @@ from ops_mind_investigation import (
     OpsMindInvestigationWorker,
     calculate_resource_utilization,
 )
+from ops_mind_report import render_investigation_report
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -514,26 +515,13 @@ class K8sAIOpsOperationsMixin:
         if self._investigation_ai_worker is None and self._ai_worker is None:
             self._set_busy(False)
 
-    def _investigation_report_html(self, markdown_text: str) -> str:
-        """Render a small safe Markdown subset without allowing model HTML or links."""
-        rendered = []
-        for line in str(markdown_text or "").splitlines():
-            escaped = self._escape_html(line.strip())
-            if not escaped:
-                rendered.append("<div style='height:6px'></div>")
-            elif escaped.startswith("## "):
-                rendered.append(
-                    f"<div style='margin-top:10px;margin-bottom:4px;color:{T['ACCENT']};font-weight:700'>{escaped[3:]}</div>"
-                )
-            elif escaped.startswith("### "):
-                rendered.append(
-                    f"<div style='margin-top:7px;color:{T['TEXT_PRIMARY']};font-weight:700'>{escaped[4:]}</div>"
-                )
-            elif escaped.startswith("- ") or escaped.startswith("* "):
-                rendered.append(f"<div style='margin-left:14px'>• {escaped[2:]}</div>")
-            else:
-                rendered.append(f"<div>{escaped}</div>")
-        return "".join(rendered)
+    def _investigation_report_html(self, markdown_text: str, target_label: str, context: str) -> str:
+        """Render the AI report as a safe, theme-aware rich investigation card."""
+        return render_investigation_report(
+            markdown_text,
+            target=target_label,
+            context=context,
+        )
 
     def _on_root_cause_investigation_done(self, answer: str, evidence: dict):
         active = getattr(self, "_active_investigation", None) or {}
@@ -542,10 +530,11 @@ class K8sAIOpsOperationsMixin:
             f"in namespace {active.get('namespace', 'unknown')}"
         )
         self.output.append(
-            f"<br><span style='color:{T['ACCENT']};font-weight:700'>Ops Mind investigation report</span><br>"
-            f"<span style='color:{T['TEXT_MUTED']}'>{self._escape_html(target_label)} · "
-            f"{self._escape_html(active.get('context') or 'current context')}</span><br>"
-            f"<span style='color:{T['TEXT_PRIMARY']}'>{self._investigation_report_html(answer)}</span>"
+            self._investigation_report_html(
+                answer,
+                target_label,
+                active.get("context") or "current context",
+            )
         )
         if isinstance(active, dict):
             active["answer"] = answer
