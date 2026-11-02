@@ -372,7 +372,11 @@ class KubernetesResourcesMixin:
     inner = f"kubectl {self._context_flag()} logs --tail=200 -n {ns} {prev} {pod} 2>&1".replace("kubectl logs", "kubectl logs")
     cmd = f"bash -lc {shlex.quote(inner)}"
 
-    worker = CommandWorker(self.ssh, cmd)
+    worker = (
+      self.kubernetes_service.create_worker(None, cmd)
+      if self.kubernetes_service is not None
+      else CommandWorker(self.ssh, cmd)
+    )
     worker.done.connect(lambda out, pod=pod, ns=ns: self._on_pod_ai_logs_fetched(pod, ns, out))
     worker.error.connect(lambda err: self._on_pod_ai_logs_error(err))
     self._pod_ai_log_worker = worker
