@@ -176,8 +176,8 @@ def _parse_prometheus_range(payload) -> dict:
             if math.isfinite(value) and value >= 0:
                 by_timestamp[timestamp] += value
                 sample_count += 1
-    if len(by_timestamp) < 5:
-        raise ValueError("Fewer than five usable historical samples are available.")
+    if len(by_timestamp) < 12:
+        raise ValueError("Fewer than twelve usable historical samples are available.")
     return {
         "points": [{"timestamp": stamp, "value": by_timestamp[stamp]} for stamp in sorted(by_timestamp)],
         "series_count": len(rows),
@@ -188,7 +188,7 @@ def _parse_prometheus_range(payload) -> dict:
 def summarize_historical_series(parsed: dict, metric: str) -> dict:
     points = parsed.get("points") or []
     values = [float(item["value"]) for item in points if math.isfinite(float(item.get("value", float("nan"))))]
-    if len(values) < 5:
+    if len(values) < 12:
         return {"status": "insufficient_samples", "sample_count": len(values)}
     window = max(1, min(24, len(values) // 5))
     first = mean(values[:window])
