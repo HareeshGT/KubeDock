@@ -38,8 +38,34 @@ from .core import _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE, _QWEN
 
 
 class K8sAIOpsUIMixin:
+    @property
+    def ssh(self):
+        services = getattr(self, "_services", None)
+        if services is not None:
+            return services.connection.get_ssh_client()
+        return getattr(self, "_ssh_compat", None)
+
+    @ssh.setter
+    def ssh(self, value):
+        self._ssh_compat = value
+
+    def set_services(self, services):
+        self._services = services
+        self.kubernetes_service = services.kubernetes
+        self.ai_service = services.ai
+
+    def create_command_worker(self, command, *, timeout=None):
+        if getattr(self, "kubernetes_service", None) is not None:
+            return self.kubernetes_service.create_worker(
+                None, command, timeout=timeout,
+            )
+        return CommandWorker(self.ssh, command, timeout=timeout)
+
     def __init__(self, ssh=None, namespace_getter=None, context_getter=None, kube_context_getter=None, parent=None):
         super().__init__(parent)
+        self._services = None
+        self.kubernetes_service = None
+        self.ai_service = None
         self.ssh = ssh
         self._namespace_getter = namespace_getter
         self._context_getter = context_getter
