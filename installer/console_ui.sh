@@ -4,8 +4,11 @@
 ui_init() {
   UI_COLOR=0
   UI_INTERACTIVE=0
-  UI_VERBOSE="$KUBEDOCK_INSTALL_VERBOSE"
-  if [[ -t 1 && "$TERM" != "dumb" && -z "$NO_COLOR" ]]; then
+  UI_VERBOSE="$(printenv KUBEDOCK_INSTALL_VERBOSE 2>/dev/null || true)"
+  local term_value no_color_value
+  term_value="$(printenv TERM 2>/dev/null || true)"
+  no_color_value="$(printenv NO_COLOR 2>/dev/null || true)"
+  if [[ -t 1 && "$term_value" != "dumb" && -z "$no_color_value" ]]; then
     UI_COLOR=1
   fi
   if [[ -t 0 && -t 1 ]]; then
@@ -111,14 +114,16 @@ ui_error() {
 ui_run_step() {
   local label="$1"
   shift
-  local log rc pid frame_index=0 frame
+  local log rc pid frame_index=0 frame tmp_base
+  tmp_base="$(printenv TMPDIR 2>/dev/null || true)"
+  if [[ -z "$tmp_base" ]]; then tmp_base="/tmp"; fi
   if [[ "$UI_INTERACTIVE" != "1" ]]; then
     printf '[RUN] %s\n' "$label"
     "$@"
     return $?
   fi
 
-  log="$(mktemp "$TMPDIR/kubedock-installer.XXXXXX")" || {
+  log="$(mktemp "$tmp_base/kubedock-installer.XXXXXX")" || {
     ui_warn "Could not create a temporary progress log; running command normally."
     "$@"
     return $?
