@@ -166,3 +166,50 @@ def test_reused_filesystem_is_not_closed_when_replacing_ssh_client():
     assert first_ssh.close_calls == 1
     assert shared_filesystem.close_calls == 0
     assert service.get_filesystem() is shared_filesystem
+
+
+def test_app_services_compose_domain_services_over_one_connection():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+
+    assert services.connection is connection
+    assert services.commands.connection is connection
+    assert services.kubernetes.connection is connection
+    assert services.docker.connection is connection
+    assert services.dashboard.connection is connection
+    assert services.files.connection is connection
+    assert services.terminal.connection is connection
+    assert services.webapp.connection is connection
+    assert services.webapp.commands is services.commands
+    assert services.kubernetes.commands is services.commands
+    assert services.docker.commands is services.commands
+    assert services.dashboard.commands is services.commands
+    assert services.files.commands is services.commands
+    assert services.terminal.commands is services.commands
+
+
+def test_webapp_provider_tracks_the_current_shared_session():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    first = FakeResource()
+    second = FakeResource()
+
+    connection.attach_ssh(first, host="first.example")
+    assert services.webapp.ssh_provider() is first
+
+    connection.attach_ssh(second, host="second.example")
+    assert services.webapp.ssh_provider() is second
+    assert first.close_calls == 1
+
+    connection.disconnect()
+    assert services.webapp.ssh_provider() is None
+    assert second.close_calls == 1
+
+
+def test_command_service_rejects_execution_without_active_ssh():
+    connection = ConnectionService()
+    services = AppServices(connection)
+
+    import pytest
+    with pytest.raises(RuntimeError, match="Connect to an SSH host"):
+        services.commands.create_worker(None, "uname -a")
