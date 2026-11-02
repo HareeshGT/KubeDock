@@ -1019,8 +1019,25 @@ from dashboard_tab_parts import (
 class DashboardTab(DashboardConnectionMixin, DashboardUIMixin, DashboardRefreshMixin, DashboardNodesHistoryMixin, QWidget):
     status_msg = pyqtSignal(str)
 
+    @property
+    def ssh(self):
+        services = getattr(self, "_services", None)
+        if services is not None:
+            return services.connection.get_ssh_client()
+        return getattr(self, "_ssh_compat", None)
+
+    @ssh.setter
+    def ssh(self, value):
+        self._ssh_compat = value
+
+    def set_services(self, services):
+        self._services = services
+        self.dashboard_service = services.dashboard
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._services = None
+        self.dashboard_service = None
         self.ssh = None
         self.ftp = None
         self._connection_protocol = None
