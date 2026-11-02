@@ -1,8 +1,8 @@
 # Application Services Architecture
 
-KubeDock is a single desktop application process. The services under
-`services/` are in-process application components; they are not separate
-OS processes, HTTP servers, or microservices.
+KubeDock remains a single desktop application process. The `services/`
+package contains in-process application services, not a process or HTTP server
+per feature and not separately deployed microservices.
 
 ## Runtime composition
 
@@ -10,77 +10,94 @@ OS processes, HTTP servers, or microservices.
 QApplication
   └── KubeDockWindow
        └── AppServices
-            └── ConnectionService
-                 ├── active SSH client (when SSH is selected)
-                 ├── app-facing SFTP/SudoFS adapter
-                 └── FTP/FTPS filesystem session (instead of SSH)
+            ├── ConnectionService
+            │    ├── active SSH client + SFTP/SudoFS adapter
+            │    └── active FTP/FTPS filesystem session (instead of SSH)
+            ├── CommandService
+            │    └── existing bounded SSHConnectionPool / managed channels
+            ├── KubernetesService
+            ├── DockerService
+            ├── DashboardService
+            ├── FileManagerService
+            ├── TerminalService
+            ├── AIService
+            └── WebAppService
 ```
 
-Connection workers remain responsible for performing network handshakes off
-the UI thread. When a worker succeeds, the main window adopts the resulting
-session into `ConnectionService`. The service then owns its lifecycle until
-it is replaced or disconnected.
+`AppServices` is created once by the main window. Every feature service
+receives the same `ConnectionService` and, where relevant, the same
+`CommandService`. No feature service establishes a separate SSH connection.
 
-## ConnectionService responsibilities
+## Shared connection and command lifecycle
 
-- Keep the active SSH or FTP/FTPS session and credential-free connection
-  metadata in one place.
-- Publish immutable `ConnectionSnapshot` values to subscribers. Snapshots
-  contain state, protocol, target, generation, session ID, connection time,
-  optional latency, and a bounded last-error string. They never contain
-  passwords, private-key material, or private-key paths.
-- Expose a generation check so asynchronous work can reject results produced
-  for an older connection after a reconnect.
-- Translate the existing heartbeat worker's at-risk/recovered/lost signals
-  into shared connection state.
-- Close the existing secondary SSH connection pool before closing the
-  app-facing filesystem and primary SSH client.
-- Make disconnect and application shutdown idempotent.
+Connection workers continue to perform SSH and FTP/FTPS handshakes away from
+the Qt UI thread. A successful session is adopted by `ConnectionService`,
+which owns the active transport and app-facing filesystem adapter until
+replacement or disconnect.
 
-The service does not start its own heartbeat. KubeDock's existing
-`ConnectionHealthWorker` remains the single health monitor, avoiding a
-second competing monitor.
+`ConnectionService`:
+- Publishes immutable, credential-free `ConnectionSnapshot` state to
+  subscribers. Snapshots contain protocol, target, session ID, generation,
+  connected time, optional latency, and bounded error information.
+- Exposes generation checks so async consumers can identify stale work after
+  a reconnect.
+- Receives degraded, recovered, and lost health transitions from the single
+  existing `ConnectionHealthWorker`; it does not start another heartbeat.
+- Closes the existing secondary SSH pool before the filesystem adapter and
+  primary SSH client.
+- Makes disconnect and application shutdown idempotent.
 
-## Existing worker infrastructure is retained
+`CommandService` is the shared command-worker factory and backend executor.
+UI operations use its QThread worker factory, preserving existing timeouts,
+signals, tracking, and cancellation paths. Backend Web App commands use its
+synchronous executor, which concurrently drains stdout and stderr and closes
+the channel at the configured deadline.
 
 The existing `SSHConnectionPool`, managed-channel limits, and
-`managed_exec_command` implementation remain the command-channel mechanism.
-The new service owns the session and pool lifecycle; it does not replace the
-bounded pool with one shared SSH channel. Multiple operations still need
-independent channels, but those channels are obtained through the managed
-pool.
+`managed_exec_command` remain in use. Connection sharing does not mean every
+operation must share one SSH channel: each concurrent operation still uses a
+bounded managed channel from the existing pool.
 
-`CommandWorker` and feature tabs still have compatibility paths that accept
-the raw Paramiko client. This is intentional for the first migration slice.
-Use `ConnectionService.get_ssh_client()` only at these legacy boundaries.
-New domain services should depend on `AppServices` or a narrow operation
-interface rather than opening their own SSH connections or retaining raw
-clients.
+## Feature service responsibilities and integration
 
-## Current integration
+| Service | Responsibility | Current consumers |
+|---|---|---|
+| `ConnectionService` | Active SSH/FTP(S) session, health state, replacement and teardown | Main window, feature tabs, Web App |
+| `CommandService` | Shared bounded remote command workers and backend command execution | Kubernetes, Docker, Dashboard, terminal, Ops Mind, Web App |
+| `KubernetesService` | Kubernetes command execution over the selected connection | Kubernetes resources, tunnels, Ops Mind |
+| `DockerService` | Docker command execution over the selected connection | Docker tab |
+| `DashboardService` | Host, process and cluster telemetry commands | Dashboard refresh pipeline |
+| `FileManagerService` | Filesystem access, directory listing and streaming file readers | Remote file manager |
+| `TerminalService` | Integrated terminal and working-directory command workers | Main terminal |
+| `AIService` | Provider-backed explain, Kubernetes interpretation and investigation worker construction | Pod AI, terminal explain, Ops Mind |
+| `WebAppService` | Restricted access to the active session and shared backend command execution | Embedded FastAPI application |
 
-- `LifecycleMixin` creates one `AppServices` instance for the window.
-- SSH and FTP/FTPS connection success callbacks adopt sessions into the
-  shared `ConnectionService`.
-- Disconnect and window shutdown delegate resource teardown to that service.
-- The existing connection-health callbacks update shared degraded, recovered,
-  and lost states.
-- The embedded Web App obtains its SSH client from the same service. It does
-  not create an independent SSH session.
+Feature widgets receive the shared services from the main window. Their
+legacy `ssh` accessors now resolve through `ConnectionService`; the stored
+legacy value is only a compatibility fallback for standalone widget tests.
+Feature workers are created through their domain service in the desktop app.
+The embedded Web App is passed `WebAppService` and resolves its active SSH
+client and command executor from the same `AppServices` instance.
 
-## Migration sequence
+## Threading and security boundaries
 
-1. Add a command execution service that uses the managed SSH channel pool and
-   preserves worker timeouts and cancellation behavior.
-2. Move Kubernetes, Docker, and Dashboard remote operations behind domain
-   services sharing the same connection service.
-3. Move remote file operations and terminal session creation behind explicit
-   file/terminal interfaces.
-4. Route AI/Ops Mind evidence collection through read-only domain service
-   methods rather than opening connections independently.
-5. Keep the Web App on a restricted adapter over the same runtime and retain
-   the existing Qt desktop bridge for UI-affecting operations.
+- Network handshakes, command execution, directory listing, and streaming
+  reads stay off the Qt UI thread.
+- The Web App retains its existing authenticated desktop bridge for UI
+  mutations; HTTP request threads do not call Qt widgets directly.
+- SSH host-key verification, sudo/command safeguards, Kubernetes mutation
+  confirmation and verification, RBAC checks, operation audit records, and
+  AI evidence redaction remain in their existing paths.
+- Service snapshots do not contain passwords, private-key contents, or
+  private-key paths.
+- The one existing SSH health monitor is retained to avoid duplicate probes.
 
-Each migration should preserve current RBAC, command allowlists, operation
-confirmation, host-key verification, channel limits, UI-thread boundaries,
-and worker lifecycle guarantees.
+## Compatibility and next cleanup
+
+This migration introduces real service ownership and service-first operation
+factories while retaining compatibility fallbacks for widgets created outside
+the main application. Those fallbacks should only be removed after standalone
+widget tests and all remaining legacy call sites have been migrated. New
+features should depend on `AppServices` or a narrow service interface and
+must never create their own SSH connection or bypass the managed command
+service.
