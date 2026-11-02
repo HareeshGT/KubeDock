@@ -192,10 +192,19 @@ class K8sAIOpsOperationsMixin:
         self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')}</span>""")
         self._set_busy(True)
         self._speak('Processing your request.')
-        worker = K8sAIInterpretWorker(
-            provider, api_key, ai_assist.get_model(provider), request,
-            namespace, context, history_for_context,
-            conversation=getattr(self, '_voice_conversation', []),
+        model = ai_assist.get_model(provider)
+        worker = (
+            self.ai_service.create_kubernetes_interpret_worker(
+                provider, api_key, model, request, namespace, context,
+                history_for_context,
+                conversation=getattr(self, '_voice_conversation', []),
+            )
+            if getattr(self, "ai_service", None) is not None
+            else K8sAIInterpretWorker(
+                provider, api_key, model, request,
+                namespace, context, history_for_context,
+                conversation=getattr(self, '_voice_conversation', []),
+            )
         )
         worker.done.connect(self._on_ai_done)
         worker.error.connect(self._on_ai_error)
@@ -494,10 +503,20 @@ class K8sAIOpsOperationsMixin:
             "collected_at": evidence["collected_at"],
         }
         self._write_info("Live evidence collected. Sending the bounded, redacted evidence package for analysis…")
-        worker = OpsMindInvestigationWorker(
-            pending["provider"], pending["api_key"], pending["model"],
-            pending["question"], target, evidence,
-            prometheus_url=pending["prometheus_url"], history_days=pending["history_days"], parent=self,
+        worker = (
+            self.ai_service.create_investigation_worker(
+                pending["provider"], pending["api_key"], pending["model"],
+                pending["question"], target, evidence,
+                prometheus_url=pending["prometheus_url"],
+                history_days=pending["history_days"],
+                parent=self,
+            )
+            if getattr(self, "ai_service", None) is not None
+            else OpsMindInvestigationWorker(
+                pending["provider"], pending["api_key"], pending["model"],
+                pending["question"], target, evidence,
+                prometheus_url=pending["prometheus_url"], history_days=pending["history_days"], parent=self,
+            )
         )
         self._investigation_ai_worker = worker
         worker.done.connect(self._on_root_cause_investigation_done)
