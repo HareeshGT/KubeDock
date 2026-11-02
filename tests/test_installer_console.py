@@ -33,10 +33,10 @@ class InstallerConsoleUITests(unittest.TestCase):
         ui.warning("Optional voice disabled")
         ui.error("Build failed")
         rendered = stream.getvalue()
-        self.assertIn("[INFO]", rendered)
-        self.assertIn("[OK]", rendered)
-        self.assertIn("[WARN]", rendered)
-        self.assertIn("[ERROR]", rendered)
+        self.assertIn("  i  Checking Python", rendered)
+        self.assertIn("  ✓  Python ready", rendered)
+        self.assertIn("  !  Optional voice disabled", rendered)
+        self.assertIn("  ✗  Build failed", rendered)
 
     def test_progress_is_readable_without_a_tty(self):
         stream = io.StringIO()
@@ -49,7 +49,7 @@ class InstallerConsoleUITests(unittest.TestCase):
         ui = ConsoleUI(stream=stream, interactive=False, color=False)
         result = ui.run([sys.executable, "-c", "print('installer-check')"])
         self.assertEqual(result.returncode, 0)
-        self.assertIn("[RUN]", stream.getvalue())
+        self.assertIn("\n> ", stream.getvalue())
 
     def test_interactive_command_runner_shows_spinner_and_success(self):
         stream = io.StringIO()
