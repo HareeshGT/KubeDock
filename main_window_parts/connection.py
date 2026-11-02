@@ -148,6 +148,10 @@ class ConnectionMixin:
       self.ssh = None
       self.sftp = fs
       self._conn_protocol = protocol
+      self.connection_service.attach_file_connection(
+        fs, protocol=protocol, host=host, port=port, username=user,
+        alias=info["alias"],
+      )
       self.host_label = info["alias"] if info["alias"] else "{}@{}".format(user, host)
       self._conn_host, self._conn_port = host, port
       self._conn_user, self._conn_pem = user, ""
@@ -180,6 +184,9 @@ class ConnectionMixin:
 
       self.ssh = ssh
       self.sftp = SudoFS(sftp, ssh)
+      self.connection_service.attach_ssh(
+        ssh, self.sftp, host=host, port=port, username=user, alias=alias,
+      )
       self._conn_protocol = "ssh"
       # Use alias as the display label when set, else user@host
       self.host_label = alias if alias else "{}@{}".format(user, host)
@@ -228,6 +235,8 @@ class ConnectionMixin:
       # user a chance to finish and save whatever they're doing.
       if not self.ssh:
         return
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.mark_degraded(detail)
       self.conn_lbl.setText("Unstable — {} ".format(self.host_label))
       self.conn_lbl.setStyleSheet("color: {};".format(T['WARNING']))
       self.status.showMessage(
@@ -238,6 +247,8 @@ class ConnectionMixin:
     def _on_connection_recovered(self):
       if not self.ssh:
         return
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.mark_recovered()
       self.conn_lbl.setText("Connected — {}".format(self.host_label))
       self.conn_lbl.setStyleSheet("color: {};".format(T['SUCCESS']))
       self.status.showMessage("Connection to {} recovered.".format(self.host_label), 5000)
@@ -250,6 +261,8 @@ class ConnectionMixin:
       # no-op here.
       if not self.ssh:
         return
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.mark_lost(detail)
       host_label = self.host_label
       self._disconnect(reason="Connection lost")
       QMessageBox.warning(
@@ -283,15 +296,20 @@ class ConnectionMixin:
       # pool's connections are separate TCP sessions with their own
       # keepalive threads; closing only self.ssh used to leave every one of
       # them open on the server until the process exited.
-      try:
-        if self.ssh: close_ssh_connection_pool(self.ssh)
-      except Exception:
-        pass
-      try:
-        if self.sftp: self.sftp.close()
-        if self.ssh: self.ssh.close()
-      except Exception:
-        pass
+      # The shared service is the sole owner of the active session and its
+      # secondary SSH pool. Clear it before dropping the legacy aliases.
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.disconnect()
+      else:
+        try:
+          if self.ssh: close_ssh_connection_pool(self.ssh)
+        except Exception:
+          pass
+        try:
+          if self.sftp: self.sftp.close()
+          if self.ssh: self.ssh.close()
+        except Exception:
+          pass
       self.ssh = self.sftp = None
       self._sudo_user = None
       self._conn_host = self._conn_user = self._conn_pem = None
