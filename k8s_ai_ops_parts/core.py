@@ -977,7 +977,7 @@ NAMESPACE
 
 CHOOSING A READ ACTION
 - get: show, list, get, what is, value of a key, replica count, pod status.
-- describe: describe, details of, events for, why is X failing, inspect.
+- describe: explicit describe, details of, inspect. Use investigate for "why is this failing?" when the user is asking for a root-cause diagnosis rather than simply requesting details.
 - rollout_status: rollout status, is X rolled out, deployment progress (deployment, statefulset or daemonset only).
 - investigate: use this for a root-cause question that needs correlated live evidence, such as why a pod uses unusually high memory/CPU, repeatedly restarts, is unhealthy, or behaves unexpectedly. Do NOT substitute a plain describe for these investigations.
 - An explicit request to "describe" or "show details" remains a normal describe operation. A conceptual follow-up about an earlier report can remain conversational when no fresh cluster evidence is requested.
@@ -1030,9 +1030,9 @@ Previous container logs:
 Read with no namespace given (searches all namespaces):
 {{"action":"get","resource":"deployment","name":"my-app","namespace":""}}
 Describe:
+{{"action":"describe","resource":"pod","name":"my-app","namespace":"test-ns"}}
 Root-cause investigation:
 {{"action":"investigate","resource":"pod","name":"my-app-123","namespace":"test-ns","symptom":"memory","question":"Why is this pod consuming so much memory?"}}
-{{"action":"describe","resource":"pod","name":"my-app","namespace":"test-ns"}}
 Rollout status:
 {{"action":"rollout_status","resource":"deployment","name":"my-app","namespace":"test-ns"}}
 Current pod logs:
