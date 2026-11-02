@@ -23,6 +23,12 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from .ssh import open_managed_session, close_managed_session
 from elevated_read import ElevatedReadError, download_elevated, is_permission_denied
 
+            while True:
+                self._ensure_session_current()
+            while True:
+                self._ensure_session_current()
+            while True:
+                self._ensure_session_current()
 class FileStreamReadWorker(QThread):
     """Reads a remote file in 64KB chunks on a background QThread.
 
@@ -73,7 +79,21 @@ class FileStreamReadWorker(QThread):
         # to return on its own, and a second worker starting concurrently
         # against the same connection in the meantime can wedge both.
         self._handle    = None
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
+
+    def _ensure_session_current(self):
+        guard = getattr(self, "_session_guard", None)
+        if guard is None:
+            return
+        try:
+            current = bool(guard())
+        except Exception:
+            current = False
+        if not current:
+            raise RuntimeError(
+                "The active connection changed while reading this remote file; retry the operation."
+            )
 
     def cancel(self):
         self._cancelled = True
@@ -86,6 +106,7 @@ class FileStreamReadWorker(QThread):
 
     def run(self):
         try:
+            self._ensure_session_current()
             if hasattr(self._sftp, "_ftp"):
                 self._run_ftp_stream()
             elif self._sudo_user:
