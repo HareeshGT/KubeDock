@@ -277,6 +277,7 @@ def build_investigation_prompt(question: str, target: dict, evidence: dict) -> s
         "context": ai_intelligence.redact_evidence(str(target.get("context") or ""))[:256],
         "namespace": str(target.get("namespace") or "")[:253],
         "resource": str(target.get("resource_kind") or "") + "/" + str(target.get("resource_name") or ""),
+        "reported_symptom": str(evidence.get("reported_symptom") or "general")[:80],
     }
     return f"""
 You are the evidence analyst for KubeDock Ops Mind. Investigate the user's Kubernetes symptom like an SRE. You have no tool access and must not propose that you executed an action.
