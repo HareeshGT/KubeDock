@@ -60,6 +60,30 @@ _MEDIA_KINDS = {"video", "audio"}
 
 
 class LifecycleMixin:
+    @property
+    def ssh(self):
+      services = getattr(self, "services", None)
+      if services is not None:
+        return services.connection.get_ssh_client()
+      return getattr(self, "_ssh_compat", None)
+
+    @ssh.setter
+    def ssh(self, value):
+      # Compatibility storage for partially initialized windows. Once the
+      # service container exists, the ConnectionService is authoritative.
+      self._ssh_compat = value
+
+    @property
+    def sftp(self):
+      services = getattr(self, "services", None)
+      if services is not None:
+        return services.connection.get_filesystem()
+      return getattr(self, "_sftp_compat", None)
+
+    @sftp.setter
+    def sftp(self, value):
+      self._sftp_compat = value
+
     def __init__(self):
       super().__init__()
       # All feature modules share this process-local service composition root.
