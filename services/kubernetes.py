@@ -29,9 +29,7 @@ class KubernetesService:
         worker = PodExecStreamWorker(
             ssh, namespace, pod, container, context, cols=cols, rows=rows,
         )
-        worker.connection_generation = snapshot.generation
-        worker.connection_session_id = snapshot.session_id
-        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.connection.bind_worker(worker, snapshot)
         return self.commands.register_worker(worker)
     def create_log_stream_worker(self, command):
         """Create a live Kubernetes log stream guarded by the shared session generation."""
@@ -41,7 +39,5 @@ class KubernetesService:
         from dialogs_parts.file_exec import _ExecStreamWorker
 
         worker = _ExecStreamWorker(ssh, command)
-        worker.connection_generation = snapshot.generation
-        worker.connection_session_id = snapshot.session_id
-        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.connection.bind_worker(worker, snapshot)
         return self.commands.register_worker(worker)
