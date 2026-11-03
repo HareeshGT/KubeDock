@@ -50,7 +50,7 @@ replacement or disconnect.
   primary SSH client.
 - Makes disconnect and application shutdown idempotent.
 
-`CommandService` is the shared command-worker factory and backend executor.
+`CommandService` is the shared command-worker factory and backend executor. The reusable PTY-backed `ExecStreamWorker` lives in `workers_parts/`, not in the file-execution dialog module, so Kubernetes, Docker, and file services depend on the worker layer rather than a UI dialog implementation.
 UI operations use its QThread worker factory, preserving existing timeouts,
 signals, tracking, and cancellation paths. Backend Web App commands use its
 synchronous executor, which concurrently drains stdout and stderr and closes
