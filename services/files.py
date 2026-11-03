@@ -28,7 +28,7 @@ class FileManagerService:
 
         worker = DirectoryListWorker(filesystem, path)
         self.connection.bind_worker(worker, snapshot)
-        self.commands.register_worker(worker)
+        self.register_worker(worker)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
@@ -45,7 +45,7 @@ class FileManagerService:
             sudo_user=sudo_user, max_bytes=max_bytes,
         )
         self.connection.bind_worker(worker, snapshot)
-        return self.commands.register_worker(worker, diagnostic_key="files:worker")
+        return self.register_worker(worker, diagnostic_key="files:read")
 
     def capture_transfer_session(self):
         """Capture the active filesystem adapter and generation for a transfer."""
@@ -62,9 +62,11 @@ class FileManagerService:
     def is_current(self, generation):
         return self.connection.is_current(generation)
 
-    def register_worker(self, worker):
-        """Register a file-related worker with application shutdown ownership."""
-        return self.commands.register_worker(worker)
+    def register_worker(self, worker, diagnostic_key="files:worker"):
+        """Register a file-related worker with shutdown and diagnostics ownership."""
+        return self.commands.register_worker(
+            worker, diagnostic_key=diagnostic_key,
+        )
 
     def create_command_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
         activate_lifecycle(self)
@@ -158,4 +160,4 @@ class FileManagerService:
 
         worker = ExecStreamWorker(ssh, command)
         self.connection.bind_worker(worker, snapshot)
-        return self.commands.register_worker(worker)
+        return self.register_worker(worker, diagnostic_key="files:exec-stream")
