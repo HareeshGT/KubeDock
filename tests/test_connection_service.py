@@ -365,3 +365,45 @@ def test_connection_service_owns_connection_and_health_worker_factories():
     health = connection.create_health_worker()
     assert isinstance(health, ConnectionHealthWorker)
     assert health.connection_generation == connection.snapshot.generation
+
+
+class FakeSSHWithChannels(FakeResource):
+    def __init__(self):
+        super().__init__()
+        self.sftp_channel = FakeResource()
+        self.terminal_channel = FakeResource()
+        self.terminal_options = None
+
+    def open_sftp(self):
+        return self.sftp_channel
+
+    def invoke_shell(self, **kwargs):
+        self.terminal_options = kwargs
+        return self.terminal_channel
+
+
+def test_webapp_service_opens_sftp_and_terminal_channels_on_shared_session():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    ssh = FakeSSHWithChannels()
+    connection.attach_ssh(ssh, host="shared.example")
+
+    assert services.webapp.open_sftp() is ssh.sftp_channel
+    assert services.webapp.open_terminal_channel(
+        term="xterm-256color", width=100, height=28,
+    ) is ssh.terminal_channel
+    assert ssh.terminal_options == {
+        "term": "xterm-256color", "width": 100, "height": 28,
+    }
+
+
+def test_webapp_service_rejects_sftp_and_terminal_without_active_ssh():
+    connection = ConnectionService()
+    services = AppServices(connection)
+
+    import pytest
+    with pytest.raises(RuntimeError, match="active SSH"):
+        services.webapp.open_sftp()
+    with pytest.raises(RuntimeError, match="active SSH"):
+        services.webapp.open_terminal_channel()
+
