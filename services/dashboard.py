@@ -24,7 +24,11 @@ class DashboardService:
             flags=re.MULTILINE,
         )
 
-    def create_worker(self, worker_pool, command, *, timeout=None, raw=False):
+    def create_worker(
+        self, worker_pool, command, *, timeout=None, raw=False,
+        operation_key=None,
+    ):
         return self.commands.create_worker(
             worker_pool, command, timeout=timeout, raw=raw,
+            operation_key=operation_key,
         )
