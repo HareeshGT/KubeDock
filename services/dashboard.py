@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 import shlex
 
+from .lifecycle import activate_lifecycle
+
 
 class DashboardService:
     def __init__(self, connection, commands):
@@ -28,6 +30,7 @@ class DashboardService:
         self, worker_pool, command, *, timeout=None, raw=False,
         operation_key=None,
     ):
+        activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, timeout=timeout, raw=raw,
             operation_key=operation_key,
