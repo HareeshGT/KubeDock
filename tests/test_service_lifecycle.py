@@ -123,7 +123,7 @@ def test_bound_service_becomes_running_on_first_use():
     from services.lifecycle import activate_lifecycle
 
     manager = ServiceLifecycleManager()
-    service = object()
+    service = type("Service", (), {})()
     manager.register("feature", service)
     service._lifecycle_manager = manager
     service._lifecycle_name = "feature"
