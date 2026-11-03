@@ -185,3 +185,24 @@ def test_command_worker_cancel_before_channel_open_closes_later_channel():
     worker._set_active_channel(channel)
 
     assert channel.closed is True
+
+
+
+def test_feature_lifecycle_stop_invokes_owned_worker_cancellation():
+    from services.docker import DockerService
+    from services.lifecycle import ServiceLifecycleManager
+
+    commands = CommandService(FakeConnection())
+    docker = DockerService(FakeConnection(), commands)
+    manager = ServiceLifecycleManager()
+    manager.register("docker", docker)
+    docker._lifecycle_manager = manager
+    docker._lifecycle_name = "docker"
+    worker = FakeWorker()
+    commands.register_worker(worker, diagnostic_key="docker:list:containers")
+
+    manager.start("docker")
+    manager.stop("docker")
+
+    assert worker.stop_requested is True
+    assert manager.status("docker").state.value == "STOPPED"
