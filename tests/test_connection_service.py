@@ -1010,3 +1010,28 @@ def test_connection_health_worker_is_registered_for_session_replacement(monkeypa
 
     assert health_worker.stopped
     assert not health_worker._session_guard()
+
+
+
+def test_ftp_stream_reader_propagates_timeout_instead_of_reporting_eof():
+    import socket
+    from ftp_fs import _FTPStreamReader
+
+    class TimedOutSocket:
+        def recv(self, _size):
+            raise socket.timeout("transfer stalled")
+
+        def close(self):
+            pass
+
+    class FakeFTP:
+        def close(self):
+            pass
+
+    reader = _FTPStreamReader(FakeFTP(), TimedOutSocket())
+    import pytest
+    with pytest.raises(socket.timeout, match="transfer stalled"):
+        reader.read(4096)
+
+    reader.close()
+    assert reader.read(4096) == b""
