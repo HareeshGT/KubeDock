@@ -89,8 +89,8 @@ bound to the same SSH client that was validated for that request.
 
 ## Threading and security boundaries
 
-- Network handshakes, command execution, directory listing, and streaming
-  reads stay off the Qt UI thread.
+- Network handshakes, command execution, directory listing, file transfers,
+  media stream setup, and streaming reads stay off the Qt UI thread.
 - The Web App retains its existing authenticated desktop bridge for UI
   mutations; HTTP request threads do not call Qt widgets directly.
 - SSH host-key verification, sudo/command safeguards, Kubernetes mutation
