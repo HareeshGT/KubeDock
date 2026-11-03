@@ -25,7 +25,5 @@ class DockerService:
         from dialogs_parts.file_exec import _ExecStreamWorker
 
         worker = _ExecStreamWorker(ssh, command)
-        worker.connection_generation = snapshot.generation
-        worker.connection_session_id = snapshot.session_id
-        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.connection.bind_worker(worker, snapshot)
         return self.commands.register_worker(worker)
