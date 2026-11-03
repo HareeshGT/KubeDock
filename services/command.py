@@ -74,8 +74,10 @@ class CommandService:
                     worker.wait(remaining_ms)
             except Exception:
                 pass
+        with self._workers_lock:
+            candidates = list(self._workers)
         remaining = []
-        for worker in list(self._workers):
+        for worker in candidates:
             try:
                 if worker.isRunning():
                     remaining.append(worker)
@@ -84,7 +86,7 @@ class CommandService:
                 # before its queued registry callback reaches this thread.
                 pass
         with self._workers_lock:
-            self._workers = remaining
+            self._workers = [w for w in self._workers if w in remaining]
 
     def create_worker(
         self,
