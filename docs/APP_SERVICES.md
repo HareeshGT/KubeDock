@@ -45,8 +45,7 @@ replacement or disconnect.
   connected time, optional latency, and bounded error information.
 - Exposes generation checks so async consumers can identify stale work after
   a reconnect.
-- Receives degraded, recovered, and lost health transitions from the single
-  existing `ConnectionHealthWorker`; it does not start another heartbeat.
+- Creates and generation-binds the single existing `ConnectionHealthWorker`; it receives degraded, recovered, and lost transitions and is stopped when its owning session is replaced or disconnected. It does not start another heartbeat.
 - Closes the existing secondary SSH pool before the filesystem adapter and
   primary SSH client.
 - Makes disconnect and application shutdown idempotent.
@@ -79,7 +78,7 @@ bounded managed channel from the existing pool.
 Feature widgets receive the shared services from the main window. Their
 legacy `ssh` accessors now resolve through `ConnectionService`; the stored
 legacy value is only a compatibility fallback for standalone widget tests.
-Feature command workers are created through their domain service in the desktop app. Command, directory, file-stream, file-transfer, and media-start workers capture the session generation and reject stale work after a reconnect. `ConnectionService` actively cancels generation-bound workers when a session is replaced, lost, or disconnected, so blocking transfer handles are closed promptly rather than waiting for the next result check. FTP/FTPS downloads and uploads use dedicated per-transfer control/data connections, leaving the shared browsing control channel available for directory and metadata operations. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while common path and mutation operations are service methods. The optional local OpenSSH `scp` optimization is also bound to that generation and is terminated if the application session changes; it is a transfer subprocess, not a replacement for or owner of the app's primary SSH session.
+Feature command workers are created through their domain service in the desktop app. Command, directory, file-stream, file-transfer, and media-start workers capture the session generation and reject stale work after a reconnect. `ConnectionService` actively cancels generation-bound workers when a session is replaced, lost, or disconnected, so blocking transfer handles are closed promptly rather than waiting for the next result check. FTP/FTPS downloads and uploads use dedicated per-transfer control/data connections, leaving the shared browsing control channel available for directory and metadata operations. FTP stream timeouts propagate as transfer errors rather than being mistaken for EOF, preventing a stalled read from silently producing a truncated file. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while common path and mutation operations are service methods. The optional local OpenSSH `scp` optimization is also bound to that generation and is terminated if the application session changes; it is a transfer subprocess, not a replacement for or owner of the app's primary SSH session.
 The embedded Web App is passed `WebAppService` and routes command
 execution, short-lived SFTP channel creation, and interactive PTY channel
 creation through the shared service boundary. These channels use the active
