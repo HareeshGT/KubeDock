@@ -385,7 +385,7 @@ class LargeFileViewerDialog(QDialog):
     @classmethod
     def open_remote(cls, parent, sftp, remote_path: str,
                      host=None, port=22, user=None, pem=None, password=None,
-                     sudo_user=None):
+                     sudo_user=None, service=None):
         """Downloads *remote_path* to a local temp file (reusing
         FileTransferDialog's existing progress/cancel UI), then opens it
         in a read-only, paged viewer. Returns None if the download was
@@ -400,6 +400,7 @@ class LargeFileViewerDialog(QDialog):
             parent, sftp, remote_path, local_path,
             host=host, port=port, user=user, pem=pem, password=password,
             sudo_user=sudo_user,
+            service=service,
         )
         if not ok:
             try:
