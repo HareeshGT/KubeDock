@@ -150,7 +150,7 @@ class CommandWorker(QThread):
                         exit_code = -1
                 finally:
                     self._clear_active_channel(channel)
-            if self._discard_stale_result():
+            if self._cancel_event.is_set() or self._discard_stale_result():
                 return
             self.result.emit(out, err, exit_code)
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
@@ -184,7 +184,7 @@ class CommandWorker(QThread):
                     exit_code = -1
             finally:
                 self._clear_active_channel(channel)
-        if self._discard_stale_result():
+        if self._cancel_event.is_set() or self._discard_stale_result():
             return
         self.result.emit(out, err, exit_code)
         self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
