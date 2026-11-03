@@ -146,6 +146,12 @@ class ConnectionMixin:
       self._connect_worker.start()
 
     def _on_ftp_connect_success(self, fs, home):
+      if getattr(getattr(self, "services", None), "stopped", False):
+        try:
+          fs.close()
+        except Exception:
+          pass
+        return
       info = self._pending_conn
       host, port, user = info["host"], info["port"], info["user"]
       protocol = info["protocol"]
@@ -183,6 +189,17 @@ class ConnectionMixin:
       self._finish_connect_ui()
 
     def _on_connect_success(self, ssh, sftp, home):
+      if getattr(getattr(self, "services", None), "stopped", False):
+        try:
+          close_ssh_connection_pool(ssh)
+        except Exception:
+          pass
+        for resource in (sftp, ssh):
+          try:
+            resource.close()
+          except Exception:
+            pass
+        return
       # Defensive: if a session is somehow still live (e.g. a connect that
       # completed after the user reconnected), tear it down fully first so
       # its pool connections and heartbeat thread aren't orphaned.
