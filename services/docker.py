@@ -12,12 +12,12 @@ class DockerService:
 
     def create_worker(
         self, worker_pool, command, *, sudo_user=None, timeout=None,
-        raw=False, operation_key=None,
+        raw=False, operation_key=None, diagnostic_key="docker:command",
     ):
         activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout,
-            raw=raw, operation_key=operation_key,
+            raw=raw, operation_key=operation_key, diagnostic_key=diagnostic_key,
         )
 
     # Docker CLI command policy belongs to this domain service. The UI owns
@@ -81,4 +81,4 @@ class DockerService:
 
         worker = ExecStreamWorker(ssh, command)
         self.connection.bind_worker(worker, snapshot)
-        return self.commands.register_worker(worker)
+        return self.commands.register_worker(worker, diagnostic_key="docker:logs")
