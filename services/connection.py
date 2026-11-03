@@ -291,8 +291,7 @@ class ConnectionService:
         self._configure_pool(ssh)
         return snapshot
 
-    @staticmethod
-    def create_ssh_connect_worker(host, port, username, key_path="", password=""):
+    def create_ssh_connect_worker(self, host, port, username, key_path="", password=""):
         """Create the existing background SSH handshake worker."""
         from workers import ConnectWorker
 
