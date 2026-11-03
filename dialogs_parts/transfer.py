@@ -11,7 +11,7 @@ class FileTransferDialog(QDialog):
     self._session_generation = None
     self._session_snapshot = None
     if service is not None:
-      sftp, snapshot = service.connection.get_filesystem_session()
+      sftp, snapshot = service.capture_transfer_session()
       self._session_generation = snapshot.generation
       self._session_snapshot = snapshot
     self._direction = direction
@@ -149,12 +149,11 @@ class FileTransferDialog(QDialog):
   def _session_is_current(self):
     if self._service is None:
       return True
-    return self._service.connection.is_current(self._session_generation)
+    return self._service.is_current(self._session_generation)
 
   def _start_worker(self, worker):
     if self._service is not None:
-      self._service.connection.bind_worker(worker, self._session_snapshot)
-      self._service.register_worker(worker)
+      self._service.bind_worker(worker, self._session_snapshot)
     self._worker = worker
     worker.progress.connect(self._on_progress)
     worker.finished_ok.connect(self._on_success)
