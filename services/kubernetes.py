@@ -26,9 +26,9 @@ class KubernetesService:
         if not command or not str(context or "").strip():
             return command
         stripped = command.lstrip()
-        if not re.match(r"^kubectl(?:\\s|$)", stripped):
+        if not re.match(r"^kubectl(?:\s|$)", stripped):
             return command
-        if re.search(r"(?:^|\\s)--context(?:=|\\s)", stripped):
+        if re.search(r"(?:^|\s)--context(?:=|\s)", stripped):
             return command
         prefix_len = len(command) - len(stripped)
         return (
