@@ -87,6 +87,16 @@ class ConnectionService:
         with self._lock:
             return self._snapshot
 
+    def bind_worker(self, worker, snapshot: Optional[ConnectionSnapshot] = None):
+        """Bind an asynchronous worker to one immutable session generation."""
+        captured = snapshot or self.snapshot
+        worker.connection_generation = captured.generation
+        worker.connection_session_id = captured.session_id
+        worker._session_guard = (
+            lambda generation=captured.generation: self.is_current(generation)
+        )
+        return worker
+
     def subscribe(self, listener: Callable[[ConnectionSnapshot], None]) -> int:
         """Subscribe to state changes; returns a token for unsubscribe."""
         if not callable(listener):
