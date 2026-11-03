@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+
 
 class KubernetesService:
     def __init__(self, connection, commands):
@@ -11,6 +13,34 @@ class KubernetesService:
     @property
     def ssh_client(self):
         return self.connection.get_ssh_client()
+
+    @staticmethod
+    def context_flag(context):
+        value = str(context or "").strip()
+        return f"--context={shlex.quote(value)}" if value else ""
+
+    @classmethod
+    def apply_context(cls, command, context):
+        """Apply the selected Kubernetes context without duplicating flags."""
+        if not command or not str(context or "").strip():
+            return command
+        stripped = command.lstrip()
+        if not stripped.startswith("kubectl") or (
+            len(stripped) > len("kubectl") and not stripped[len("kubectl")].isspace()
+        ):
+            return command
+        if stripped == "kubectl" or "--context" in stripped.split():
+            # The second check handles the standalone --context token;
+            # the regex below handles --context=value.
+            if "--context" in stripped.split() or "--context=" in stripped:
+                return command
+        if "--context=" in stripped:
+            return command
+        prefix_len = len(command) - len(stripped)
+        return (
+            command[:prefix_len] + "kubectl " + cls.context_flag(context)
+            + stripped[len("kubectl"):]
+        )
 
     def create_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
         """Run a prepared kubectl command without opening a feature connection."""
