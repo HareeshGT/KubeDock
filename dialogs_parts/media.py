@@ -497,11 +497,11 @@ class MediaPlayerDialog(QDialog):
       muted = "Yes" if self._player.isMuted() else "No"
       volume = self._player.volume()
       protocol = (
-      self._session_snapshot.protocol
-      if self._service is not None and self._session_snapshot is not None
-      else ("ftp" if hasattr(self._sftp, "_ftp") else "ssh")
-    )
-    source = "FTP/FTPS" if protocol in ("ftp", "ftps") else "SFTP/SSH"
+        self._session_snapshot.protocol
+        if self._service is not None and self._session_snapshot is not None
+        else ("ftp" if hasattr(self._sftp, "_ftp") else "ssh")
+      )
+      source = "FTP/FTPS" if protocol in ("ftp", "ftps") else "SFTP/SSH"
       seek = "Available" if self._stream_server and self._stream_server.supports_range else "Unavailable"
       lines = [
         "File: {}".format(os.path.basename(self._remote)),
