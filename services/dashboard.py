@@ -11,10 +11,6 @@ class DashboardService:
         self.connection = connection
         self.commands = commands
 
-    @property
-    def ssh_client(self):
-        return self.connection.get_ssh_client()
-
     def contextual_command(self, command, context):
         """Pin every top-level kubectl invocation to the selected context."""
         value = str(context or "").strip()
