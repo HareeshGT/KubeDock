@@ -43,6 +43,21 @@ class FileManagerService:
         self.connection.bind_worker(worker, snapshot)
         return self.commands.register_worker(worker)
 
+    def capture_transfer_session(self):
+        """Capture the active filesystem adapter and generation for a transfer."""
+        filesystem, snapshot = self.connection.get_filesystem_session()
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        return filesystem, snapshot
+
+    def bind_worker(self, worker, snapshot):
+        """Bind and register a file worker against its captured session."""
+        self.connection.bind_worker(worker, snapshot)
+        return self.register_worker(worker)
+
+    def is_current(self, generation):
+        return self.connection.is_current(generation)
+
     def register_worker(self, worker):
         """Register a file-related worker with application shutdown ownership."""
         return self.commands.register_worker(worker)
