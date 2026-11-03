@@ -22,7 +22,7 @@ class DashboardService:
             return command
         flag = f"--context={shlex.quote(value)}"
         return re.sub(
-            r"(^\s*)kubectl(?=\s)",
+            r"(^\s*)kubectl(?!\s+--context(?:=|\s))(?=\s)",
             lambda match: match.group(1) + "kubectl " + flag,
             command,
             flags=re.MULTILINE,
