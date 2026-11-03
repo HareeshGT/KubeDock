@@ -47,6 +47,7 @@ class KubernetesService:
 
     def load_tunnel_services(self, csv_path):
         """Read and validate tunnel definitions through the shared command service."""
+        activate_lifecycle(self)
         import csv
         command = "cat {} 2>/dev/null".format(
             self._remote_path_expression(csv_path)
@@ -104,6 +105,7 @@ class KubernetesService:
         self, namespace, pod, container=None, context=None, *, cols=120, rows=32,
     ):
         """Create a persistent pod shell worker bound to the active SSH generation."""
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before opening a pod shell")
@@ -116,6 +118,7 @@ class KubernetesService:
         return self.commands.register_worker(worker, diagnostic_key="kubernetes:pod-exec")
     def create_log_stream_worker(self, command):
         """Create a live Kubernetes log stream guarded by the shared session generation."""
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before streaming Kubernetes logs")
