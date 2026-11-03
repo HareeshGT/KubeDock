@@ -53,6 +53,7 @@ class FileManagerService:
         return self.register_worker(worker, diagnostic_key="files:read")
 
     def capture_transfer_session(self):
+        activate_lifecycle(self)
         """Capture the active filesystem adapter and generation for a transfer."""
         filesystem, snapshot = self.connection.get_filesystem_session()
         if filesystem is None:
@@ -81,12 +82,14 @@ class FileManagerService:
         )
 
     def normalize(self, path):
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.normalize(path or "")
 
     def stat(self, path):
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
