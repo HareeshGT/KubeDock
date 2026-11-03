@@ -28,7 +28,11 @@ class FileEditorDialog(QDialog):
     self._pending_bytes   = None
     self._remote_size = None
     try:
-      self._remote_size = int(self._sftp.stat(remote_path).st_size)
+      remote_stat = (
+        service.stat(remote_path) if service is not None
+        else self._sftp.stat(remote_path)
+      )
+      self._remote_size = int(remote_stat.st_size)
     except Exception:
       pass
     self._large_file = bool(self._remote_size and self._remote_size >= self.LARGE_FILE_BYTES)
