@@ -23,6 +23,24 @@ class DatabaseService:
         import db
         return db.connect()
 
+    def get_setting(self, key, default=None):
+        activate_lifecycle(self)
+        return self.database.get_setting(key, default)
+
+    def get_all_settings(self):
+        activate_lifecycle(self)
+        return self.database.get_all_settings()
+
+    def set_setting(self, key, value):
+        activate_lifecycle(self)
+        import db
+        return db.set_setting(key, value)
+
+    def set_settings(self, values):
+        activate_lifecycle(self)
+        import db
+        return db.set_settings(values)
+
     @property
     def path(self):
         import db
@@ -47,8 +65,7 @@ class SettingsService:
 
     def save(self, **values):
         activate_lifecycle(self)
-        import db
-        db.set_settings(values)
+        self.database.set_settings(values)
         # Keep the existing theme palette in sync when a caller saves a theme.
         theme = values.get("theme")
         if theme:
