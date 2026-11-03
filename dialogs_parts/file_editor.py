@@ -7,7 +7,7 @@ class FileEditorDialog(QDialog):
   def __init__(self, parent, sftp, ssh, remote_path: str, content=None, sudo_user=None, service=None):
     super().__init__(parent)
     self._service = service
-    self._sftp   = service.filesystem if service is not None else sftp
+    self._sftp   = sftp if service is None else None
     self._ssh    = ssh
     self._remote  = remote_path
     self._sudo_user = sudo_user
