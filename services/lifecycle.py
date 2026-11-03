@@ -139,7 +139,12 @@ class ServiceLifecycleManager:
             raise
 
     def pause(self, name: str) -> ServiceStatus:
-        entry = self._entry(name)
+        with self._lock:
+            entry = self._entry(name)
+            if entry.state != ServiceState.RUNNING:
+                raise RuntimeError(f"Service {name} must be running before it can be paused")
+            if entry.paused:
+                return self.status(name)
         pause = getattr(entry.service, "pause", None)
         if not callable(pause):
             raise NotImplementedError(f"Service {name} does not support pause")
@@ -149,16 +154,20 @@ class ServiceLifecycleManager:
             return self.status(name)
 
     def resume(self, name: str) -> ServiceStatus:
-        entry = self._entry(name)
-        resume = getattr(entry.service, "resume", None)
-        if callable(resume):
-            resume()
-            with self._lock:
-                entry.state = ServiceState.RUNNING
-                entry.paused = False
-                entry.last_success_at = time.time()
+        with self._lock:
+            entry = self._entry(name)
+            if entry.state == ServiceState.RUNNING and not entry.paused:
                 return self.status(name)
-        return self.start(name)
+            if entry.state != ServiceState.RUNNING:
+                return self.start(name)
+        resume = getattr(entry.service, "resume", None)
+        if not callable(resume):
+            raise NotImplementedError(f"Service {name} does not support resume")
+        resume()
+        with self._lock:
+            entry.paused = False
+            entry.last_success_at = time.time()
+            return self.status(name)
 
     def restart(self, name: str) -> ServiceStatus:
         self.stop(name)
