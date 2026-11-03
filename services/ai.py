@@ -11,9 +11,12 @@ class AIService:
     def __init__(self, commands=None):
         self.commands = commands
 
-    def _register(self, worker):
+    def _register(self, worker, diagnostic_key="ai:worker"):
         activate_lifecycle(self)
-        return self.commands.register_worker(worker) if self.commands is not None else worker
+        return (
+            self.commands.register_worker(worker, diagnostic_key=diagnostic_key)
+            if self.commands is not None else worker
+        )
 
     @staticmethod
     def provider():
@@ -35,7 +38,7 @@ class AIService:
         import ai_assist
         return self._register(ai_assist.AIModelTestWorker(
             provider, api_key, model, parent,
-        ))
+        ), "ai:model-test")
 
     def create_command_explain_worker(self, command, exit_code, stderr, stdout):
         import ai_assist
@@ -46,7 +49,7 @@ class AIService:
         return self._register(ai_assist.AICommandExplainWorker(
             provider, api_key, ai_assist.get_model(provider),
             command, exit_code, stderr, stdout,
-        ))
+        ), "ai:command-explain")
 
     def create_explain_worker(self, pod, namespace, context, log_text):
         import ai_assist
@@ -57,7 +60,7 @@ class AIService:
         return self._register(ai_assist.AIExplainWorker(
             provider, api_key, ai_assist.get_model(provider),
             pod, namespace, context, log_text,
-        ))
+        ), "ai:pod-explain")
 
     def create_kubernetes_interpret_worker(
         self, provider, api_key, model, request_text, namespace,
@@ -67,7 +70,7 @@ class AIService:
         return self._register(K8sAIInterpretWorker(
             provider, api_key, model, request_text, namespace, context,
             history, conversation=conversation,
-        ))
+        ), "ai:kubernetes-interpret")
 
     def create_investigation_worker(
         self, provider, api_key, model, question, target, evidence,
@@ -79,4 +82,4 @@ class AIService:
             prometheus_url=prometheus_url,
             history_days=history_days,
             parent=parent,
-        ))
+        ), "ai:investigation")
