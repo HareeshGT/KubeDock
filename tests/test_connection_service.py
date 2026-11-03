@@ -1130,3 +1130,14 @@ def test_file_service_creates_generation_bound_media_start_worker(monkeypatch):
     assert worker.connection_generation == snapshot.generation
     assert worker._session_guard()
     assert worker in services.commands._workers
+
+
+
+def test_file_service_exposes_ssh_availability_without_returning_raw_client():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    assert not services.files.has_ssh
+    assert not hasattr(services.files, "ssh_client")
+
+    connection.attach_ssh(FakeResource(), FakeFilesystem(), host="files.example")
+    assert services.files.has_ssh
