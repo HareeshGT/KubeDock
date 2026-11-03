@@ -2,7 +2,7 @@
 
 from command_utils import build_prepared_command
 from dialogs_parts.common import *
-from dialogs_parts.file_exec import _ExecStreamWorker
+from workers import ExecStreamWorker as _ExecStreamWorker
 import docker_utils as du
 
 
