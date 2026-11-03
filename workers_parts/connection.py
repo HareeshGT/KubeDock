@@ -20,7 +20,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .ssh import _configure_host_key_policy, _configure_transport, attach_ssh_connection_pool, managed_exec_command
+from .ssh import _configure_host_key_policy, _configure_transport, attach_ssh_connection_pool, close_ssh_connection_pool, managed_exec_command
 
 class ConnectWorker(QThread):
     """Establishes an SSH connection (and opens SFTP) in a background thread
@@ -30,14 +30,15 @@ class ConnectWorker(QThread):
     connected = pyqtSignal(object, object, str)   # ssh, sftp, home_dir
     error     = pyqtSignal(str)
 
-    def __init__(self, host, port, user, pem, password):
-        # type: (str, int, str, str, str) -> None
+    def __init__(self, host, port, user, pem, password, max_ssh_connections=5):
+        # type: (str, int, str, str, str, int) -> None
         super().__init__()
         self.host     = host
         self.port     = port
         self.user     = user
         self.pem      = pem
         self.password = password
+        self.max_ssh_connections = min(5, max(2, int(max_ssh_connections)))
         self._cancelled = threading.Event()
         self._ssh_client = None
         self._sftp_client = None
@@ -45,6 +46,8 @@ class ConnectWorker(QThread):
 
     def cancel(self):
         self._cancelled.set()
+        if self._ssh_client is not None:
+            close_ssh_connection_pool(self._ssh_client)
         for resource in (self._sftp_client, self._ssh_client):
             if resource is not None:
                 try:
@@ -181,9 +184,11 @@ class ConnectWorker(QThread):
             effective_pem = self.pem if not self.password else ""
             attach_ssh_connection_pool(
                 ssh, self.host, self.port, self.user,
-                pem=effective_pem, password=self.password
+                pem=effective_pem, password=self.password,
+                max_total_connections=self.max_ssh_connections,
             )
             if self._cancelled.is_set():
+                close_ssh_connection_pool(ssh)
                 sftp.close()
                 ssh.close()
                 return
@@ -193,6 +198,7 @@ class ConnectWorker(QThread):
                 if 'sftp' in locals() and sftp:
                     sftp.close()
                 if 'ssh' in locals() and ssh:
+                    close_ssh_connection_pool(ssh)
                     ssh.close()
             except Exception:
                 pass

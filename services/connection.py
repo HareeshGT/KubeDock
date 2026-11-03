@@ -54,7 +54,13 @@ class ConnectionService:
     snapshot or event payloads.
     """
 
-    def __init__(self, pool_closer: Optional[Callable[[object], None]] = None):
+    DEFAULT_MAX_SSH_CONNECTIONS = 5
+
+    def __init__(self, pool_closer: Optional[Callable[[object], None]] = None,
+                 max_ssh_connections: int = DEFAULT_MAX_SSH_CONNECTIONS):
+        self.max_ssh_connections = min(
+            self.DEFAULT_MAX_SSH_CONNECTIONS, max(2, int(max_ssh_connections))
+        )
         self._lock = threading.RLock()
         self._ssh = None
         self._filesystem = None
@@ -84,6 +90,32 @@ class ConnectionService:
             # A pool teardown problem must not prevent primary resources
             # from being closed.
             _LOG.exception("Managed SSH pool teardown failed")
+
+    def _configure_pool(self, ssh) -> None:
+        """Apply ConnectionService policy to a worker-created SSH pool."""
+        pool = getattr(ssh, "_kdb_connection_pool", None) if ssh is not None else None
+        configure = getattr(pool, "configure", None)
+        if callable(configure):
+            configure(max_total_connections=self.max_ssh_connections)
+
+    def pool_status(self):
+        """Return credential-free autoscaling diagnostics for the active SSH pool."""
+        ssh, snapshot = self.get_ssh_session()
+        pool = getattr(ssh, "_kdb_connection_pool", None) if ssh is not None else None
+        pool_snapshot = getattr(pool, "snapshot", None)
+        if callable(pool_snapshot):
+            return pool_snapshot()
+        return {
+            "total_connections": 1 if snapshot.is_active and snapshot.protocol == "ssh" else 0,
+            "max_connections": self.max_ssh_connections,
+            "secondary_connections": 0,
+            "active_channels": 0,
+            "channel_capacity": 0,
+            "channels_per_connection": 6,
+            "scale_up_utilization": 0.70,
+            "idle_timeout_seconds": 60.0,
+            "closed": not snapshot.is_active,
+        }
 
     @property
     def snapshot(self) -> ConnectionSnapshot:
@@ -247,7 +279,8 @@ class ConnectionService:
     ) -> ConnectionSnapshot:
         """Adopt a connected SSH client and its app-facing filesystem."""
         activate_lifecycle(self)
-        return self._replace_session(
+        self._configure_pool(ssh)
+        snapshot = self._replace_session(
             protocol="ssh",
             ssh=ssh,
             filesystem=filesystem,
@@ -256,13 +289,16 @@ class ConnectionService:
             username=username,
             alias=alias,
         )
+        return snapshot
 
-    @staticmethod
-    def create_ssh_connect_worker(host, port, username, key_path="", password=""):
+    def create_ssh_connect_worker(self, host, port, username, key_path="", password=""):
         """Create the existing background SSH handshake worker."""
         from workers import ConnectWorker
 
-        return ConnectWorker(host, port, username, key_path or "", password or "")
+        return ConnectWorker(
+            host, port, username, key_path or "", password or "",
+            max_ssh_connections=self.max_ssh_connections,
+        )
 
     @staticmethod
     def create_file_connect_worker(host, port, username, password, *, tls=False, passive=True):
