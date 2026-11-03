@@ -159,21 +159,46 @@ class LifecycleMixin:
       self._setup_app_lock()
 
     def closeEvent(self, event):
-      try:
-        if self._terminal_popout_win is not None:
-          self._terminal_popout_win.close()
-        if self._term_ai_worker is not None:
-          self._term_ai_worker.quit()
-        self.k8s_tab.clear_connection_info() # also stops any active tunnel
-        self.dashboard_tab.shutdown() # stop all dashboard timers (focused + background)
-        if self._health_worker:
-          worker = self._health_worker
-          self._health_worker = None
-          worker.stop() # don't leave the heartbeat thread running into interpreter teardown
-        # ConnectionService owns both the primary session and its managed
-        # secondary SSH pool. It closes them once, in the correct order.
-        self.services.shutdown()
-        self.ssh = self.sftp = None
-      except Exception:
-        pass
+      # Keep teardown best-effort, but isolate each step. A failure while
+      # closing a popout or stopping a dashboard timer must never skip the
+      # shared connection service shutdown and leak the active SSH/FTP session.
+      def _cleanup(action):
+        try:
+          action()
+        except Exception:
+          pass
+
+      popout = getattr(self, "_terminal_popout_win", None)
+      if popout is not None:
+        _cleanup(popout.close)
+
+      term_ai_worker = getattr(self, "_term_ai_worker", None)
+      if term_ai_worker is not None:
+        _cleanup(term_ai_worker.quit)
+
+      k8s_tab = getattr(self, "k8s_tab", None)
+      if k8s_tab is not None:
+        # Also stops any active tunnel before the shared session is closed.
+        _cleanup(k8s_tab.clear_connection_info)
+
+      dashboard_tab = getattr(self, "dashboard_tab", None)
+      if dashboard_tab is not None:
+        # Stop focused and background dashboard timers.
+        _cleanup(dashboard_tab.shutdown)
+
+      health_worker = getattr(self, "_health_worker", None)
+      self._health_worker = None
+      if health_worker is not None:
+        # Don't leave the heartbeat thread running into interpreter teardown.
+        _cleanup(health_worker.stop)
+
+      # ConnectionService owns the primary session and managed secondary SSH
+      # pool. Always attempt its idempotent teardown, regardless of failures
+      # in UI cleanup above.
+      services = getattr(self, "services", None)
+      if services is not None:
+        _cleanup(services.shutdown)
+
+      _cleanup(lambda: setattr(self, "ssh", None))
+      _cleanup(lambda: setattr(self, "sftp", None))
       event.accept()
