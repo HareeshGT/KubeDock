@@ -14,19 +14,18 @@ from .files import FileManagerService
 from .terminal import TerminalService
 from .ai import AIService
 from .webapp import WebAppService
+from .lifecycle import ServiceLifecycleManager
 
 
 class AppServices:
-    """Owns the process-local services shared by KubeDock features.
+    """Own process-local services and their shared infrastructure.
 
-    Feature tabs and adapters receive services from this object instead of
-    creating their own connections. All current domain services share the
-    same ConnectionService and CommandService.
+    Registration is lazy: creating the desktop runtime does not start feature
+    polling, investigations, or the optional HTTP server.
     """
 
     def __init__(self, connection: Optional[ConnectionService] = None):
         self.connection = connection or ConnectionService()
-        # One shared command executor backs every remote feature service.
         self.commands = CommandService(self.connection)
         self.kubernetes = KubernetesService(self.connection, self.commands)
         self.docker = DockerService(self.connection, self.commands)
@@ -35,21 +34,43 @@ class AppServices:
         self.terminal = TerminalService(self.connection, self.commands)
         self.ai = AIService(self.commands)
         self.webapp = WebAppService(self.connection, self.commands)
+        self.lifecycle = ServiceLifecycleManager()
+        self.lifecycle.register("connection", self.connection)
+        self.lifecycle.register("commands", self.commands, dependencies=("connection",))
+        self.lifecycle.register("kubernetes", self.kubernetes, dependencies=("commands",))
+        self.lifecycle.register("docker", self.docker, dependencies=("commands",))
+        self.lifecycle.register("monitoring", self.dashboard, dependencies=("commands",))
+        self.lifecycle.register("files", self.files, dependencies=("connection",))
+        self.lifecycle.register("terminal", self.terminal, dependencies=("commands",))
+        self.lifecycle.register("ai", self.ai)
+        self.lifecycle.register("webapp", self.webapp, dependencies=("connection", "commands"))
         self._lock = threading.Lock()
         self._stopped = False
+
+    def service_status(self):
+        """Return credential-free diagnostics for all registered services."""
+        statuses = self.lifecycle.statuses()
+        worker_count = len(getattr(self.commands, "_workers", ()))
+        for name in statuses:
+            self.lifecycle.set_activity(
+                name, worker_count=worker_count if name in ("commands", "connection") else 0,
+            )
+        return self.lifecycle.statuses()
 
     def shutdown(self) -> None:
         with self._lock:
             if self._stopped:
                 return
             self._stopped = True
-        # Ask every service-owned worker to stop before closing its transport;
-        # closing the shared session then releases any blocked network reads.
-        self.commands.request_worker_shutdown()
+        # Stop feature-owned activity first, then workers, then shared transport.
         try:
-            self.connection.disconnect()
+            self.lifecycle.shutdown()
         finally:
-            self.commands.wait_for_workers(timeout_seconds=3.0)
+            self.commands.request_worker_shutdown()
+            try:
+                self.connection.disconnect()
+            finally:
+                self.commands.wait_for_workers(timeout_seconds=3.0)
 
     @property
     def stopped(self) -> bool:
