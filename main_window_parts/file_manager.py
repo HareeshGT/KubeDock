@@ -419,13 +419,14 @@ class FileManagerMixin:
       # Route these to the read-only, mmap-backed pager instead, whose
       # memory/CPU cost is bounded by one page, independent of file size.
       if meta.get("size", 0) > FileEditorDialog.MAX_EDIT_BYTES:
+        service = self._file_service()
         LargeFileViewerDialog.open_remote(
-          self, self._filesystem(), remote,
+          self, self._filesystem() if service is None else None, remote,
           host=self._conn_host, port=self._conn_port,
           user=self._conn_user, pem=self._conn_pem,
           password=self._conn_password,
           sudo_user=self._sudo_user,
-          service=self._file_service(),
+          service=service,
         )
         return
       service = self._file_service()
