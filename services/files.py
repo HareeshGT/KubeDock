@@ -24,6 +24,7 @@ class FileManagerService:
 
         worker = DirectoryListWorker(filesystem, path)
         worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.commands.register_worker(worker)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
@@ -39,7 +40,7 @@ class FileManagerService:
             sudo_user=sudo_user, max_bytes=max_bytes,
         )
         worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
-        return worker
+        return self.commands.register_worker(worker)
 
     def create_command_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
         return self.commands.create_worker(
