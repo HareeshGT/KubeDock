@@ -41,13 +41,15 @@ opening a second primary connection.
 The SSH pool is owned by the primary session and configured through
 \`ConnectionService\`. The configured maximum counts all SSH transports:
 the primary transport plus up to four secondary transports (five total by
-default). The primary remains dedicated to SFTP and health monitoring;
-short-lived command and stream work uses pooled secondary transports.
+default). The primary remains available for SFTP, health checks, and long-lived
+interactive sessions; short-lived command and stream work uses pooled
+secondary transports.
 
 Each secondary transport supports up to six concurrent session channels.
 The pool fills the least-loaded healthy transport first. When every existing
-transport reaches 70% channel utilization, it lazily creates another
-transport, up to the five-transport total cap. If the cap is reached, work is
+transport reaches the 70% utilization target (rounded up to the next whole
+channel slot: five of six channels), it lazily creates another transport, up
+to the five-transport total cap. If the cap is reached, work is
 balanced onto the least-loaded transport with remaining channel capacity.
 Channel acquisition remains bounded by the existing timeout and connection
 creation cooldown.
