@@ -147,7 +147,11 @@ class ThemeSecurityMixin:
       self.status.showMessage("Theme changed to {}".format(theme_name))
 
     def _open_settings(self):
-      dlg = SettingsDialog(self, k8s_tab_titles=self.k8s_tab.visible_tab_titles())
+      dlg = SettingsDialog(
+        self,
+        k8s_tab_titles=self.k8s_tab.visible_tab_titles(),
+        ai_service=getattr(getattr(self, "services", None), "ai", None),
+      )
       if dlg.exec_() != QDialog.Accepted:
         return
 
