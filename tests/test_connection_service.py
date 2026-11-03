@@ -404,7 +404,7 @@ def test_webapp_service_rejects_sftp_and_terminal_without_active_ssh():
     import pytest
     with pytest.raises(RuntimeError, match="Connect to an SSH host"):
         services.webapp.open_sftp()
-    with pytest.raises(RuntimeError, match="active SSH"):
+    with pytest.raises(RuntimeError, match="Connect to an SSH host"):
         services.webapp.open_terminal_channel()
 
 def test_docker_log_stream_worker_is_bound_to_shared_connection_generation():
