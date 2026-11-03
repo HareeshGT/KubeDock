@@ -1172,3 +1172,25 @@ def test_feature_modules_do_not_create_primary_network_sessions():
     for relative_path in feature_modules:
         source = (root / relative_path).read_text(encoding="utf-8")
         assert not any(pattern.search(source) for pattern in patterns), relative_path
+
+
+
+def test_connection_service_cancels_bound_workers_when_transport_is_lost():
+    class BoundWorker:
+        def __init__(self):
+            self.finished = type("Signal", (), {"connect": lambda self, _callback: None})()
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    snapshot = connection.attach_ssh(FakeResource(), host="unstable.example")
+    worker = BoundWorker()
+    connection.bind_worker(worker, snapshot)
+
+    lost = connection.mark_lost("heartbeat failed")
+
+    assert lost.state == "lost"
+    assert worker.cancelled
+    assert not worker._session_guard()
