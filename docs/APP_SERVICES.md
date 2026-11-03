@@ -75,7 +75,7 @@ bounded managed channel from the existing pool.
 Feature widgets receive the shared services from the main window. Their
 legacy `ssh` accessors now resolve through `ConnectionService`; the stored
 legacy value is only a compatibility fallback for standalone widget tests.
-Feature command workers are created through their domain service in the desktop app. Command, directory, and file-stream workers capture the session generation and discard stale results after a reconnect. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while common path and mutation operations are service methods.
+Feature command workers are created through their domain service in the desktop app. Command, directory, file-stream, and file-transfer workers capture the session generation and reject stale work after a reconnect. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while common path and mutation operations are service methods. The optional local OpenSSH `scp` optimization is also bound to that generation and is terminated if the application session changes; it is a transfer subprocess, not a replacement for or owner of the app's primary SSH session.
 The embedded Web App is passed `WebAppService` and routes command
 execution, short-lived SFTP channel creation, and interactive PTY channel
 creation through the shared service boundary. These channels use the active
