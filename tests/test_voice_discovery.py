@@ -2,7 +2,7 @@ import json
 import subprocess
 from types import SimpleNamespace
 
-from k8s_ai_ops_parts import core
+from k8s_ai_ops_parts import core, voice
 
 
 def test_list_voices_uses_bounded_child_process(monkeypatch):
@@ -58,3 +58,55 @@ def test_list_voices_returns_empty_when_tts_dependency_is_missing(monkeypatch):
     monkeypatch.setattr(core.subprocess, "run", unexpected_run)
 
     assert core.list_voices() == []
+
+
+
+def test_voice_combo_shows_default_before_background_discovery(monkeypatch):
+    class FakeSignal:
+        def connect(self, _callback):
+            pass
+
+    class FakeCombo:
+        def __init__(self):
+            self.items = []
+            self.blocked = False
+
+        def blockSignals(self, blocked):
+            self.blocked = blocked
+
+        def clear(self):
+            self.items.clear()
+
+        def addItem(self, label, value):
+            self.items.append((label, value))
+
+        def setCurrentIndex(self, index):
+            self.current_index = index
+
+    class FakeWorker:
+        def __init__(self):
+            self.voices_ready = FakeSignal()
+            self.finished = FakeSignal()
+            self.started = False
+
+        def isRunning(self):
+            return False
+
+        def start(self):
+            self.started = True
+
+    class DummyWidget:
+        def __init__(self):
+            self.voice_combo = FakeCombo()
+            self._voice_id = ""
+            self._voice_discovery_worker = None
+
+    monkeypatch.setattr(voice, "_TTS_AVAILABLE", True)
+    monkeypatch.setattr(voice, "_VoiceDiscoveryWorker", FakeWorker)
+    widget = DummyWidget()
+
+    voice.K8sAIOpsVoiceMixin._populate_voice_combo(widget)
+
+    assert widget.voice_combo.items == [("System Default", "")]
+    assert widget.voice_combo.current_index == 0
+    assert widget._voice_discovery_worker.started is True
