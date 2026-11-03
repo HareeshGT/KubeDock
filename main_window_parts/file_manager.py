@@ -367,6 +367,7 @@ class FileManagerMixin:
             user=self._conn_user, pem=self._conn_pem,
             password=self._conn_password,
             sudo_user=self._sudo_user,
+            service=self._file_service(),
           )
           self.status.showMessage("Downloaded {}".format(name))
 
@@ -428,6 +429,7 @@ class FileManagerMixin:
       FileEditorDialog.open_remote(
         self, self._filesystem(), self._file_ssh(), remote,
         sudo_user=self._sudo_user,
+        service=self._file_service(),
       )
 
     def _edit_selected(self):
@@ -446,7 +448,8 @@ class FileManagerMixin:
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
       MediaPlayerDialog.open_remote(
-        self, self._filesystem(), self._file_ssh(), remote, meta["kind"], sudo_user=self._sudo_user
+        self, self._filesystem(), self._file_ssh(), remote, meta["kind"], sudo_user=self._sudo_user,
+        service=self._file_service(),
       )
 
     def _exec_file(self, meta):
