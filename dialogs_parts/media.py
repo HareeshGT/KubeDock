@@ -43,9 +43,10 @@ class MediaPlayerDialog(QDialog):
     self._session_generation = None
     self._session_snapshot = None
     if service is not None:
-      sftp, ssh, snapshot = service.connection.get_file_session()
+      snapshot = service.connection.snapshot
       self._session_generation = snapshot.generation
       self._session_snapshot = snapshot
+      sftp = ssh = None
     self._sftp = sftp
     self._ssh = ssh
     self._remote = remote_path
@@ -321,14 +322,18 @@ class MediaPlayerDialog(QDialog):
 
   def _start_stream(self):
     self._status_lbl.setText("Connecting...")
-    self._stream_server = MediaStreamServer(
-      self._ssh, self._sftp, self._remote, sudo_user=self._sudo_user)
-    self._start_worker = _StreamServerStartWorker(self._stream_server)
     if self._service is not None:
-      self._service.connection.bind_worker(
-        self._start_worker, self._session_snapshot,
+      (
+        self._stream_server, self._start_worker,
+        self._session_snapshot,
+      ) = self._service.create_media_stream_start_worker(
+        self._remote, sudo_user=self._sudo_user,
       )
-      self._service.register_worker(self._start_worker)
+      self._session_generation = self._session_snapshot.generation
+    else:
+      self._stream_server = MediaStreamServer(
+        self._ssh, self._sftp, self._remote, sudo_user=self._sudo_user)
+      self._start_worker = _StreamServerStartWorker(self._stream_server)
     self._start_worker.ready.connect(self._on_stream_ready)
     self._start_worker.error.connect(self._on_stream_error)
     self._start_worker.start()
@@ -491,7 +496,12 @@ class MediaPlayerDialog(QDialog):
       rate = self._speed_combo.currentText()
       muted = "Yes" if self._player.isMuted() else "No"
       volume = self._player.volume()
-      source = "SFTP/SSH" if not hasattr(self._sftp, "_ftp") else "FTP/FTPS"
+      protocol = (
+      self._session_snapshot.protocol
+      if self._service is not None and self._session_snapshot is not None
+      else ("ftp" if hasattr(self._sftp, "_ftp") else "ssh")
+    )
+    source = "FTP/FTPS" if protocol in ("ftp", "ftps") else "SFTP/SSH"
       seek = "Available" if self._stream_server and self._stream_server.supports_range else "Unavailable"
       lines = [
         "File: {}".format(os.path.basename(self._remote)),
