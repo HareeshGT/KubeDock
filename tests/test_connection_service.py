@@ -652,3 +652,29 @@ def test_dashboard_service_pins_each_kubectl_line_to_selected_context():
         " echo done"
     )
     assert services.dashboard.contextual_command(command, "") == command
+
+
+
+def test_stream_workers_abort_before_opening_channels_after_reconnect():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    connection.attach_ssh(FakeResource(), host="first.example")
+
+    workers = [
+        services.docker.create_log_stream_worker("docker logs -f api"),
+        services.kubernetes.create_log_stream_worker("kubectl logs -f api"),
+        services.kubernetes.create_pod_exec_stream_worker(
+            "default", "api-0", "api", "dev-context",
+        ),
+        services.files.create_exec_stream_worker("python3 /tmp/task.py"),
+    ]
+    errors = []
+    for worker in workers:
+        worker.error.connect(errors.append)
+
+    connection.attach_ssh(FakeResource(), host="replacement.example")
+    for worker in workers:
+        worker.run()
+
+    assert len(errors) == len(workers)
+    assert all("connection changed" in error.lower() for error in errors)
