@@ -37,7 +37,17 @@ class _ExecStreamWorker(QThread):
     self._cmd   = cmd
     self._stop  = False
     self._channel = None  # set once the session is opened; used by send_input()
+    self._session_guard = None
     self.finished.connect(self.deleteLater)
+
+  def _session_is_current(self):
+    guard = self._session_guard
+    if guard is None:
+      return True
+    try:
+      return bool(guard())
+    except Exception:
+      return False
 
   def request_stop(self):
     self._stop = True
@@ -58,6 +68,9 @@ class _ExecStreamWorker(QThread):
     channel = None
     exit_code = -1
     try:
+      if not self._session_is_current():
+        self.error.emit("The active connection changed before the stream could start.")
+        return
       channel = open_managed_session(self._ssh)
       channel.get_pty()
       channel.settimeout(0.5)
@@ -66,6 +79,10 @@ class _ExecStreamWorker(QThread):
 
       while True:
         if self._stop:
+          exit_code = -1
+          return
+        if not self._session_is_current():
+          self.error.emit("The active connection changed while the stream was running.")
           exit_code = -1
           return
         try:
