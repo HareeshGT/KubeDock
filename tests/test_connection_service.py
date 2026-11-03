@@ -1165,8 +1165,8 @@ def test_feature_modules_do_not_create_primary_network_sessions():
         "k8s_ai_ops_parts/ui.py",
     ]
     patterns = (
-        re.compile(r"\\bparamiko\\.SSHClient\\s*\\("),
-        re.compile(r"\\b(?:FTP|FTP_TLS)\\s*\\("),
+        re.compile(r"\bparamiko\.SSHClient\s*\("),
+        re.compile(r"\b(?:FTP|FTP_TLS)\s*\("),
     )
 
     for relative_path in feature_modules:
