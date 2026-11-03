@@ -119,6 +119,12 @@ class ConnectionService:
             self._request_worker_stop(worker)
         return worker
 
+    def unbind_worker(self, worker):
+        """Remove a worker that lost an operation-key registration race."""
+        generation = getattr(worker, "connection_generation", None)
+        if generation is not None:
+            self._forget_bound_worker(generation, worker)
+
     def _forget_bound_worker(self, generation, worker):
         with self._lock:
             workers = self._bound_workers.get(generation, [])
