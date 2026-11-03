@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 import threading
+import time
 
 
 class CommandService:
@@ -61,7 +62,7 @@ class CommandService:
             self._request_worker_stop(worker)
 
     def wait_for_workers(self, timeout_seconds=3.0):
-        deadline = __import__("time").monotonic() + max(0.0, float(timeout_seconds))
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
         with self._workers_lock:
             workers = list(self._workers)
         for worker in workers:
