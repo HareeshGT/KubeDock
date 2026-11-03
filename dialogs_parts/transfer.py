@@ -5,8 +5,11 @@ class FileTransferDialog(QDialog):
 
   def __init__(self, parent, sftp, direction: str, local_path: str, remote_path: str,
          host: str = None, port: int = 22, user: str = None, pem: str = None,
-         password: str = None, sudo_user: str = None):
+         password: str = None, sudo_user: str = None, service=None):
     super().__init__(parent)
+    self._service = service
+    if service is not None:
+      sftp = service.filesystem
     self._direction = direction
     self._local   = local_path
     self._remote   = remote_path
@@ -243,16 +246,16 @@ class FileTransferDialog(QDialog):
   @classmethod
   def download(cls, parent, sftp, remote_path: str, local_path: str,
          host: str = None, port: int = 22, user: str = None, pem: str = None,
-         password: str = None, sudo_user: str = None) -> bool:
+         password: str = None, sudo_user: str = None, service=None) -> bool:
     dlg = cls(parent, sftp, "download", local_path, remote_path,
          host=host, port=port, user=user, pem=pem, password=password,
-         sudo_user=sudo_user)
+         sudo_user=sudo_user, service=service)
     return dlg.exec_() == QDialog.Accepted
 
   @classmethod
   def upload(cls, parent, sftp, local_path: str, remote_path: str,
         host: str = None, port: int = 22, user: str = None, pem: str = None,
-        password: str = None, sudo_user: str = None) -> bool:
+        password: str = None, sudo_user: str = None, service=None) -> bool:
     dlg = cls(parent, sftp, "upload", local_path, remote_path,
          host=host, port=port, user=user, pem=pem, password=password,
          sudo_user=sudo_user)
