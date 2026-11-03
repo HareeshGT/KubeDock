@@ -955,3 +955,27 @@ def test_connection_service_cancels_bound_workers_on_reconnect_and_disconnect():
     connection.bind_worker(second_worker, second)
     connection.disconnect()
     assert second_worker.cancelled
+
+
+
+def test_reconnect_cancels_an_active_transfer_handle():
+    from workers_parts.transfer import _TransferWorker
+
+    class ActiveHandle:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    connection = ConnectionService()
+    snapshot = connection.attach_ssh(FakeResource(), host="first.example")
+    worker = _TransferWorker(object(), "download", "/tmp/out", "/remote/file")
+    connection.bind_worker(worker, snapshot)
+    handle = ActiveHandle()
+    worker._handle = handle
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+
+    assert worker._cancelled
+    assert handle.closed
