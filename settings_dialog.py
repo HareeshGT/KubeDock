@@ -369,15 +369,16 @@ class SettingsDialog(QDialog):
         note.setStyleSheet(f"color: {T['TEXT_MUTED']};")
         layout.addWidget(note)
 
-        table = QTableWidget(0, 5)
-        table.setHorizontalHeaderLabels(
-            ["Service", "State", "Workers", "Last success", "Last error"]
-        )
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        table = QTableWidget(0, 8)
+        table.setHorizontalHeaderLabels([
+            "Service", "State", "Workers", "Active operations",
+            "Last success", "Last refresh", "Last duration", "Last error",
+        ])
+        for column in range(7):
+            table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeToContents
+            )
+        table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
 
@@ -390,8 +391,13 @@ class SettingsDialog(QDialog):
                 name.replace("_", " ").title(),
                 status.state.value,
                 str(status.worker_count),
+                str(status.active_operations),
                 (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status.last_success_at))
                  if status.last_success_at else "—"),
+                (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status.last_refresh_at))
+                 if status.last_refresh_at else "—"),
+                ("{:.2f}s".format(status.last_duration_seconds)
+                 if status.last_duration_seconds is not None else "—"),
                 status.last_error or "—",
             )
             for column, value in enumerate(values):
