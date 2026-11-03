@@ -225,6 +225,11 @@ class FakeFilesystem(FakeResource):
         self.calls.append(("normalize", path))
         return path or "/"
 
+    def stat(self, path):
+        from types import SimpleNamespace
+        self.calls.append(("stat", path))
+        return SimpleNamespace(st_size=123)
+
     def mkdir(self, path):
         self.calls.append(("mkdir", path))
 
@@ -267,6 +272,8 @@ def test_file_manager_service_routes_filesystem_operations_through_connection():
     services = AppServices(connection)
 
     assert services.files.normalize("/var/log") == "/var/log"
+    assert services.files.stat("/var/log/app.log").st_size == 123
+    services.files.write_bytes("/var/log/app.log", b"saved")
     services.files.mkdir("/var/log/new")
     services.files.create_empty_file("/var/log/new/empty.txt")
     services.files.delete("/var/log/old.txt")
@@ -275,6 +282,8 @@ def test_file_manager_service_routes_filesystem_operations_through_connection():
 
     assert filesystem.calls == [
         ("normalize", "/var/log"),
+        ("stat", "/var/log/app.log"),
+        ("write_bytes", "/var/log/app.log", b"saved"),
         ("mkdir", "/var/log/new"),
         ("write_bytes", "/var/log/new/empty.txt", b""),
         ("remove", "/var/log/old.txt"),
