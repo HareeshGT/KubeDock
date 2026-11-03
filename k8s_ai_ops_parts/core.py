@@ -13,6 +13,7 @@ from datetime import datetime
 import os
 import sys
 import shlex
+import subprocess
 
 from PyQt5.QtWidgets import (
   QDialog,
@@ -548,30 +549,42 @@ def save_voice_feedback_enabled(enabled: bool):
 
 
 def list_voices() -> list:
-  """The system's installed TTS voices, as [{"id": str, "name": str}, …].
+  """Return installed pyttsx3 voices using a bounded, isolated process.
 
-  Spins up a throwaway pyttsx3 engine purely to read its `voices`
-  property and immediately disposes of it — this engine is never used
-  to speak. Returns [] if pyttsx3 isn't installed or enumeration fails
-  for any reason (e.g. no speech synthesis available on this machine),
-  so callers can always fall back to "System Default" cleanly.
+  macOS NSSpeechSynthesizer can hang while pyttsx3 enumerates voices. Run
+  enumeration in a child interpreter so a stuck native speech framework can
+  be terminated without taking down or freezing the KubeDock process.
+  Callers that run this during UI initialization must still do so on a worker.
   """
   if not _TTS_AVAILABLE:
     return []
+
+  script = (
+    "import json, pyttsx3; "
+    "engine = pyttsx3.init(); "
+    "voices = engine.getProperty('voices') or []; "
+    "print(json.dumps([{'id': str(v.id), 'name': str(getattr(v, 'name', '') or v.id)} for v in voices])); "
+    "engine.stop()"
+  )
   try:
-    engine = pyttsx3.init()
-    try:
-      voices = engine.getProperty("voices") or []
-      return [
-        {"id": v.id, "name": (getattr(v, "name", "") or v.id)}
-        for v in voices
-      ]
-    finally:
-      try:
-        engine.stop()
-      except Exception:
-        pass
-  except Exception:
+    result = subprocess.run(
+      [sys.executable, "-c", script],
+      capture_output=True,
+      text=True,
+      timeout=8,
+      check=False,
+    )
+    if result.returncode != 0:
+      return []
+    payload = json.loads((result.stdout or "").strip() or "[]")
+    if not isinstance(payload, list):
+      return []
+    return [
+      {"id": str(item["id"]), "name": str(item.get("name") or item["id"])}
+      for item in payload
+      if isinstance(item, dict) and item.get("id")
+    ]
+  except (subprocess.TimeoutExpired, OSError, ValueError, TypeError, KeyError):
     return []
 
 
