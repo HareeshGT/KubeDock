@@ -44,4 +44,4 @@ class KubernetesService:
         worker.connection_generation = snapshot.generation
         worker.connection_session_id = snapshot.session_id
         worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
-        return worker
+        return self.commands.register_worker(worker)
