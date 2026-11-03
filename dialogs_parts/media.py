@@ -41,9 +41,11 @@ class MediaPlayerDialog(QDialog):
     self._embed_fullscreen = False
     self._service = service
     self._session_generation = None
+    self._session_snapshot = None
     if service is not None:
       sftp, ssh, snapshot = service.connection.get_file_session()
       self._session_generation = snapshot.generation
+      self._session_snapshot = snapshot
     self._sftp = sftp
     self._ssh = ssh
     self._remote = remote_path
@@ -323,6 +325,9 @@ class MediaPlayerDialog(QDialog):
       self._ssh, self._sftp, self._remote, sudo_user=self._sudo_user)
     self._start_worker = _StreamServerStartWorker(self._stream_server)
     if self._service is not None:
+      self._service.connection.bind_worker(
+        self._start_worker, self._session_snapshot,
+      )
       self._service.register_worker(self._start_worker)
     self._start_worker.ready.connect(self._on_stream_ready)
     self._start_worker.error.connect(self._on_stream_error)
