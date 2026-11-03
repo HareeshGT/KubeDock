@@ -76,4 +76,4 @@ class SettingsService:
         """Persist the currently selected theme using the legacy facade."""
         activate_lifecycle(self)
         import themes
-        themes.save_settings()
+        self.database.set_setting("theme", themes.CURRENT_THEME)
