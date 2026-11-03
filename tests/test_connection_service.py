@@ -402,7 +402,7 @@ def test_webapp_service_rejects_sftp_and_terminal_without_active_ssh():
     services = AppServices(connection)
 
     import pytest
-    with pytest.raises(RuntimeError, match="active SSH"):
+    with pytest.raises(RuntimeError, match="Connect to an SSH host"):
         services.webapp.open_sftp()
     with pytest.raises(RuntimeError, match="active SSH"):
         services.webapp.open_terminal_channel()
