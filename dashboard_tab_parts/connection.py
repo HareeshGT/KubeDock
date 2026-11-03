@@ -60,8 +60,11 @@ class DashboardConnectionMixin:
       if fs:
         self._show_ftp_placeholder()
         if self._active:
-          self._refresh_ftp()
-          self._timer.start()
+          if self.dashboard_pages.currentIndex() == 1:
+            self._app_connection_timer.start()
+          else:
+            self._refresh_ftp()
+            self._timer.start()
       else:
         self._timer.stop()
         self._process_timer.stop()
@@ -182,12 +185,18 @@ class DashboardConnectionMixin:
       if ssh:
         self._show_connected_placeholder()
         if self._active:
-          self._refresh()
-          self._timer.start()
-          self._process_timer.start()
+          if self.dashboard_pages.currentIndex() == 1:
+            self._timer.stop()
+            self._process_timer.stop()
+            self._app_connection_timer.start()
+          else:
+            self._refresh()
+            self._timer.start()
+            self._process_timer.start()
         else:
           self._bg_timer.start()
       else:
+        self._app_connection_timer.stop()
         self._timer.stop()
         self._bg_timer.stop()
         self._process_timer.stop()
