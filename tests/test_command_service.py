@@ -18,6 +18,9 @@ class Signal:
 class FakeWorker:
     def __init__(self, running=True):
         self.finished = Signal()
+        self.started = Signal()
+        self.result = Signal()
+        self.error = Signal()
         self.running = running
         self.stop_requested = False
 
@@ -68,3 +71,42 @@ def test_shutdown_cancels_registered_workers():
     service.request_worker_shutdown()
 
     assert worker.stop_requested is True
+
+
+
+def test_worker_result_updates_service_diagnostics():
+    from services.lifecycle import ServiceLifecycleManager
+
+    manager = ServiceLifecycleManager()
+    manager.register("monitoring", object())
+    service = CommandService(FakeConnection())
+    service._lifecycle_manager = manager
+    worker = FakeWorker()
+
+    service.register_worker(worker, diagnostic_key="dashboard:host-metrics")
+    worker.started.emit()
+    worker.result.emit("metrics", "", 0)
+
+    status = manager.status("monitoring")
+    assert status.last_success_at is not None
+    assert status.last_refresh_at is not None
+    assert status.last_duration_seconds is not None
+    assert status.last_error is None
+
+
+def test_worker_error_updates_service_diagnostics():
+    from services.lifecycle import ServiceLifecycleManager
+
+    manager = ServiceLifecycleManager()
+    manager.register("docker", object())
+    service = CommandService(FakeConnection())
+    service._lifecycle_manager = manager
+    worker = FakeWorker()
+
+    service.register_worker(worker, diagnostic_key="docker:list:containers")
+    worker.started.emit()
+    worker.error.emit("docker daemon unavailable")
+
+    status = manager.status("docker")
+    assert status.last_error == "docker daemon unavailable"
+    assert status.last_duration_seconds is not None
