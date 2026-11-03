@@ -1033,6 +1033,7 @@ class DashboardTab(DashboardConnectionMixin, DashboardUIMixin, DashboardRefreshM
     def set_services(self, services):
         self._services = services
         self.dashboard_service = services.dashboard
+        self._refresh_app_connections()
 
     def __init__(self, parent=None):
         super().__init__(parent)
