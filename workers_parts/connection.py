@@ -30,14 +30,15 @@ class ConnectWorker(QThread):
     connected = pyqtSignal(object, object, str)   # ssh, sftp, home_dir
     error     = pyqtSignal(str)
 
-    def __init__(self, host, port, user, pem, password):
-        # type: (str, int, str, str, str) -> None
+    def __init__(self, host, port, user, pem, password, max_ssh_connections=5):
+        # type: (str, int, str, str, str, int) -> None
         super().__init__()
         self.host     = host
         self.port     = port
         self.user     = user
         self.pem      = pem
         self.password = password
+        self.max_ssh_connections = min(5, max(2, int(max_ssh_connections)))
         self._cancelled = threading.Event()
         self._ssh_client = None
         self._sftp_client = None
@@ -181,7 +182,8 @@ class ConnectWorker(QThread):
             effective_pem = self.pem if not self.password else ""
             attach_ssh_connection_pool(
                 ssh, self.host, self.port, self.user,
-                pem=effective_pem, password=self.password
+                pem=effective_pem, password=self.password,
+                max_total_connections=self.max_ssh_connections,
             )
             if self._cancelled.is_set():
                 sftp.close()
