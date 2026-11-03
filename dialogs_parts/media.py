@@ -40,9 +40,10 @@ class MediaPlayerDialog(QDialog):
     self.setAttribute(Qt.WA_DeleteOnClose, True)
     self._embed_fullscreen = False
     self._service = service
+    self._session_generation = None
     if service is not None:
-      sftp = service.filesystem
-      ssh = service.ssh_client
+      sftp, ssh, snapshot = service.connection.get_file_session()
+      self._session_generation = snapshot.generation
     self._sftp = sftp
     self._ssh = ssh
     self._remote = remote_path
