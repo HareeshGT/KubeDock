@@ -319,7 +319,12 @@ class LogViewerDialog(QDialog):
       "printf '%s\\n' '--- kubectl top pod --containers ---'; "
       f"kubectl -n {ns_arg} top pod {pod_arg} --containers 2>&1"
     )
-    worker = CommandWorker(self.ssh, f"bash -lc {shlex.quote(inner)}", timeout=25)
+    command = f"bash -lc {shlex.quote(inner)}"
+    worker = (
+      self._service.create_worker(None, command, timeout=25)
+      if self._service is not None
+      else CommandWorker(self.ssh, command, timeout=25)
+    )
     worker.result.connect(self._on_resource_evidence)
     worker.error.connect(self._on_resource_evidence_error)
     self._evidence_worker = worker
