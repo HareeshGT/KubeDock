@@ -622,3 +622,33 @@ def test_connection_service_binds_workers_to_an_immutable_session_snapshot():
 
     connection.attach_ssh(FakeResource(), host="second.example")
     assert not worker._session_guard()
+
+
+
+def test_kubernetes_service_owns_context_flag_application():
+    connection = ConnectionService()
+    services = AppServices(connection)
+    k8s = services.kubernetes
+
+    assert k8s.context_flag("") == ""
+    assert k8s.context_flag("prod") == "--context=prod"
+    assert k8s.apply_context("  kubectl get pods", "prod") == (
+        "  kubectl --context=prod get pods"
+    )
+    assert k8s.apply_context("kubectl --context=dev get pods", "prod") == (
+        "kubectl --context=dev get pods"
+    )
+    assert k8s.apply_context("docker ps", "prod") == "docker ps"
+
+
+def test_dashboard_service_pins_each_kubectl_line_to_selected_context():
+    connection = ConnectionService()
+    services = AppServices(connection)
+    command = "kubectl get nodes\n  kubectl get pods -A\n echo done"
+
+    assert services.dashboard.contextual_command(command, "prod") == (
+        "kubectl --context=prod get nodes\n"
+        "  kubectl --context=prod get pods -A\n"
+        " echo done"
+    )
+    assert services.dashboard.contextual_command(command, "") == command
