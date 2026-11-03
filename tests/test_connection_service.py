@@ -179,6 +179,7 @@ def test_app_services_compose_domain_services_over_one_connection():
     assert services.dashboard.connection is connection
     assert services.files.connection is connection
     assert services.terminal.connection is connection
+    assert services.ai.commands is services.commands
     assert services.webapp.connection is connection
     assert services.webapp.commands is services.commands
     assert services.kubernetes.commands is services.commands
