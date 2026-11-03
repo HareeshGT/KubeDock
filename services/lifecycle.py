@@ -231,3 +231,17 @@ class ServiceLifecycleManager:
         if errors:
             raise RuntimeError("One or more services failed to stop: " +
                                ", ".join(name for name, _ in errors))
+
+
+
+def activate_lifecycle(service):
+    """Mark a bound feature service active on first real use.
+
+    Service construction stays lazy. AppServices binds the manager/name after
+    registration; feature entry points call this immediately before work.
+    """
+    manager = getattr(service, "_lifecycle_manager", None)
+    name = getattr(service, "_lifecycle_name", None)
+    if manager is not None and name:
+        return manager.start(name)
+    return None
