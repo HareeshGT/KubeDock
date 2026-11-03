@@ -467,6 +467,7 @@ class KubernetesResourcesMixin:
         self, self.ssh if self.kubernetes_service is None else None,
         ns, pod, containers[0] if containers else None,
         context=self._current_context, service=self.kubernetes_service,
+        ai_service=getattr(getattr(self, "_services", None), "ai", None),
       ).exec_()
       return
     dlg = ContainerPickerDialog(self, pod, containers)
@@ -475,6 +476,7 @@ class KubernetesResourcesMixin:
         self, self.ssh if self.kubernetes_service is None else None,
         ns, pod, dlg.selected_container(),
         context=self._current_context, service=self.kubernetes_service,
+        ai_service=getattr(getattr(self, "_services", None), "ai", None),
       ).exec_()
 
 
