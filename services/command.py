@@ -74,8 +74,17 @@ class CommandService:
                     worker.wait(remaining_ms)
             except Exception:
                 pass
+        remaining = []
+        for worker in list(self._workers):
+            try:
+                if worker.isRunning():
+                    remaining.append(worker)
+            except Exception:
+                # A finished QThread may already have processed deleteLater
+                # before its queued registry callback reaches this thread.
+                pass
         with self._workers_lock:
-            self._workers = [w for w in self._workers if getattr(w, "isRunning", lambda: False)()]
+            self._workers = remaining
 
     def create_worker(
         self,
