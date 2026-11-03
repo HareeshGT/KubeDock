@@ -1,4 +1,4 @@
-from .file_exec import _ExecStreamWorker
+from workers import ExecStreamWorker as _ExecStreamWorker
 from .common import *
 
 import json
