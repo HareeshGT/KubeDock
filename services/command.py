@@ -26,17 +26,29 @@ class CommandService:
         self._worker_started_at = {}
         self._worker_service_names = {}
 
+    @staticmethod
+    def _worker_pending_or_running(worker):
+        try:
+            if worker.isRunning():
+                return True
+        except RuntimeError:
+            return False
+        is_finished = getattr(worker, "isFinished", None)
+        if callable(is_finished):
+            try:
+                return not is_finished()
+            except RuntimeError:
+                return False
+        return False
+
     def register_worker(self, worker, *, operation_key=None, diagnostic_key=None):
         """Keep workers alive, de-duplicate operations, and collect diagnostics."""
         with self._workers_lock:
             if operation_key is not None:
                 existing = self._operation_workers.get(str(operation_key))
                 if existing is not None:
-                    try:
-                        if existing.isRunning():
-                            return existing
-                    except RuntimeError:
-                        pass
+                    if self._worker_pending_or_running(existing):
+                        return existing
                     self._operation_workers.pop(str(operation_key), None)
             if worker not in self._workers:
                 self._workers.append(worker)
@@ -260,14 +272,11 @@ class CommandService:
             with self._workers_lock:
                 existing = self._operation_workers.get(operation_token)
             if existing is not None:
-                try:
-                    if existing.isRunning():
-                        if worker_pool is not None:
-                            from workers import track_worker
-                            track_worker(worker_pool, existing)
-                        return existing
-                except RuntimeError:
-                    pass
+                if self._worker_pending_or_running(existing):
+                    if worker_pool is not None:
+                        from workers import track_worker
+                        track_worker(worker_pool, existing)
+                    return existing
 
         # Lazy imports avoid coupling service startup to Qt worker modules.
         from workers import CommandWorker, track_worker
@@ -280,10 +289,13 @@ class CommandService:
         # A concurrent caller may have registered the same key after our
         # initial lookup. Always use the authoritative object returned by
         # register_worker so we never return or track an unowned duplicate.
-        worker = self.register_worker(
+        registered_worker = self.register_worker(
             worker, operation_key=operation_token,
             diagnostic_key=diagnostic_key or operation_key,
         )
+        if registered_worker is not worker:
+            self.connection.unbind_worker(worker)
+            worker = registered_worker
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
