@@ -295,6 +295,10 @@ class CommandService:
         )
         if registered_worker is not worker:
             self.connection.unbind_worker(worker)
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
             worker = registered_worker
         if worker_pool is not None:
             track_worker(worker_pool, worker)
