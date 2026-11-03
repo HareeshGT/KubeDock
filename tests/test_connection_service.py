@@ -573,3 +573,27 @@ def test_app_services_shutdown_stops_and_joins_registered_workers():
     assert all(worker.cancelled for worker in workers)
     assert all(not worker.isRunning() for worker in workers)
     assert services.commands._workers == []
+
+
+
+def test_connection_handshake_workers_close_partial_resources_when_cancelled():
+    from workers_parts.connection import ConnectWorker, FTPConnectionWorker
+
+    ssh_worker = ConnectWorker("host", 22, "operator", "", "")
+    ssh = FakeResource()
+    sftp = FakeResource()
+    ssh_worker._ssh_client = ssh
+    ssh_worker._sftp_client = sftp
+    ssh_worker.cancel()
+    assert ssh_worker._cancelled.is_set()
+    assert sftp.close_calls == 1
+    assert ssh.close_calls == 1
+
+    ftp_worker = FTPConnectionWorker(
+        "files.example", 21, "operator", "secret",
+    )
+    filesystem = FakeResource()
+    ftp_worker._filesystem = filesystem
+    ftp_worker.cancel()
+    assert ftp_worker._cancelled.is_set()
+    assert filesystem.close_calls == 1
