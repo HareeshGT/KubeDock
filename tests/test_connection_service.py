@@ -1248,3 +1248,28 @@ def test_media_start_worker_cancels_server_created_after_dialog_closes():
     assert not ready
     assert worker._cancelled.is_set()
     assert server.stop_calls >= 1
+
+
+
+def test_ai_service_creates_and_tracks_model_test_worker(monkeypatch):
+    import ai_assist
+
+    class FakeSignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class FakeModelTestWorker:
+        def __init__(self, provider, api_key, model, parent=None):
+            self.args = (provider, api_key, model, parent)
+            self.finished = FakeSignal()
+
+    monkeypatch.setattr(ai_assist, "AIModelTestWorker", FakeModelTestWorker)
+    services = AppServices()
+    parent = object()
+
+    worker = services.ai.create_model_test_worker(
+        "openai", "test-key", "gpt-test", parent,
+    )
+
+    assert worker.args == ("openai", "test-key", "gpt-test", parent)
+    assert worker in services.commands._workers
