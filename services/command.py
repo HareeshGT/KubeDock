@@ -20,14 +20,29 @@ class CommandService:
         self._workers = []
         self._workers_lock = threading.RLock()
         self._shutting_down = False
+        self._operation_workers = {}
 
-    def register_worker(self, worker):
+    def register_worker(self, worker, *, operation_key=None):
         """Keep service-created workers alive and include them in app shutdown."""
         with self._workers_lock:
+            if operation_key is not None:
+                existing = self._operation_workers.get(str(operation_key))
+                if existing is not None:
+                    try:
+                        if existing.isRunning():
+                            return existing
+                    except RuntimeError:
+                        pass
+                    self._operation_workers.pop(str(operation_key), None)
             if worker not in self._workers:
                 self._workers.append(worker)
                 worker.finished.connect(
                     lambda w=worker: self._forget_worker(w)
+                )
+            if operation_key is not None:
+                self._operation_workers[str(operation_key)] = worker
+                worker.finished.connect(
+                    lambda key=str(operation_key), w=worker: self._forget_operation(key, w)
                 )
             shutting_down = self._shutting_down
         if shutting_down:
@@ -38,6 +53,26 @@ class CommandService:
         with self._workers_lock:
             if worker in self._workers:
                 self._workers.remove(worker)
+
+    def _forget_operation(self, key, worker):
+        with self._workers_lock:
+            if self._operation_workers.get(key) is worker:
+                self._operation_workers.pop(key, None)
+
+    def active_worker_count(self):
+        with self._workers_lock:
+            workers = tuple(self._workers)
+        active = 0
+        for worker in workers:
+            try:
+                active += int(worker.isRunning())
+            except RuntimeError:
+                continue
+        return active
+
+    def active_operation_count(self):
+        with self._workers_lock:
+            return len(self._operation_workers)
 
     @staticmethod
     def _request_worker_stop(worker):
@@ -97,7 +132,19 @@ class CommandService:
         sudo_user: Optional[str] = None,
         timeout: Optional[int] = None,
         raw: bool = False,
+        operation_key: str = None,
     ):
+        if operation_key is not None:
+            with self._workers_lock:
+                existing = self._operation_workers.get(str(operation_key))
+            if existing is not None:
+                try:
+                    if existing.isRunning():
+                        if worker_pool is not None:
+                            track_worker(worker_pool, existing)
+                        return existing
+                except RuntimeError:
+                    pass
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
@@ -110,7 +157,7 @@ class CommandService:
             timeout=timeout, raw=raw,
         )
         self.connection.bind_worker(worker, snapshot)
-        self.register_worker(worker)
+        self.register_worker(worker, operation_key=operation_key)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
