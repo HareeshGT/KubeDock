@@ -63,12 +63,18 @@ class KubernetesCoreMixin:
         tunnel_timer.start()
 
   def _context_flag(self) -> str:
+    service = getattr(self, "kubernetes_service", None)
+    if service is not None:
+      return service.context_flag(self._current_context)
     context = (self._current_context or "").strip()
     return f"--context={shlex.quote(context)}" if context else ""
 
 
   def _apply_context_to_command(self, cmd: str) -> str:
-    """Apply the selected context to a kubectl command."""
+    """Apply the selected context through the Kubernetes service."""
+    service = getattr(self, "kubernetes_service", None)
+    if service is not None:
+      return service.apply_context(cmd, self._current_context)
     if not cmd or not self._current_context:
       return cmd
     stripped = cmd.lstrip()
