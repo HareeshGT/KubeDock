@@ -60,7 +60,36 @@ class CommandWorker(QThread):
         # (Windows SSH hosts) cannot run.
         self.raw       = raw
         self._session_guard = None
+        self._cancel_event = threading.Event()
+        self._channel_lock = threading.RLock()
+        self._active_channel = None
         self.finished.connect(self.deleteLater)
+
+    def cancel(self):
+        """Cooperatively cancel the command and close its active SSH channel."""
+        self._cancel_event.set()
+        with self._channel_lock:
+            channel = self._active_channel
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+    def _set_active_channel(self, channel):
+        with self._channel_lock:
+            self._active_channel = channel
+            cancelled = self._cancel_event.is_set()
+        if cancelled:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+    def _clear_active_channel(self, channel):
+        with self._channel_lock:
+            if self._active_channel is channel:
+                self._active_channel = None
 
     def _session_is_current(self):
         guard = getattr(self, "_session_guard", None)
@@ -85,6 +114,8 @@ class CommandWorker(QThread):
         started = time.monotonic()
         operation = command_operation_label(self.cmd)
         try:
+            if self._cancel_event.is_set():
+                return
             if self._discard_stale_result():
                 return
             if self.raw:
@@ -98,27 +129,33 @@ class CommandWorker(QThread):
             # KubeDock, including Kubernetes resource navigation.
             cmd = build_prepared_command(self.cmd, self.cwd, self.sudo_user)
             with managed_exec_command(self.ssh, cmd) as (_stdin, stdout, stderr):
-                stdout.channel.settimeout(self.timeout)
+                channel = stdout.channel
+                self._set_active_channel(channel)
+                channel.settimeout(self.timeout)
                 try:
                     out = stdout.read().decode(errors="replace")
                     err = stderr.read().decode(errors="replace")
                 except Exception as read_err:
-                    self.error.emit(
-                        "Command is still running after {}s with no output — it looks like it's "
-                        "blocking in the foreground rather than exiting (raw error: {})."
-                        .format(self.timeout, read_err)
-                    )
+                    if not self._cancel_event.is_set():
+                        self.error.emit(
+                            "Command is still running after {}s with no output — it looks like it's "
+                            "blocking in the foreground rather than exiting (raw error: {})."
+                            .format(self.timeout, read_err)
+                        )
                     return
                 try:
-                    exit_code = stdout.channel.recv_exit_status()
+                    exit_code = channel.recv_exit_status()
                 except Exception:
                     exit_code = -1
+                finally:
+                    self._clear_active_channel(channel)
             if self._discard_stale_result():
                 return
             self.result.emit(out, err, exit_code)
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._cancel_event.is_set():
+                self.error.emit(str(e))
         finally:
             _LOG.debug(
                 "ssh_command_complete operation=%s raw=%s duration_ms=%.1f",
@@ -126,18 +163,25 @@ class CommandWorker(QThread):
             )
 
     def _run_raw(self):
+        if self._cancel_event.is_set():
+            return
         with managed_exec_command(self.ssh, self.cmd) as (_stdin, stdout, stderr):
-            stdout.channel.settimeout(self.timeout)
+            channel = stdout.channel
+            self._set_active_channel(channel)
+            channel.settimeout(self.timeout)
             try:
                 out = stdout.read().decode(errors="replace")
                 err = stderr.read().decode(errors="replace")
             except Exception as read_err:
-                self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
+                if not self._cancel_event.is_set():
+                    self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
                 return
             try:
-                exit_code = stdout.channel.recv_exit_status()
+                exit_code = channel.recv_exit_status()
             except Exception:
                 exit_code = -1
+            finally:
+                self._clear_active_channel(channel)
         if self._discard_stale_result():
             return
         self.result.emit(out, err, exit_code)
