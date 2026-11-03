@@ -288,6 +288,7 @@ class _TransferWorker(QThread):
         self._remote    = remote_path
         self._cancelled = False
         self._session_guard = None
+        self._handle = None
         self.finished.connect(self.deleteLater)
 
     def _session_is_current(self):
@@ -307,6 +308,13 @@ class _TransferWorker(QThread):
 
     def cancel(self):
         self._cancelled = True
+        handle = self._handle
+        if handle is not None:
+            try:
+                abort = getattr(handle, "abort", None)
+                abort() if callable(abort) else handle.close()
+            except Exception:
+                pass
 
     def run(self):
         try:
@@ -339,15 +347,28 @@ class _TransferWorker(QThread):
     # ── helpers ──────────────────────────────────────────────
     def _download(self):
         if hasattr(self._sftp, "_ftp"):
-            try: total = self._sftp.stat(self._remote).st_size
-            except Exception: total = 0
-            done = [0]
-            with open(self._local, "wb") as f:
-                def cb(data):
-                    self._ensure_session_current()
-                    if self._cancelled: return
-                    f.write(data); done[0] += len(data); self.progress.emit(done[0], total)
-                self._sftp._ftp.retrbinary("RETR " + self._sftp.normalize(self._remote), cb, blocksize=256*1024)
+            try:
+                total, _supports_rest = self._sftp.stream_probe(self._remote)
+            except Exception:
+                total = 0
+            reader = self._sftp.open_stream(self._remote)
+            self._handle = reader
+            done = 0
+            try:
+                with open(self._local, "wb") as local_file:
+                    while True:
+                        self._ensure_session_current()
+                        if self._cancelled:
+                            return
+                        data = reader.read(256 * 1024)
+                        if not data:
+                            break
+                        local_file.write(data)
+                        done += len(data)
+                        self.progress.emit(done, total)
+            finally:
+                self._handle = None
+                reader.close()
             return
         if self._sftp.sudo_user:
             # Explicit sudo-user mode: every read already runs as that user.
@@ -421,22 +442,29 @@ class _TransferWorker(QThread):
     def _upload(self):
         if hasattr(self._sftp, "_ftp"):
             total = os.path.getsize(self._local)
-            done = [0]
-
-            with open(self._local, "rb") as f:
-                def cb(data):
-                    self._ensure_session_current()
-                    if self._cancelled:
-                        return
-                    done[0] += len(data)
-                    self.progress.emit(done[0], total)
-
-                self._sftp._ftp.storbinary(
-                    "STOR " + self._sftp.normalize(self._remote),
-                    f,
-                    blocksize=256 * 1024,
-                    callback=cb,
-                )
+            writer = self._sftp.open_upload_stream(self._remote)
+            self._handle = writer
+            done = 0
+            completed = False
+            try:
+                with open(self._local, "rb") as local_file:
+                    while True:
+                        self._ensure_session_current()
+                        if self._cancelled:
+                            return
+                        data = local_file.read(256 * 1024)
+                        if not data:
+                            completed = True
+                            break
+                        writer.write(data)
+                        done += len(data)
+                        self.progress.emit(done, total)
+            finally:
+                self._handle = None
+                if completed and not self._cancelled and self._session_is_current():
+                    writer.close()
+                else:
+                    writer.abort()
             return
 
         # ── SFTP / sudo upload ───────────────────────────────────
