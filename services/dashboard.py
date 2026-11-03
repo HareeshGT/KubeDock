@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 import shlex
 
-from utils import size_fmt
-
 from .lifecycle import activate_lifecycle
 
 
@@ -39,6 +37,15 @@ class DashboardService:
             diagnostic_key=operation_key or "dashboard:collection",
         )
 
+
+    @staticmethod
+    def _size_fmt(value):
+        number = float(value)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if number < 1024:
+                return "{} {}".format(int(number), unit) if unit == "B" else "{:.1f} {}".format(number, unit)
+            number /= 1024
+        return "{:.1f} PB".format(number)
 
     @staticmethod
     def _split_sections(output):
@@ -104,7 +111,7 @@ class DashboardService:
         m = re.search(r"KiB Mem\s*:\s*([\d]+)\s+([\d]+)\s+([\d]+)\s+([\d]+)", text, re.I)
         if m:
           total, free, used, cache = map(int, m.groups())
-          fmt = lambda k: size_fmt(k * 1024)
+          fmt = lambda k: DashboardService._size_fmt(k * 1024)
           result["memory"] = f"{fmt(used)} / {fmt(total)}"
           result["memory_detail"] = f"Used {fmt(used)} · Free {fmt(free)} · Cache {fmt(cache)}"
         else:
