@@ -15,6 +15,7 @@ from .terminal import TerminalService
 from .ai import AIService
 from .webapp import WebAppService
 from .lifecycle import ServiceLifecycleManager
+from .persistence import DatabaseService, SettingsService
 
 
 class AppServices:
@@ -25,6 +26,8 @@ class AppServices:
     """
 
     def __init__(self, connection: Optional[ConnectionService] = None):
+        self.database = DatabaseService()
+        self.settings = SettingsService(self.database)
         self.connection = connection or ConnectionService()
         self.commands = CommandService(self.connection)
         self.kubernetes = KubernetesService(self.connection, self.commands)
@@ -35,6 +38,8 @@ class AppServices:
         self.ai = AIService(self.commands)
         self.webapp = WebAppService(self.connection, self.commands)
         self.lifecycle = ServiceLifecycleManager()
+        self.lifecycle.register("database", self.database)
+        self.lifecycle.register("settings", self.settings, dependencies=("database",))
         self.lifecycle.register("connection", self.connection)
         self.lifecycle.register("commands", self.commands, dependencies=("connection",))
         self.lifecycle.register("kubernetes", self.kubernetes, dependencies=("commands",))
@@ -45,6 +50,8 @@ class AppServices:
         self.lifecycle.register("ai", self.ai)
         self.lifecycle.register("webapp", self.webapp, dependencies=("connection", "commands"))
         for name, service in (
+            ("database", self.database),
+            ("settings", self.settings),
             ("connection", self.connection),
             ("commands", self.commands),
             ("kubernetes", self.kubernetes),
