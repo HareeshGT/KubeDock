@@ -43,7 +43,11 @@ class AppServices:
             if self._stopped:
                 return
             self._stopped = True
+        # Ask every service-owned worker to stop before closing its transport;
+        # closing the shared session then releases any blocked network reads.
+        self.commands.request_worker_shutdown()
         self.connection.disconnect()
+        self.commands.wait_for_workers(timeout_seconds=3.0)
 
     @property
     def stopped(self) -> bool:
