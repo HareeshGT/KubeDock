@@ -462,7 +462,7 @@ class KubernetesResourcesMixin:
     containers = out.strip().strip("'").split()
     if len(containers) <= 1:
       ExecDialog(self, self.ssh, ns, pod, containers[0] if containers else None,
-            context=self._current_context).exec_()
+            context=self._current_context, service=self.kubernetes_service).exec_()
       return
     dlg = ContainerPickerDialog(self, pod, containers)
     if dlg.exec_() == QDialog.Accepted:
