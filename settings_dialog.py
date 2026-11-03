@@ -1,12 +1,14 @@
 """settings_dialog.py — App-wide Settings dialog."""
 
 from pathlib import Path
+import time
 from PyQt5.QtCore import QEvent, QTimer, Qt, QUrl
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QComboBox, QTabBar, QTabWidget, QWidget, QScrollArea, QDialogButtonBox,
     QFrame, QLineEdit, QApplication, QListWidget, QInputDialog, QMessageBox,
-    QSpinBox, QGroupBox, QGridLayout, QFormLayout,
+    QSpinBox, QGroupBox, QGridLayout, QFormLayout, QTableWidget,
+    QTableWidgetItem, QHeaderView,
 )
 from PyQt5.QtGui import QFont, QDesktopServices
 from db import APP_DIR, connect as db_connect
@@ -340,6 +342,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_k8s_tab(), "⎈ Kubernetes")
         tabs.addTab(self._build_ai_tab(), "🤖 AI")
         tabs.addTab(self._build_webapp_tab(), "🌐 Web App")
+        tabs.addTab(self._build_service_status_tab(), "⚙ Service Status")
         tabs.tabBar().setExpanding(False)
         tabs.setUsesScrollButtons(True)
         lay.addWidget(tabs, 1)
@@ -350,6 +353,54 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self._on_save)
         btns.rejected.connect(self.reject)
         lay.addWidget(btns)
+
+    def _build_service_status_tab(self):
+        """Show a read-only snapshot of in-process service health."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        heading = QLabel("Application service health")
+        heading.setStyleSheet(f"color: {T['TEXT_PRIMARY']}; font-weight: 600;")
+        layout.addWidget(heading)
+        note = QLabel(
+            "Services are created in-process. Optional background work starts "
+            "only when its feature is used. This snapshot contains no credentials."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {T['TEXT_MUTED']};")
+        layout.addWidget(note)
+
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(
+            ["Service", "State", "Workers", "Last success", "Last error"]
+        )
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        services = getattr(self.parent(), "services", None)
+        statuses = services.service_status() if services is not None else {}
+        for name, status in statuses.items():
+            row = table.rowCount()
+            table.insertRow(row)
+            values = (
+                name.replace("_", " ").title(),
+                status.state.value,
+                str(status.worker_count),
+                (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status.last_success_at))
+                 if status.last_success_at else "—"),
+                status.last_error or "—",
+            )
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(value))
+        if not statuses:
+            table.setRowCount(1)
+            table.setItem(0, 0, QTableWidgetItem("Service runtime unavailable"))
+        layout.addWidget(table, 1)
+        return page
 
     def _build_general_tab(self):
         w = QWidget()
