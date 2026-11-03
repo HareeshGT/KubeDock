@@ -308,6 +308,15 @@ def test_command_worker_discards_result_after_connection_generation_changes(monk
 
     assert errors and "active connection changed" in errors[0].lower()
 
+    replacement = FakeResource()
+    replacement_snapshot = connection.attach_ssh(
+        replacement, host="second.example",
+    )
+    replacement_worker = services.commands.create_worker(None, "uname -a")
+    assert replacement_worker._session_is_current()
+    assert replacement_worker.connection_generation == replacement_snapshot.generation
+    assert replacement_worker.connection_session_id == replacement_snapshot.session_id
+
 
 class FakeDirectoryFilesystem(FakeFilesystem):
     def listdir_attr(self, path):
