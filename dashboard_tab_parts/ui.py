@@ -1,4 +1,5 @@
 from dashboard_tab import *
+from PyQt5.QtWidgets import QStackedWidget
 from dashboard_tab import (
   _dashboard_text, _pct_color, _NodeGridContainer,
 )
@@ -25,8 +26,8 @@ class DashboardUIMixin:
       # Page header: 22px title + secondary subtitle (design-system hierarchy)
       title_col = QVBoxLayout()
       title_col.setSpacing(0)
-      self.page_title_lbl = QLabel("Dashboard")
-      self.page_sub_lbl = QLabel("Live infrastructure overview")
+      self.page_title_lbl = QLabel("Connected Machine")
+      self.page_sub_lbl = QLabel("Live host and Kubernetes infrastructure")
       title_col.addWidget(self.page_title_lbl)
       title_col.addWidget(self.page_sub_lbl)
       cb.addLayout(title_col)
@@ -42,7 +43,7 @@ class DashboardUIMixin:
       self.refresh_btn = icon_button(" Refresh")
       self.refresh_btn.setObjectName("primary")
       self.refresh_btn.setFixedHeight(28)
-      self.refresh_btn.clicked.connect(self._refresh)
+      self.refresh_btn.clicked.connect(self._refresh_current_view)
       cb.addWidget(self.refresh_btn)
   
       root.addWidget(self.ctrl_bar)
@@ -436,8 +437,34 @@ class DashboardUIMixin:
       self._render_history()
       self._content_layout.addStretch()
       scroll.setWidget(content)
-      root.addWidget(scroll)
-  
+      # Dashboard now has two focused views: the shared application
+      # connection/runtime view and the connected machine view. Keep the
+      # existing machine dashboard intact inside its own stacked page.
+      self.dashboard_view_bar = QWidget()
+      self.dashboard_view_bar.setObjectName("dashboard_view_bar")
+      view_bar_layout = QHBoxLayout(self.dashboard_view_bar)
+      view_bar_layout.setContentsMargins(16, 8, 16, 0)
+      view_bar_layout.setSpacing(8)
+      self.machine_view_btn = QPushButton("Connected Machine")
+      self.machine_view_btn.setCheckable(True)
+      self.machine_view_btn.setChecked(True)
+      self.machine_view_btn.clicked.connect(lambda: self._set_dashboard_view(0))
+      self.app_connections_view_btn = QPushButton("App Connections")
+      self.app_connections_view_btn.setCheckable(True)
+      self.app_connections_view_btn.clicked.connect(lambda: self._set_dashboard_view(1))
+      view_bar_layout.addWidget(self.machine_view_btn)
+      view_bar_layout.addWidget(self.app_connections_view_btn)
+      view_bar_layout.addStretch(1)
+      root.addWidget(self.dashboard_view_bar)
+
+      self.dashboard_pages = QStackedWidget()
+      self.dashboard_pages.addWidget(scroll)
+      self._build_app_connections_page()
+      root.addWidget(self.dashboard_pages, 1)
+      self._app_connection_timer = QTimer(self)
+      self._app_connection_timer.setInterval(2000)
+      self._app_connection_timer.timeout.connect(self._refresh_app_connections)
+
       self.vm_card["frame"].hide()
       self.process_card["frame"].hide()
       self.k8s_summary_card["frame"].hide()
@@ -455,6 +482,231 @@ class DashboardUIMixin:
       self._styled_palette = snapshot_palette()
   
   
+  def _build_app_connections_page(self):
+      """Build the application-owned connection and service activity view."""
+      scroll = QScrollArea()
+      scroll.setWidgetResizable(True)
+      scroll.setFrameShape(QFrame.NoFrame)
+      content = QWidget()
+      layout = QVBoxLayout(content)
+      layout.setContentsMargins(16, 16, 16, 16)
+      layout.setSpacing(16)
+
+      self.app_connection_empty = QLabel(
+        "No active remote connection. Connect to a server to see application connection details."
+      )
+      self.app_connection_empty.setAlignment(Qt.AlignCenter)
+      self.app_connection_empty.setWordWrap(True)
+      self.app_connection_empty.setStyleSheet(
+        f"color: {_dashboard_text('muted')}; padding: 28px; font-size: 13px;"
+      )
+      layout.addWidget(self.app_connection_empty)
+
+      self.app_connection_card = self._make_card(" Application Connection")
+      grid = QGridLayout()
+      grid.setHorizontalSpacing(12)
+      grid.setVerticalSpacing(10)
+      self._app_connection_values = {}
+      for index, (key, caption) in enumerate((
+        ("state", "Connection status"),
+        ("protocol", "Protocol"),
+        ("target", "Remote endpoint"),
+        ("identity", "Connected user"),
+        ("uptime", "Session uptime"),
+        ("latency", "Connection latency"),
+        ("alias", "Connection profile"),
+        ("generation", "Session generation"),
+      )):
+        tile = QFrame()
+        tile.setObjectName("app_connection_tile")
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(12, 9, 12, 9)
+        tile_layout.setSpacing(3)
+        value = QLabel("—")
+        value.setWordWrap(True)
+        caption_lbl = QLabel(caption)
+        tile_layout.addWidget(value)
+        tile_layout.addWidget(caption_lbl)
+        grid.addWidget(tile, index // 4, index % 4)
+        self._app_connection_values[key] = (value, caption_lbl, tile)
+      self.app_connection_card["body"].addLayout(grid)
+      self.app_connection_error = QLabel("")
+      self.app_connection_error.setWordWrap(True)
+      self.app_connection_card["body"].addWidget(self.app_connection_error)
+      layout.addWidget(self.app_connection_card["frame"])
+
+      self.ssh_pool_card = self._make_card(" SSH Connection Pool")
+      pool_grid = QGridLayout()
+      pool_grid.setHorizontalSpacing(12)
+      pool_grid.setVerticalSpacing(10)
+      self._ssh_pool_values = {}
+      for index, (key, caption) in enumerate((
+        ("total", "Active SSH connections"),
+        ("maximum", "Configured maximum"),
+        ("secondary", "Secondary connections"),
+        ("channels", "Active command channels"),
+        ("capacity", "Secondary channel capacity"),
+        ("utilization", "Channel utilization"),
+      )):
+        tile = QFrame()
+        tile.setObjectName("app_connection_tile")
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(12, 9, 12, 9)
+        tile_layout.setSpacing(3)
+        value = QLabel("—")
+        caption_lbl = QLabel(caption)
+        tile_layout.addWidget(value)
+        tile_layout.addWidget(caption_lbl)
+        pool_grid.addWidget(tile, index // 3, index % 3)
+        self._ssh_pool_values[key] = (value, caption_lbl, tile)
+      self.ssh_pool_card["body"].addLayout(pool_grid)
+      self.ssh_pool_policy_lbl = QLabel(
+        "Hybrid pooling · least-loaded channel assignment · scales out on demand · idle secondary connections close automatically"
+      )
+      self.ssh_pool_policy_lbl.setWordWrap(True)
+      self.ssh_pool_card["body"].addWidget(self.ssh_pool_policy_lbl)
+      layout.addWidget(self.ssh_pool_card["frame"])
+
+      self.service_activity_card = self._make_card(" Feature Activity")
+      self.service_activity_tree = QTreeWidget()
+      self.service_activity_tree.setColumnCount(3)
+      self.service_activity_tree.setHeaderLabels(
+        ["Application service", "Active operations", "Registered workers"]
+      )
+      self._style_tree(self.service_activity_tree)
+      self.service_activity_tree.setRootIsDecorated(False)
+      self.service_activity_tree.setAlternatingRowColors(True)
+      self.service_activity_tree.setMinimumHeight(240)
+      self.service_activity_tree.setMaximumHeight(390)
+      self.service_activity_card["body"].addWidget(self.service_activity_tree)
+      layout.addWidget(self.service_activity_card["frame"])
+      layout.addStretch(1)
+      scroll.setWidget(content)
+      self.dashboard_pages.addWidget(scroll)
+
+      self._refresh_app_connections()
+
+  def _set_dashboard_view(self, index):
+      """Switch between app-owned connections and the connected machine."""
+      index = 1 if int(index) == 1 else 0
+      self.dashboard_pages.setCurrentIndex(index)
+      self.machine_view_btn.setChecked(index == 0)
+      self.app_connections_view_btn.setChecked(index == 1)
+      if index == 0:
+        self.page_title_lbl.setText("Connected Machine")
+        self.page_sub_lbl.setText("Live host and Kubernetes infrastructure")
+        self._app_connection_timer.stop()
+        if self._active and self.ssh:
+          self._resume_focused()
+          self._timer.start()
+          self._process_timer.start()
+        elif self._active and self.ftp:
+          self._refresh_ftp()
+          self._timer.start()
+      else:
+        self.page_title_lbl.setText("App Connections")
+        self.page_sub_lbl.setText("Shared connections, SSH pool and feature activity")
+        self._timer.stop()
+        self._process_timer.stop()
+        self._refresh_app_connections()
+        if self._active and (self.ssh or self.ftp):
+          self._app_connection_timer.start()
+      self._update_live_label()
+
+  def _refresh_current_view(self):
+      if getattr(self, "dashboard_pages", None) is not None and self.dashboard_pages.currentIndex() == 1:
+        self._refresh_app_connections()
+      else:
+        self._refresh()
+
+  def _refresh_app_connections(self):
+      """Render a safe snapshot of ConnectionService and shared worker usage."""
+      service = getattr(self, "dashboard_service", None)
+      overview = service.connection_overview() if service is not None else {}
+      state = str(overview.get("state") or "disconnected").lower()
+      protocol = str(overview.get("protocol") or "—").upper()
+      active = state in ("connected", "degraded")
+      connected_at = overview.get("connected_at")
+      uptime = "—"
+      if connected_at:
+        try:
+          seconds = max(0, int(time.time() - float(connected_at)))
+          days, remainder = divmod(seconds, 86400)
+          hours, remainder = divmod(remainder, 3600)
+          minutes, _ = divmod(remainder, 60)
+          uptime = (f"{days}d " if days else "") + f"{hours}h {minutes}m"
+        except (TypeError, ValueError, OverflowError):
+          uptime = "—"
+      latency = overview.get("latency_ms")
+      values = {
+        "state": state.replace("_", " ").title() if active else "Disconnected",
+        "protocol": protocol,
+        "target": (
+          f"{overview.get('host', '—')}:{overview.get('port')}"
+          if overview.get("port") else overview.get("host", "—")
+        ),
+        "identity": overview.get("username", "—"),
+        "uptime": uptime,
+        "latency": f"{float(latency):.1f} ms" if latency is not None else "Not measured",
+        "alias": overview.get("alias", "—"),
+        "generation": str(overview.get("generation", 0)),
+      }
+      for key, value in values.items():
+        self._app_connection_values[key][0].setText(str(value))
+      state_color = (
+        T["SUCCESS"] if state == "connected"
+        else T["WARNING"] if state == "degraded"
+        else _dashboard_text("muted")
+      )
+      self._app_connection_values["state"][0].setStyleSheet(
+        f"color: {state_color}; font-size: 16px; font-weight: 700;"
+      )
+      self.app_connection_empty.setVisible(not active)
+      self.app_connection_error.setText(
+        f"Last connection issue: {overview.get('last_error')}"
+        if overview.get("last_error") else ""
+      )
+      self.app_connection_error.setStyleSheet(
+        f"color: {T['DANGER']}; font-size: 11px;" if overview.get("last_error") else ""
+      )
+
+      pool = overview.get("pool") or {}
+      is_ssh = active and protocol == "SSH"
+      total = int(pool.get("total_connections", 0) or 0) if is_ssh else 0
+      maximum = int(pool.get("max_connections", 5) or 5) if is_ssh else 5
+      secondary = int(pool.get("secondary_connections", 0) or 0) if is_ssh else 0
+      channels = int(pool.get("active_channels", 0) or 0) if is_ssh else 0
+      capacity = int(pool.get("channel_capacity", 0) or 0) if is_ssh else 0
+      utilization = f"{(channels / capacity) * 100:.0f}%" if capacity else "—"
+      pool_values = {
+        "total": f"{total} / {maximum}" if is_ssh else "Not applicable",
+        "maximum": str(maximum) if is_ssh else "—",
+        "secondary": str(secondary) if is_ssh else "—",
+        "channels": str(channels) if is_ssh else "—",
+        "capacity": str(capacity) if is_ssh else "—",
+        "utilization": utilization if is_ssh else "—",
+      }
+      for key, value in pool_values.items():
+        self._ssh_pool_values[key][0].setText(value)
+      self.ssh_pool_card["frame"].setVisible(is_ssh)
+      self.app_connection_card["frame"].setVisible(active)
+
+      activity = overview.get("activity") or []
+      tree = self.service_activity_tree
+      tree.setUpdatesEnabled(False)
+      tree.clear()
+      for item in activity:
+        from PyQt5.QtWidgets import QTreeWidgetItem
+        row = QTreeWidgetItem([
+          str(item.get("service", "—")),
+          str(item.get("active_operations", 0)),
+          str(item.get("registered_workers", 0)),
+        ])
+        tree.addTopLevelItem(row)
+      tree.setUpdatesEnabled(True)
+      self.service_activity_card["frame"].setVisible(active)
+      self.updated_lbl.setText(f"Updated {time.strftime('%H:%M:%S')}")
+
   def _make_card(self, title: str, icon: str = None) -> dict:
       frame = QFrame()
       frame.setObjectName("dash_card")
@@ -687,7 +939,9 @@ class DashboardUIMixin:
       self.page_sub_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 11px;")
       for frame in (self.vm_card["frame"], self.k8s_summary_card["frame"],
               self.workloads_card["frame"], self.services_card["frame"],
-              self.events_card["frame"], self.k8s_card["frame"], self.process_card["frame"]):
+              self.events_card["frame"], self.k8s_card["frame"], self.process_card["frame"],
+              self.app_connection_card["frame"], self.ssh_pool_card["frame"],
+              self.service_activity_card["frame"]):
         frame.setStyleSheet(
           f"QFrame#dash_card {{ background: {T['BG_PANEL']}; "
           f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
@@ -706,6 +960,32 @@ class DashboardUIMixin:
         tile.setStyleSheet(
           f"QFrame#ftp_metric_tile {{ background: {T['BG_PANEL']}; "
           f"border: 1px solid {T['BORDER']}; border-radius: 10px; }}")
+      for tile in self.findChildren(QFrame, "app_connection_tile"):
+        tile.setStyleSheet(
+          f"QFrame#app_connection_tile {{ background: {T['BG_DARK']}; "
+          f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}")
+      for value, caption, _tile in (
+        list(self._app_connection_values.values()) + list(self._ssh_pool_values.values())
+      ):
+        value.setStyleSheet(
+          f"color: {_dashboard_text('primary')}; font-size: 16px; font-weight: 700;"
+        )
+        caption.setStyleSheet(
+          f"color: {_dashboard_text('muted')}; font-size: 10px; font-weight: 600;"
+        )
+      self.ssh_pool_policy_lbl.setStyleSheet(
+        f"color: {_dashboard_text('muted')}; font-size: 11px;"
+      )
+      for button, selected in (
+        (self.machine_view_btn, self.dashboard_pages.currentIndex() == 0),
+        (self.app_connections_view_btn, self.dashboard_pages.currentIndex() == 1),
+      ):
+        button.setStyleSheet(
+          f"QPushButton {{ padding: 7px 14px; border: 1px solid {T['BORDER']}; "
+          f"border-radius: 7px; color: {_dashboard_text('muted')}; background: {T['BG_PANEL']}; }}"
+          f"QPushButton:checked {{ color: {T['TEXT_PRIMARY']}; border-color: {T['ACCENT']}; "
+          f"background: {T['BG_HOVER']}; font-weight: 700; }}"
+        )
       refresh_theme_icons(self)
       self._update_live_label()
   

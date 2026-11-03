@@ -56,11 +56,15 @@ class DashboardConnectionMixin:
       self._history = []
       self._last_history_time = 0
       self._render_history()
+      self._refresh_app_connections()
       if fs:
         self._show_ftp_placeholder()
         if self._active:
-          self._refresh_ftp()
-          self._timer.start()
+          if self.dashboard_pages.currentIndex() == 1:
+            self._app_connection_timer.start()
+          else:
+            self._refresh_ftp()
+            self._timer.start()
       else:
         self._timer.stop()
         self._process_timer.stop()
@@ -177,15 +181,22 @@ class DashboardConnectionMixin:
       self._history = self._load_history()
       self._last_history_time = 0
       self._render_history()
+      self._refresh_app_connections()
       if ssh:
         self._show_connected_placeholder()
         if self._active:
-          self._refresh()
-          self._timer.start()
-          self._process_timer.start()
+          if self.dashboard_pages.currentIndex() == 1:
+            self._timer.stop()
+            self._process_timer.stop()
+            self._app_connection_timer.start()
+          else:
+            self._refresh()
+            self._timer.start()
+            self._process_timer.start()
         else:
           self._bg_timer.start()
       else:
+        self._app_connection_timer.stop()
         self._timer.stop()
         self._bg_timer.stop()
         self._process_timer.stop()
@@ -238,15 +249,33 @@ class DashboardConnectionMixin:
         # in-flight background cycle.
         return
       self._active = active
+      app_view = (
+        getattr(self, "dashboard_pages", None) is not None
+        and self.dashboard_pages.currentIndex() == 1
+      )
       if active and self.ssh:
         self._bg_timer.stop()
-        self._resume_focused()
-        self._timer.start()
-        self._process_timer.start()
+        if app_view:
+          self._timer.stop()
+          self._process_timer.stop()
+          self._refresh_app_connections()
+          self._app_connection_timer.start()
+        else:
+          self._app_connection_timer.stop()
+          self._resume_focused()
+          self._timer.start()
+          self._process_timer.start()
       elif active and self.ftp:
-        self._refresh_ftp()
-        self._timer.start()
+        if app_view:
+          self._timer.stop()
+          self._app_connection_timer.start()
+          self._refresh_app_connections()
+        else:
+          self._app_connection_timer.stop()
+          self._refresh_ftp()
+          self._timer.start()
       else:
+        self._app_connection_timer.stop()
         self._timer.stop()
         self._process_timer.stop()
         self._process_generation += 1
@@ -298,6 +327,7 @@ class DashboardConnectionMixin:
       self._timer.stop()
       self._bg_timer.stop()
       self._process_timer.stop()
+      self._app_connection_timer.stop()
       self._process_generation += 1
       self._process_busy = False
       self._snapshot_generation += 1

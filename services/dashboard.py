@@ -18,6 +18,55 @@ class DashboardService:
             self.commands.stop_service("monitoring")
 
 
+    def connection_overview(self):
+        """Return safe app-connection and feature-activity diagnostics.
+
+        This deliberately excludes credentials, raw clients, private-key
+        paths, and command contents so the UI can render the shared runtime
+        state without reaching into transport internals.
+        """
+        snapshot = getattr(self.connection, "snapshot", None)
+        pool_status = getattr(self.connection, "pool_status", None)
+        pool = pool_status() if callable(pool_status) else {}
+        worker_counts = getattr(self.commands, "worker_counts_by_service", None)
+        operation_counts = getattr(self.commands, "active_operation_counts_by_service", None)
+        workers = worker_counts() if callable(worker_counts) else {}
+        operations = operation_counts() if callable(operation_counts) else {}
+        feature_names = (
+            ("kubernetes", "Kubernetes"),
+            ("docker", "Docker"),
+            ("monitoring", "Dashboard"),
+            ("files", "File Manager"),
+            ("terminal", "Terminal"),
+            ("ai", "AI Assistant"),
+            ("webapp", "Web App"),
+            ("commands", "Other Commands"),
+        )
+        activity = [
+            {
+                "service": label,
+                "active_operations": int(operations.get(key, 0) or 0),
+                "registered_workers": int(workers.get(key, 0) or 0),
+            }
+            for key, label in feature_names
+        ]
+        return {
+            "state": getattr(snapshot, "state", "disconnected"),
+            "protocol": getattr(snapshot, "protocol", "") or "—",
+            "host": getattr(snapshot, "host", "") or "—",
+            "port": getattr(snapshot, "port", None),
+            "username": getattr(snapshot, "username", "") or "—",
+            "alias": getattr(snapshot, "alias", "") or "—",
+            "generation": int(getattr(snapshot, "generation", 0) or 0),
+            "connected_at": getattr(snapshot, "connected_at", None),
+            "latency_ms": getattr(snapshot, "latency_ms", None),
+            "last_error": getattr(snapshot, "last_error", None),
+            "pool": dict(pool or {}),
+            "activity": activity,
+            "active_operations": sum(item["active_operations"] for item in activity),
+            "registered_workers": sum(item["registered_workers"] for item in activity),
+        }
+
     def contextual_command(self, command, context):
         """Pin every top-level kubectl invocation to the selected context."""
         value = str(context or "").strip()
