@@ -9,6 +9,11 @@ class DockerService:
     def __init__(self, connection, commands):
         self.connection = connection
         self.commands = commands
+    def stop(self):
+        """Cancel background work owned by this feature service."""
+        if self.commands is not None:
+            self.commands.stop_service("docker")
+
 
     def create_worker(
         self, worker_pool, command, *, sudo_user=None, timeout=None,
