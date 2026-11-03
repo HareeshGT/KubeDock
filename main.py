@@ -71,16 +71,20 @@ def main() -> int:
     splash = SplashScreen()
     window_ref = {}
 
-    # The web server lives with the desktop process. It receives a callback
-    # to the current KubeDockWindow.ssh object, so reconnecting in KubeDock
-    # automatically changes the SSH connection used by the web app too.
+    # The web server lives with the desktop process and obtains its SSH
+    # session from the shared ConnectionService. Reconnecting or disconnecting
+    # in the desktop UI therefore updates every consumer of that session.
     app.aboutToQuit.connect(webapp_app.stop_server)
 
     def _begin_zoom():
         window = KubeDockWindow()
         window_ref["window"] = window
         if load_settings().get("webapp_enabled", False):
-            webapp_app.start_server(lambda: getattr(window, "ssh", None))
+            webapp_app.start_server(
+                window.services.webapp.ssh_provider,
+                app_provider=lambda: window,
+                webapp_service=window.services.webapp,
+            )
 
         window.setWindowOpacity(0.0)
         window.showFullScreen()

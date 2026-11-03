@@ -4,9 +4,10 @@ from .common import *
 class FileEditorDialog(QDialog):
   """Remote file editor with find/replace, line numbers, and save-back."""
 
-  def __init__(self, parent, sftp, ssh, remote_path: str, content=None, sudo_user=None):
+  def __init__(self, parent, sftp, ssh, remote_path: str, content=None, sudo_user=None, service=None):
     super().__init__(parent)
-    self._sftp   = sftp
+    self._service = service
+    self._sftp   = sftp if service is None else None
     self._ssh    = ssh
     self._remote  = remote_path
     self._sudo_user = sudo_user
@@ -27,7 +28,11 @@ class FileEditorDialog(QDialog):
     self._pending_bytes   = None
     self._remote_size = None
     try:
-      self._remote_size = int(self._sftp.stat(remote_path).st_size)
+      remote_stat = (
+        service.stat(remote_path) if service is not None
+        else self._sftp.stat(remote_path)
+      )
+      self._remote_size = int(remote_stat.st_size)
     except Exception:
       pass
     self._large_file = bool(self._remote_size and self._remote_size >= self.LARGE_FILE_BYTES)
@@ -587,9 +592,16 @@ class FileEditorDialog(QDialog):
     except Exception:
       pass
 
-    self._load_worker = FileStreamReadWorker(
-      self._sftp, self._ssh, self._remote,
-      sudo_user=self._sudo_user, max_bytes=self.MAX_EDIT_BYTES,
+    self._load_worker = (
+      self._service.create_stream_reader(
+        self._remote, sudo_user=self._sudo_user,
+        max_bytes=self.MAX_EDIT_BYTES,
+      )
+      if self._service is not None
+      else FileStreamReadWorker(
+        self._sftp, self._ssh, self._remote,
+        sudo_user=self._sudo_user, max_bytes=self.MAX_EDIT_BYTES,
+      )
     )
     self._load_worker.chunk_ready.connect(self._on_load_chunk)
     self._load_worker.progress.connect(self._on_load_progress)
@@ -887,7 +899,9 @@ class FileEditorDialog(QDialog):
     self._do_highlight()
 
   def _write_remote_bytes(self, data: bytes):
-    """Save through the active filesystem adapter."""
+    """Save through the active filesystem service or compatibility adapter."""
+    if self._service is not None:
+      return self._service.write_bytes(self._remote, data)
     if hasattr(self._sftp, "write_bytes"):
       self._sftp.write_bytes(self._remote, data)
     elif hasattr(self._sftp, "_ftp"):
@@ -1041,7 +1055,7 @@ class FileEditorDialog(QDialog):
   MAX_EDIT_BYTES = 100 * 1024 * 1024
 
   @classmethod
-  def open_remote(cls, parent, sftp, ssh, remote_path: str, sudo_user=None):
+  def open_remote(cls, parent, sftp, ssh, remote_path: str, sudo_user=None, service=None):
     """Opens *remote_path* for editing immediately — the editor window
     appears right away and the file's content streams in live from a
     background FileStreamReadWorker (see _start_live_load), instead of
@@ -1049,7 +1063,10 @@ class FileEditorDialog(QDialog):
     start reading/scrolling as soon as the first chunks land; Save
     stays disabled until the whole file has arrived.
     """
-    dlg = cls(parent, sftp, ssh, remote_path, content=None, sudo_user=sudo_user)
+    dlg = cls(
+      parent, sftp, ssh, remote_path, content=None,
+      sudo_user=sudo_user, service=service,
+    )
     dlg.exec_()
     dlg._release_resources()
     return dlg

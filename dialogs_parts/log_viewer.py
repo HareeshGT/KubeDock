@@ -1,4 +1,4 @@
-from .file_exec import _ExecStreamWorker
+from workers import ExecStreamWorker as _ExecStreamWorker
 from .common import *
 
 import json
@@ -12,9 +12,10 @@ class LogViewerDialog(QDialog):
   keep pushing new lines into the view as they arrive over SSH, rather
   than requiring the user to click Refresh."""
 
-  def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context=None):
+  def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context=None, service=None):
     super().__init__(parent)
     self.ssh      = ssh
+    self._service = service
     self._pod      = pod
     self._ns      = namespace
     self._container   = container
@@ -134,7 +135,11 @@ class LogViewerDialog(QDialog):
       self.log_view.setPlainText("Loading…")
       self.status_lbl.setText("○ static (previous container)")
       self.status_lbl.setStyleSheet(f"color: {T['TEXT_DIM']};")
-      worker = CommandWorker(self.ssh, cmd)
+      worker = (
+        self._service.create_worker(None, cmd)
+        if self._service is not None
+        else CommandWorker(self.ssh, cmd)
+      )
       worker.done.connect(self.log_view.setPlainText)
       worker.error.connect(lambda e: self.log_view.setPlainText(f"[error] {e}"))
       track_worker(self._workers, worker)
@@ -145,7 +150,11 @@ class LogViewerDialog(QDialog):
     self.status_lbl.setText("● live")
     self.status_lbl.setStyleSheet(f"color: {T['SUCCESS']};")
 
-    worker = _ExecStreamWorker(self.ssh, cmd)
+    worker = (
+      self._service.create_log_stream_worker(cmd)
+      if self._service is not None
+      else _ExecStreamWorker(self.ssh, cmd)
+    )
     worker.line.connect(self._on_stream_line)
     worker.error.connect(self._on_stream_error)
     worker.finished.connect(self._on_stream_finished)
@@ -310,7 +319,12 @@ class LogViewerDialog(QDialog):
       "printf '%s\\n' '--- kubectl top pod --containers ---'; "
       f"kubectl -n {ns_arg} top pod {pod_arg} --containers 2>&1"
     )
-    worker = CommandWorker(self.ssh, f"bash -lc {shlex.quote(inner)}", timeout=25)
+    command = f"bash -lc {shlex.quote(inner)}"
+    worker = (
+      self._service.create_worker(None, command, timeout=25)
+      if self._service is not None
+      else CommandWorker(self.ssh, command, timeout=25)
+    )
     worker.result.connect(self._on_resource_evidence)
     worker.error.connect(self._on_resource_evidence_error)
     self._evidence_worker = worker

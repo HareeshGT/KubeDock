@@ -176,8 +176,9 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(True)
             self._execute_action(followup['action'])
             return
-        provider = ai_assist.get_provider()
-        api_key = ai_assist.get_api_key(provider)
+        ai_service = getattr(self, "ai_service", None)
+        provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
+        api_key = ai_service.api_key(provider) if ai_service is not None else ai_assist.get_api_key(provider)
         if not api_key:
             label = ai_assist.PROVIDERS.get(provider, {}).get('label', provider)
             QMessageBox.information(self, 'No API key set', f'Add a {label} API key in Settings → AI to use AI Kubernetes Operations.')
@@ -192,10 +193,19 @@ class K8sAIOpsOperationsMixin:
         self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')}</span>""")
         self._set_busy(True)
         self._speak('Processing your request.')
-        worker = K8sAIInterpretWorker(
-            provider, api_key, ai_assist.get_model(provider), request,
-            namespace, context, history_for_context,
-            conversation=getattr(self, '_voice_conversation', []),
+        model = ai_service.model(provider) if ai_service is not None else ai_assist.get_model(provider)
+        worker = (
+            self.ai_service.create_kubernetes_interpret_worker(
+                provider, api_key, model, request, namespace, context,
+                history_for_context,
+                conversation=getattr(self, '_voice_conversation', []),
+            )
+            if getattr(self, "ai_service", None) is not None
+            else K8sAIInterpretWorker(
+                provider, api_key, model, request,
+                namespace, context, history_for_context,
+                conversation=getattr(self, '_voice_conversation', []),
+            )
         )
         worker.done.connect(self._on_ai_done)
         worker.error.connect(self._on_ai_error)
@@ -361,18 +371,26 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(False)
             return
 
-        fallback_provider = ai_assist.get_provider()
-        fallback_key = ai_assist.get_api_key(fallback_provider)
-        fallback_model = ai_assist.get_model(fallback_provider)
-        provider, api_key, model, selection_error = ai_assist._task_provider_selection(
-            "deep_diagnosis", fallback_provider, fallback_key, fallback_model
+        ai_service = getattr(self, "ai_service", None)
+        fallback_provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
+        fallback_key = ai_service.api_key(fallback_provider) if ai_service is not None else ai_assist.get_api_key(fallback_provider)
+        fallback_model = ai_service.model(fallback_provider) if ai_service is not None else ai_assist.get_model(fallback_provider)
+        selection = (
+            ai_service.task_provider_selection(
+                "deep_diagnosis", fallback_provider, fallback_key, fallback_model,
+            )
+            if ai_service is not None
+            else ai_assist._task_provider_selection(
+                "deep_diagnosis", fallback_provider, fallback_key, fallback_model,
+            )
         )
+        provider, api_key, model, selection_error = selection
         if selection_error:
             self._write_error("\n" + selection_error)
             self._set_busy(False)
             return
 
-        settings = ai_assist.get_ai_settings()
+        settings = ai_service.settings() if ai_service is not None else ai_assist.get_ai_settings()
         if provider != "ollama":
             if not settings.get("cloud_ai_enabled", True):
                 self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
@@ -432,7 +450,7 @@ class K8sAIOpsOperationsMixin:
         )
         self._write_info("Collecting Kubernetes state, requests/limits, events, bounded logs, current metrics and node evidence where applicable…")
         self._set_busy(True)
-        worker = CommandWorker(self.ssh, command + " 2>&1", timeout=60)
+        worker = self.create_command_worker(command + " 2>&1", timeout=60)
         self._investigation_collection_worker = worker
         worker.result.connect(self._on_root_cause_evidence_collected)
         worker.error.connect(self._on_root_cause_collection_error)
@@ -494,10 +512,20 @@ class K8sAIOpsOperationsMixin:
             "collected_at": evidence["collected_at"],
         }
         self._write_info("Live evidence collected. Sending the bounded, redacted evidence package for analysis…")
-        worker = OpsMindInvestigationWorker(
-            pending["provider"], pending["api_key"], pending["model"],
-            pending["question"], target, evidence,
-            prometheus_url=pending["prometheus_url"], history_days=pending["history_days"], parent=self,
+        worker = (
+            self.ai_service.create_investigation_worker(
+                pending["provider"], pending["api_key"], pending["model"],
+                pending["question"], target, evidence,
+                prometheus_url=pending["prometheus_url"],
+                history_days=pending["history_days"],
+                parent=self,
+            )
+            if getattr(self, "ai_service", None) is not None
+            else OpsMindInvestigationWorker(
+                pending["provider"], pending["api_key"], pending["model"],
+                pending["question"], target, evidence,
+                prometheus_url=pending["prometheus_url"], history_days=pending["history_days"], parent=self,
+            )
         )
         self._investigation_ai_worker = worker
         worker.done.connect(self._on_root_cause_investigation_done)
@@ -652,7 +680,7 @@ class K8sAIOpsOperationsMixin:
         ctx_flag = '--context {} '.format(shlex.quote(str(ctx or ''))) if ctx else ''
         probe = f'kubectl {ctx_flag} -n {shlex.quote(namespace)} get {resource}/{name} -o jsonpath={{.spec.replicas}}'
         self.status_lbl.setText('Reading current replicas…')
-        worker = CommandWorker(self.ssh, probe)
+        worker = self.create_command_worker(probe)
         self._scale_previous_worker = worker
         worker._k8s_probe_action = action
         worker.result.connect(self._on_previous_replicas_result)
@@ -708,7 +736,7 @@ class K8sAIOpsOperationsMixin:
     def _start_kubectl_operation(self, action: dict, command: str):
         self.status_lbl.setText('Executing kubectl…')
         self._speak(_spoken_start_phrase(action))
-        worker = CommandWorker(self.ssh, command + ' 2>&1')
+        worker = self.create_command_worker(command + ' 2>&1')
         worker._k8s_action = action
         worker._k8s_command = command
         worker._k8s_confirmed = bool(action.get('_confirmed', False))
@@ -842,7 +870,7 @@ class K8sAIOpsOperationsMixin:
             return
 
         self.status_lbl.setText('Verifying Kubernetes change…')
-        worker = CommandWorker(self.ssh, probe + ' 2>&1', timeout=35)
+        worker = self.create_command_worker(probe + ' 2>&1', timeout=35)
         self._verification_worker = worker
         frozen_action = dict(action)
         worker.result.connect(

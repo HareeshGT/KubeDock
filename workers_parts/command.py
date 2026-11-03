@@ -59,12 +59,65 @@ class CommandWorker(QThread):
         # `echo $HOME` / `export PATH=...` preamble, which cmd.exe/PowerShell
         # (Windows SSH hosts) cannot run.
         self.raw       = raw
+        self._session_guard = None
+        self._cancel_event = threading.Event()
+        self._channel_lock = threading.RLock()
+        self._active_channel = None
         self.finished.connect(self.deleteLater)
+
+    def cancel(self):
+        """Cooperatively cancel the command and close its active SSH channel."""
+        self._cancel_event.set()
+        with self._channel_lock:
+            channel = self._active_channel
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+    def _set_active_channel(self, channel):
+        with self._channel_lock:
+            self._active_channel = channel
+            cancelled = self._cancel_event.is_set()
+        if cancelled:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+    def _clear_active_channel(self, channel):
+        with self._channel_lock:
+            if self._active_channel is channel:
+                self._active_channel = None
+
+    def _session_is_current(self):
+        guard = getattr(self, "_session_guard", None)
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            _LOG.debug("Unable to validate command session generation", exc_info=True)
+            return False
+
+    def _discard_stale_result(self):
+        if self._session_is_current():
+            return False
+        self.error.emit(
+            "The active connection changed while this command was running; "
+            "the stale result was discarded."
+        )
+        return True
 
     def run(self):
         started = time.monotonic()
         operation = command_operation_label(self.cmd)
         try:
+            if self._discard_stale_result():
+                return
+            if self._cancel_event.is_set():
+                return
             if self.raw:
                 self._run_raw()
                 return
@@ -76,25 +129,36 @@ class CommandWorker(QThread):
             # KubeDock, including Kubernetes resource navigation.
             cmd = build_prepared_command(self.cmd, self.cwd, self.sudo_user)
             with managed_exec_command(self.ssh, cmd) as (_stdin, stdout, stderr):
-                stdout.channel.settimeout(self.timeout)
+                channel = stdout.channel
+                self._set_active_channel(channel)
                 try:
-                    out = stdout.read().decode(errors="replace")
-                    err = stderr.read().decode(errors="replace")
-                except Exception as read_err:
-                    self.error.emit(
-                        "Command is still running after {}s with no output — it looks like it's "
-                        "blocking in the foreground rather than exiting (raw error: {})."
-                        .format(self.timeout, read_err)
-                    )
-                    return
-                try:
-                    exit_code = stdout.channel.recv_exit_status()
-                except Exception:
-                    exit_code = -1
+                    channel.settimeout(self.timeout)
+                    try:
+                        out = stdout.read().decode(errors="replace")
+                        err = stderr.read().decode(errors="replace")
+                    except Exception as read_err:
+                        if not self._cancel_event.is_set():
+                            self.error.emit(
+                                "Command is still running after {}s with no output — it looks like it's "
+                                "blocking in the foreground rather than exiting (raw error: {})."
+                                .format(self.timeout, read_err)
+                            )
+                        return
+                    try:
+                        exit_code = channel.recv_exit_status()
+                    except Exception:
+                        exit_code = -1
+                finally:
+                    self._clear_active_channel(channel)
+            if self._discard_stale_result():
+                return
+            if self._cancel_event.is_set():
+                return
             self.result.emit(out, err, exit_code)
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._cancel_event.is_set():
+                self.error.emit(str(e))
         finally:
             _LOG.debug(
                 "ssh_command_complete operation=%s raw=%s duration_ms=%.1f",
@@ -102,18 +166,30 @@ class CommandWorker(QThread):
             )
 
     def _run_raw(self):
+        if self._cancel_event.is_set():
+            return
         with managed_exec_command(self.ssh, self.cmd) as (_stdin, stdout, stderr):
-            stdout.channel.settimeout(self.timeout)
+            channel = stdout.channel
+            self._set_active_channel(channel)
             try:
-                out = stdout.read().decode(errors="replace")
-                err = stderr.read().decode(errors="replace")
-            except Exception as read_err:
-                self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
-                return
-            try:
-                exit_code = stdout.channel.recv_exit_status()
-            except Exception:
-                exit_code = -1
+                channel.settimeout(self.timeout)
+                try:
+                    out = stdout.read().decode(errors="replace")
+                    err = stderr.read().decode(errors="replace")
+                except Exception as read_err:
+                    if not self._cancel_event.is_set():
+                        self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
+                    return
+                try:
+                    exit_code = channel.recv_exit_status()
+                except Exception:
+                    exit_code = -1
+            finally:
+                self._clear_active_channel(channel)
+        if self._discard_stale_result():
+            return
+        if self._cancel_event.is_set():
+            return
         self.result.emit(out, err, exit_code)
         self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
 
@@ -153,9 +229,19 @@ class PodExecStreamWorker(QThread):
         self._cols = max(20, int(cols))
         self._rows = max(5, int(rows))
         self._channel = None
+        self._session_guard = None
         self._stop = threading.Event()
         self._send_lock = threading.RLock()
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
 
     @staticmethod
     def _quote(value):
@@ -220,6 +306,9 @@ class PodExecStreamWorker(QThread):
         out_dec = codecs.getincrementaldecoder("utf-8")("replace")
         err_dec = codecs.getincrementaldecoder("utf-8")("replace")
         try:
+            if not self._session_is_current():
+                self.error.emit("The active connection changed before the pod shell could start.")
+                return
             channel = open_managed_session(self.ssh)
             self._channel = channel
             channel.get_pty(term="xterm-256color", width=self._cols, height=self._rows)
@@ -227,6 +316,9 @@ class PodExecStreamWorker(QThread):
             channel.exec_command(self._command())
 
             while not self._stop.is_set():
+                if not self._session_is_current():
+                    self.error.emit("The active connection changed while the pod shell was running.")
+                    return
                 got_data = False
                 try:
                     if channel.recv_ready():

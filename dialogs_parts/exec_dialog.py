@@ -70,9 +70,11 @@ class ExecDialog(QDialog):
   _FLUSH_MAX_CHARS = 200000    # per tick, so a huge dump can't freeze the UI
   _CAPTURE_MAX     = 60000     # raw chars kept for "Analyze with AI"
 
-  def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context: str = None):
+  def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context: str = None, service=None, ai_service=None):
     super().__init__(parent)
-    self.ssh = ssh
+    self.ssh = ssh if service is None else None
+    self._service = service
+    self._ai_service = ai_service
     self._pod = pod
     self._ns = namespace
     self._container = container
@@ -175,8 +177,14 @@ class ExecDialog(QDialog):
   # ── session lifecycle ───────────────────────────────────────
   def _start_stream(self):
     cols, rows = self._terminal_size()
-    worker = PodExecStreamWorker(
-      self.ssh, self._ns, self._pod, self._container, self.context, cols=cols, rows=rows
+    worker = (
+      self._service.create_pod_exec_stream_worker(
+        self._ns, self._pod, self._container, self.context, cols=cols, rows=rows,
+      )
+      if self._service is not None
+      else PodExecStreamWorker(
+        self.ssh, self._ns, self._pod, self._container, self.context, cols=cols, rows=rows
+      )
     )
     worker.chunk.connect(self._append_stream)
     worker.exited.connect(self._on_stream_exit)
@@ -293,9 +301,16 @@ class ExecDialog(QDialog):
     self._ai_dialog.show()
     self.explain_btn.setEnabled(False)
     self.explain_btn.setText(" Thinking…")
-    worker = ai_assist.AICommandExplainWorker(
-      provider, api_key, ai_assist.get_model(provider),
-      self._last_cmd, self._last_exit_code, self._last_stderr, self._last_stdout,
+    worker = (
+      self._ai_service.create_command_explain_worker(
+        self._last_cmd, self._last_exit_code,
+        self._last_stderr, self._last_stdout,
+      )
+      if self._ai_service is not None
+      else ai_assist.AICommandExplainWorker(
+        provider, api_key, ai_assist.get_model(provider),
+        self._last_cmd, self._last_exit_code, self._last_stderr, self._last_stdout,
+      )
     )
     worker.done.connect(self._on_explain_done)
     worker.error.connect(self._on_explain_error)

@@ -38,7 +38,19 @@ class ConnectWorker(QThread):
         self.user     = user
         self.pem      = pem
         self.password = password
+        self._cancelled = threading.Event()
+        self._ssh_client = None
+        self._sftp_client = None
         self.finished.connect(self.deleteLater)
+
+    def cancel(self):
+        self._cancelled.set()
+        for resource in (self._sftp_client, self._ssh_client):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception:
+                    pass
 
     def run(self):
         import paramiko
@@ -52,7 +64,10 @@ class ConnectWorker(QThread):
             connect_timeout = 10
             keepalive_seconds = 15
         try:
+            if self._cancelled.is_set():
+                return
             ssh = paramiko.SSHClient()
+            self._ssh_client = ssh
             _configure_host_key_policy(ssh)
             kw = dict(hostname=self.host, port=self.port, username=self.user,
                       timeout=connect_timeout, banner_timeout=connect_timeout,
@@ -83,6 +98,9 @@ class ConnectWorker(QThread):
                 # still authenticate, same as a bare `ssh user@localhost`.
                 pass
             ssh.connect(**kw)
+            if self._cancelled.is_set():
+                ssh.close()
+                return
 
             # Paramiko's default per-channel flow-control window is small
             # (~2MB), which caps throughput hard on a fast link — every
@@ -148,6 +166,11 @@ class ConnectWorker(QThread):
                 pass
 
             sftp = ssh.open_sftp()
+            self._sftp_client = sftp
+            if self._cancelled.is_set():
+                sftp.close()
+                ssh.close()
+                return
             with managed_exec_command(ssh, "echo $HOME") as (_stdin, stdout, _stderr):
                 home = stdout.read().decode().strip()
 
@@ -160,6 +183,10 @@ class ConnectWorker(QThread):
                 ssh, self.host, self.port, self.user,
                 pem=effective_pem, password=self.password
             )
+            if self._cancelled.is_set():
+                sftp.close()
+                ssh.close()
+                return
             self.connected.emit(ssh, sftp, home)
         except Exception as e:
             try:
@@ -169,7 +196,8 @@ class ConnectWorker(QThread):
                     ssh.close()
             except Exception:
                 pass
-            self.error.emit(str(e))
+            if not self._cancelled.is_set():
+                self.error.emit(str(e))
 
 
 class FTPConnectionWorker(QThread):
@@ -181,19 +209,37 @@ class FTPConnectionWorker(QThread):
         super().__init__()
         self.host, self.port, self.user, self.password = host, port, user, password
         self.tls, self.passive = tls, passive
+        self._cancelled = threading.Event()
+        self._filesystem = None
         self.finished.connect(self.deleteLater)
+
+    def cancel(self):
+        self._cancelled.set()
+        filesystem = self._filesystem
+        if filesystem is not None:
+            try:
+                filesystem.close()
+            except Exception:
+                pass
 
     def run(self):
         fs = None
         try:
+            if self._cancelled.is_set():
+                return
             from ftp_fs import FTPFS
             fs = FTPFS(self.host, self.port, self.user, self.password, tls=self.tls, passive=self.passive)
+            self._filesystem = fs
+            if self._cancelled.is_set():
+                fs.close()
+                return
             self.connected.emit(fs, fs.normalize("/"))
         except Exception as e:
             if fs is not None:
                 try: fs.close()
                 except Exception: pass
-            self.error.emit(str(e))
+            if not self._cancelled.is_set():
+                self.error.emit(str(e))
 
 
 class ConnectionHealthWorker(QThread):

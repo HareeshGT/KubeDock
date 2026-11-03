@@ -26,6 +26,7 @@ from workers_parts.ssh import (
 from workers_parts.directory import DirectoryListWorker
 from workers_parts.connection import ConnectWorker, FTPConnectionWorker, ConnectionHealthWorker
 from workers_parts.command import CommandWorker, PodExecStreamWorker
+from workers_parts.exec_stream import ExecStreamWorker
 from workers_parts.transfer import FileStreamReadWorker, _TransferWorker, _PtyProc, ScpTransferWorker
 from workers_parts.media import (
     _ChannelReader,
@@ -45,6 +46,7 @@ __all__ = [
     "ConnectionHealthWorker",
     "CommandWorker",
     "PodExecStreamWorker",
+    "ExecStreamWorker",
     "FileStreamReadWorker",
     "_TransferWorker",
     "_PtyProc",

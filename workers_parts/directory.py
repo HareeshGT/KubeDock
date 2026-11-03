@@ -36,12 +36,23 @@ class DirectoryListWorker(QThread):
     def stop(self):
         self._stop.set()
 
+    def _session_is_current(self):
+        guard = getattr(self, "_session_guard", None)
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+
     def run(self):
         try:
+            if not self._session_is_current():
+                return
             entries = self.sftp.listdir_attr(self.path)
             result = []
             for entry in entries:
-                if self._stop.is_set():
+                if self._stop.is_set() or not self._session_is_current():
                     return
                 mode = entry.st_mode or 0
                 is_dir = stat.S_ISDIR(mode)
@@ -57,7 +68,7 @@ class DirectoryListWorker(QThread):
                     "mode": mode,
                     "is_dir": is_dir,
                 })
-            if not self._stop.is_set():
+            if not self._stop.is_set() and self._session_is_current():
                 self.result.emit(result, self.path)
         except Exception as exc:
             if not self._stop.is_set():

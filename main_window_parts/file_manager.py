@@ -58,11 +58,60 @@ _MEDIA_KINDS = {"video", "audio"}
 
 
 class FileManagerMixin:
+    def _file_service(self):
+      services = getattr(self, "services", None)
+      return services.files if services is not None else None
+
+    def _filesystem(self):
+      service = self._file_service()
+      return service.filesystem if service is not None else getattr(self, "sftp", None)
+
+    def _file_ssh(self):
+      # Raw clients are only exposed to legacy standalone dialog paths.
+      # The normal app path uses FileManagerService operations instead.
+      return getattr(self, "ssh", None) if self._file_service() is None else None
+
+    def _normalize_remote(self, path):
+      service = self._file_service()
+      if service is not None:
+        return service.normalize(path)
+      return self._filesystem().normalize(path or "")
+
+    def _mkdir_remote(self, path):
+      service = self._file_service()
+      if service is not None:
+        return service.mkdir(path)
+      return self._filesystem().mkdir(path)
+
+    def _create_empty_remote_file(self, path):
+      service = self._file_service()
+      if service is not None:
+        return service.create_empty_file(path)
+      filesystem = self._filesystem()
+      if hasattr(filesystem, "write_bytes"):
+        return filesystem.write_bytes(path, b"")
+      handle = filesystem.open(path, "w")
+      handle.close()
+
+    def _delete_remote(self, path, is_directory=False):
+      service = self._file_service()
+      if service is not None:
+        return service.delete(path, is_directory=is_directory)
+      if is_directory:
+        return self._filesystem().rmdir(path)
+      return self._filesystem().remove(path)
+
+    def _rename_remote(self, old_path, new_path):
+      service = self._file_service()
+      if service is not None:
+        return service.rename(old_path, new_path)
+      return self._filesystem().rename(old_path, new_path)
+
     def _nav_to(self, path):
-      if not self.sftp:
+      if not self._filesystem():
         return
       try:
-        resolved = self.sftp.normalize(path or "")
+        resolved = self._normalize_remote(path)
       except Exception as e:
         QMessageBox.warning(self, "Navigation Error", str(e))
         return
@@ -95,7 +144,7 @@ class FileManagerMixin:
       self._nav_to(self.addr_bar.text().strip())
 
     def _refresh(self, push_history=True):
-      if not self.sftp:
+      if not self._filesystem():
         return
 
       if self._directory_worker is not None and self._directory_worker.isRunning():
@@ -117,7 +166,11 @@ class FileManagerMixin:
       self.preview.clear()
       self.search_bar.clear()
 
-      worker = DirectoryListWorker(self.sftp, path)
+      worker = (
+        self.services.files.create_directory_worker(None, path)
+        if getattr(self, "services", None) is not None
+        else DirectoryListWorker(self._filesystem(), path)
+      )
       self._directory_worker = worker
       track_worker(self._workers, worker)
       worker.result.connect(
@@ -138,7 +191,7 @@ class FileManagerMixin:
         return
       if worker is not self._directory_worker:
         return
-      if self.sftp is None or path != self.current_path:
+      if self._filesystem() is None or path != self.current_path:
         return
 
       items = []
@@ -162,7 +215,7 @@ class FileManagerMixin:
     def _populate_rows_chunk(self, start, path, generation):
       if generation != self._row_population_generation:
         return
-      if self.sftp is None or path != self.current_path:
+      if self._filesystem() is None or path != self.current_path:
         return
 
       batch_size = 100
@@ -189,7 +242,7 @@ class FileManagerMixin:
     def _on_directory_error(self, error, worker, generation):
       if generation != self._directory_generation or worker is not self._directory_worker:
         return
-      if self.sftp is None:
+      if self._filesystem() is None:
         return
       msg = str(error)
       if self._sudo_user:
@@ -204,7 +257,7 @@ class FileManagerMixin:
       self._directory_worker = None
       pending = self._directory_refresh_pending
       self._directory_refresh_pending = None
-      if pending and self.sftp is not None:
+      if pending and self._filesystem() is not None:
         path, push_history = pending
         if path == self.current_path:
           self._refresh(push_history=push_history)
@@ -309,12 +362,14 @@ class FileManagerMixin:
         save, _ = QFileDialog.getSaveFileName(self, "Save File", name)
         if save:
           remote = self.current_path.rstrip("/") + "/" + name
+          service = self._file_service()
           FileTransferDialog.download(
-            self, self.sftp, remote, save,
+            self, self._filesystem() if service is None else None, remote, save,
             host=self._conn_host, port=self._conn_port,
             user=self._conn_user, pem=self._conn_pem,
             password=self._conn_password,
             sudo_user=self._sudo_user,
+            service=service,
           )
           self.status.showMessage("Downloaded {}".format(name))
 
@@ -354,7 +409,7 @@ class FileManagerMixin:
       return item.data(Qt.UserRole)
 
     def _edit_file(self, meta):
-      if not self.sftp:
+      if not self._filesystem():
         return
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
@@ -365,17 +420,24 @@ class FileManagerMixin:
       # Route these to the read-only, mmap-backed pager instead, whose
       # memory/CPU cost is bounded by one page, independent of file size.
       if meta.get("size", 0) > FileEditorDialog.MAX_EDIT_BYTES:
+        service = self._file_service()
         LargeFileViewerDialog.open_remote(
-          self, self.sftp, remote,
+          self, self._filesystem() if service is None else None, remote,
           host=self._conn_host, port=self._conn_port,
           user=self._conn_user, pem=self._conn_pem,
           password=self._conn_password,
           sudo_user=self._sudo_user,
+          service=service,
         )
         return
+      service = self._file_service()
       FileEditorDialog.open_remote(
-        self, self.sftp, self.ssh, remote,
+        self,
+        self._filesystem() if service is None else None,
+        self._file_ssh() if service is None else None,
+        remote,
         sudo_user=self._sudo_user,
+        service=service,
       )
 
     def _edit_selected(self):
@@ -389,20 +451,31 @@ class FileManagerMixin:
       self._edit_file(meta)
 
     def _play_media(self, meta):
-      if not self.sftp:
+      if not self._filesystem():
         return
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
+      service = self._file_service()
       MediaPlayerDialog.open_remote(
-        self, self.sftp, self.ssh, remote, meta["kind"], sudo_user=self._sudo_user
+        self,
+        self._filesystem() if service is None else None,
+        self._file_ssh() if service is None else None,
+        remote, meta["kind"], sudo_user=self._sudo_user,
+        service=service,
       )
 
     def _exec_file(self, meta):
-      if not self.ssh:
+      service = self._file_service()
+      if (service is not None and not service.has_ssh) or (
+        service is None and not self._file_ssh()
+      ):
         return
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
-      dlg = FileExecDialog(self, self.ssh, remote, sudo_user=self._sudo_user)
+      dlg = FileExecDialog(
+        self, self._file_ssh() if service is None else None, remote,
+        sudo_user=self._sudo_user, service=service,
+      )
       dlg.exec_()
 
     def _run_selected(self):
@@ -426,7 +499,7 @@ class FileManagerMixin:
       """Loads (up to) the first 32KB of a remote file for the preview
       pane or the 'View' dialog. Runs via FileStreamReadWorker on a
       background QThread rather than the old direct
-      `self.sftp.open(remote, "r"); f.read(32768)` — that blocked the UI
+      `self._filesystem().open(remote, "r"); f.read(32768)` — that blocked the UI
       thread on every click, and worse, under an active sudo user
       SudoFS.open() pulls the *entire* remote file into memory via `cat`
       before the 32KB read() cap ever applied, which is what turned
@@ -485,9 +558,15 @@ class FileManagerMixin:
           self.preview.show_text(message)
         self._preview_worker = None
 
-      worker = FileStreamReadWorker(
-        self.sftp, self.ssh, remote,
-        sudo_user=self._sudo_user, max_bytes=32768,
+      worker = (
+        self.services.files.create_stream_reader(
+          remote, sudo_user=self._sudo_user, max_bytes=32768,
+        )
+        if getattr(self, "services", None) is not None
+        else FileStreamReadWorker(
+          self._filesystem(), self._file_ssh(), remote,
+          sudo_user=self._sudo_user, max_bytes=32768,
+        )
       )
       worker.chunk_ready.connect(_on_chunk)
       worker.finished_ok.connect(_on_finished)
@@ -506,7 +585,7 @@ class FileManagerMixin:
       return self.current_path.rstrip("/") + "/" + meta["name"]
 
     def _upload(self):
-      if not self.sftp:
+      if not self._filesystem():
         return
       paths, _ = QFileDialog.getOpenFileNames(self, "Select Files to Upload")
       if not paths:
@@ -514,12 +593,14 @@ class FileManagerMixin:
       errors = []
       for local in paths:
         remote = self.current_path.rstrip("/") + "/" + os.path.basename(local)
+        service = self._file_service()
         ok = FileTransferDialog.upload(
-          self, self.sftp, local, remote,
+          self, self._filesystem() if service is None else None, local, remote,
           host=self._conn_host, port=self._conn_port,
           user=self._conn_user, pem=self._conn_pem,
           password=self._conn_password,
           sudo_user=self._sudo_user,
+          service=service,
         )
         if not ok:
           errors.append(os.path.basename(local))
@@ -543,39 +624,39 @@ class FileManagerMixin:
       save, _ = QFileDialog.getSaveFileName(self, "Save As", default_path)
       if not save:
         return
+      service = self._file_service()
       FileTransferDialog.download(
-        self, self.sftp, self._current_remote(meta), save,
+        self, self._filesystem() if service is None else None,
+        self._current_remote(meta), save,
         host=self._conn_host, port=self._conn_port,
         user=self._conn_user, pem=self._conn_pem,
         password=self._conn_password,
         sudo_user=self._sudo_user,
+        service=service,
       )
       self.status.showMessage("Saved to {}".format(save))
 
     def _new_folder(self):
-      if not self.sftp:
+      if not self._filesystem():
         return
       name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
       if not ok or not name.strip():
         return
       try:
-        self.sftp.mkdir(self.current_path.rstrip("/") + "/" + name.strip())
+        self._mkdir_remote(self.current_path.rstrip("/") + "/" + name.strip())
         self._refresh()
       except Exception as e:
         QMessageBox.critical(self, "Error", str(e))
 
     def _new_file(self):
-      if not self.sftp:
+      if not self._filesystem():
         return
       name, ok = QInputDialog.getText(self, "New File", "File name:")
       if not ok or not name.strip():
         return
       try:
         remote = self.current_path.rstrip("/") + "/" + name.strip()
-        if hasattr(self.sftp, "write_bytes"):
-          self.sftp.write_bytes(remote, b"")
-        else:
-          self.sftp.open(remote, "w").close()
+        self._create_empty_remote_file(remote)
         self._refresh()
       except Exception as e:
         QMessageBox.critical(self, "Error", str(e))
@@ -593,10 +674,7 @@ class FileManagerMixin:
         return
       try:
         remote = self._current_remote(meta)
-        if meta["is_dir"]:
-          self.sftp.rmdir(remote)
-        else:
-          self.sftp.remove(remote)
+        self._delete_remote(remote, is_directory=meta["is_dir"])
         self._refresh()
       except Exception as e:
         QMessageBox.critical(self, "Delete Error", str(e))
@@ -641,7 +719,7 @@ class FileManagerMixin:
           return
 
       try:
-        self.sftp.rename(old_remote, new_remote)
+        self._rename_remote(old_remote, new_remote)
         self._refresh()
         self.status.showMessage('Renamed "{}" to "{}"'.format(old_name, new_name))
       except Exception as e:

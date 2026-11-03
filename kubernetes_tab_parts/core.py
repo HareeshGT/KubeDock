@@ -63,12 +63,18 @@ class KubernetesCoreMixin:
         tunnel_timer.start()
 
   def _context_flag(self) -> str:
+    service = getattr(self, "kubernetes_service", None)
+    if service is not None:
+      return service.context_flag(self._current_context)
     context = (self._current_context or "").strip()
     return f"--context={shlex.quote(context)}" if context else ""
 
 
   def _apply_context_to_command(self, cmd: str) -> str:
-    """Apply the selected context to a kubectl command."""
+    """Apply the selected context through the Kubernetes service."""
+    service = getattr(self, "kubernetes_service", None)
+    if service is not None:
+      return service.apply_context(cmd, self._current_context)
     if not cmd or not self._current_context:
       return cmd
     stripped = cmd.lstrip()
@@ -534,7 +540,13 @@ class KubernetesCoreMixin:
     started = time.monotonic()
     self._active_command_count = getattr(self, "_active_command_count", 0) + 1
     self.progress.show()
-    worker = CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
+    worker = (
+      self.kubernetes_service.create_worker(
+        None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
+      )
+      if self.kubernetes_service is not None
+      else CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
+    )
 
     def release_progress():
       self._active_command_count = max(0, getattr(self, "_active_command_count", 1) - 1)

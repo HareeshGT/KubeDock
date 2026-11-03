@@ -101,7 +101,9 @@ class ConnectionMixin:
       self._last_web_connect_error = None
       self.progress.show()
       self.status.showMessage("Connecting to {}…".format(target))
-      self._connect_worker = ConnectWorker(host, port, user, pem, "")
+      self._connect_worker = self.connection_service.create_ssh_connect_worker(
+        host, port, user, pem, "",
+      )
       self._connect_worker.connected.connect(self._on_connect_success)
       self._connect_worker.error.connect(self._on_remote_profile_connect_error)
       self._connect_worker.start()
@@ -131,10 +133,12 @@ class ConnectionMixin:
       self._connecting_dlg.show()
 
       if protocol == "ssh":
-        self._connect_worker = ConnectWorker(host, port, user, pem, password)
+        self._connect_worker = self.connection_service.create_ssh_connect_worker(
+          host, port, user, pem, password,
+        )
         self._connect_worker.connected.connect(self._on_connect_success)
       else:
-        self._connect_worker = FTPConnectionWorker(
+        self._connect_worker = self.connection_service.create_file_connect_worker(
           host, port, user, password, tls=(protocol == "ftps"), passive=True
         )
         self._connect_worker.connected.connect(self._on_ftp_connect_success)
@@ -142,12 +146,28 @@ class ConnectionMixin:
       self._connect_worker.start()
 
     def _on_ftp_connect_success(self, fs, home):
+      if getattr(getattr(self, "services", None), "stopped", False):
+        try:
+          fs.close()
+        except Exception:
+          pass
+        return
       info = self._pending_conn
       host, port, user = info["host"], info["port"], info["user"]
       protocol = info["protocol"]
+      # A switch from SSH to FTP/FTPS replaces the old SSH transport. Stop
+      # its heartbeat before ConnectionService tears that transport down.
+      if self._health_worker:
+        worker = self._health_worker
+        self._health_worker = None
+        worker.stop()
       self.ssh = None
       self.sftp = fs
       self._conn_protocol = protocol
+      self.connection_service.attach_file_connection(
+        fs, protocol=protocol, host=host, port=port, username=user,
+        alias=info["alias"],
+      )
       self.host_label = info["alias"] if info["alias"] else "{}@{}".format(user, host)
       self._conn_host, self._conn_port = host, port
       self._conn_user, self._conn_pem = user, ""
@@ -169,6 +189,17 @@ class ConnectionMixin:
       self._finish_connect_ui()
 
     def _on_connect_success(self, ssh, sftp, home):
+      if getattr(getattr(self, "services", None), "stopped", False):
+        try:
+          close_ssh_connection_pool(ssh)
+        except Exception:
+          pass
+        for resource in (sftp, ssh):
+          try:
+            resource.close()
+          except Exception:
+            pass
+        return
       # Defensive: if a session is somehow still live (e.g. a connect that
       # completed after the user reconnected), tear it down fully first so
       # its pool connections and heartbeat thread aren't orphaned.
@@ -178,8 +209,16 @@ class ConnectionMixin:
       host, port, user, pem, alias = info["host"], info["port"], info["user"], info["pem"], info["alias"]
       password = info.get("password")
 
+      filesystem = SudoFS(sftp, ssh)
+      # Adopt the newly created adapter directly. Reading self.sftp here
+      # would resolve the previous service-owned session through its
+      # compatibility property and could accidentally hand the old adapter
+      # (or None on first connect) back to ConnectionService.
+      self.connection_service.attach_ssh(
+        ssh, filesystem, host=host, port=port, username=user, alias=alias,
+      )
       self.ssh = ssh
-      self.sftp = SudoFS(sftp, ssh)
+      self.sftp = filesystem
       self._conn_protocol = "ssh"
       # Use alias as the display label when set, else user@host
       self.host_label = alias if alias else "{}@{}".format(user, host)
@@ -215,19 +254,33 @@ class ConnectionMixin:
       # Start the background heartbeat so the app can warn about — and
       # ideally recover the UI cleanly from — a dying connection instead
       # of only discovering it when some unrelated action fails midway.
-      self._health_worker = ConnectionHealthWorker(self.ssh)
-      self._health_worker.at_risk.connect(self._on_connection_at_risk)
-      self._health_worker.recovered.connect(self._on_connection_recovered)
-      self._health_worker.lost.connect(self._on_connection_lost)
+      self._health_worker = self.connection_service.create_health_worker()
+      health_generation = self._health_worker.connection_generation
+      self._health_worker.at_risk.connect(
+        lambda detail, generation=health_generation:
+          self._on_connection_at_risk(detail, generation)
+      )
+      self._health_worker.recovered.connect(
+        lambda generation=health_generation:
+          self._on_connection_recovered(generation)
+      )
+      self._health_worker.lost.connect(
+        lambda detail, generation=health_generation:
+          self._on_connection_lost(detail, generation)
+      )
       self._health_worker.start()
 
-    def _on_connection_at_risk(self, detail):
+    def _on_connection_at_risk(self, detail, generation=None):
+      if generation is not None and not self.connection_service.is_current(generation):
+        return
       # A single missed heartbeat — could be a transient network blip, so
       # this is deliberately a non-blocking heads-up (status bar + the
       # connection indicator turning amber), not a modal dialog. Give the
       # user a chance to finish and save whatever they're doing.
       if not self.ssh:
         return
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.mark_degraded(detail)
       self.conn_lbl.setText("Unstable — {} ".format(self.host_label))
       self.conn_lbl.setStyleSheet("color: {};".format(T['WARNING']))
       self.status.showMessage(
@@ -235,14 +288,20 @@ class ConnectionMixin:
         8000,
       )
 
-    def _on_connection_recovered(self):
+    def _on_connection_recovered(self, generation=None):
+      if generation is not None and not self.connection_service.is_current(generation):
+        return
       if not self.ssh:
         return
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.mark_recovered()
       self.conn_lbl.setText("Connected — {}".format(self.host_label))
       self.conn_lbl.setStyleSheet("color: {};".format(T['SUCCESS']))
       self.status.showMessage("Connection to {} recovered.".format(self.host_label), 5000)
 
-    def _on_connection_lost(self, detail):
+    def _on_connection_lost(self, detail, generation=None):
+      if generation is not None and not self.connection_service.is_current(generation):
+        return
       # The heartbeat confirmed the transport is actually dead. This can
       # still fire once, harmlessly, right after a deliberate manual
       # disconnect (a check already in flight when the socket closes) —
@@ -250,6 +309,8 @@ class ConnectionMixin:
       # no-op here.
       if not self.ssh:
         return
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.mark_lost(detail)
       host_label = self.host_label
       self._disconnect(reason="Connection lost")
       QMessageBox.warning(
@@ -283,15 +344,20 @@ class ConnectionMixin:
       # pool's connections are separate TCP sessions with their own
       # keepalive threads; closing only self.ssh used to leave every one of
       # them open on the server until the process exited.
-      try:
-        if self.ssh: close_ssh_connection_pool(self.ssh)
-      except Exception:
-        pass
-      try:
-        if self.sftp: self.sftp.close()
-        if self.ssh: self.ssh.close()
-      except Exception:
-        pass
+      # The shared service is the sole owner of the active session and its
+      # secondary SSH pool. Clear it before dropping the legacy aliases.
+      if getattr(self, "connection_service", None) is not None:
+        self.connection_service.disconnect()
+      else:
+        try:
+          if self.ssh: close_ssh_connection_pool(self.ssh)
+        except Exception:
+          pass
+        try:
+          if self.sftp: self.sftp.close()
+          if self.ssh: self.ssh.close()
+        except Exception:
+          pass
       self.ssh = self.sftp = None
       self._sudo_user = None
       self._conn_host = self._conn_user = self._conn_pem = None

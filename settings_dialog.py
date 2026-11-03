@@ -1,12 +1,14 @@
 """settings_dialog.py — App-wide Settings dialog."""
 
 from pathlib import Path
+import time
 from PyQt5.QtCore import QEvent, QTimer, Qt, QUrl
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QComboBox, QTabBar, QTabWidget, QWidget, QScrollArea, QDialogButtonBox,
     QFrame, QLineEdit, QApplication, QListWidget, QInputDialog, QMessageBox,
-    QSpinBox, QGroupBox, QGridLayout, QFormLayout,
+    QSpinBox, QGroupBox, QGridLayout, QFormLayout, QTableWidget,
+    QTableWidgetItem, QHeaderView,
 )
 from PyQt5.QtGui import QFont, QDesktopServices
 from db import APP_DIR, connect as db_connect
@@ -265,8 +267,23 @@ class CustomModelManagerDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None, k8s_tab_titles=None):
+    def _load_settings(self):
+        services = getattr(self.parent(), "services", None)
+        if services is not None:
+            return services.settings.load()
+        return load_settings()
+
+    def _save_settings(self, **values):
+        services = getattr(self.parent(), "services", None)
+        if services is not None:
+            if values:
+                return services.settings.save(**values)
+            return services.settings.save_current_theme()
+        return save_settings(**values)
+
+    def __init__(self, parent=None, k8s_tab_titles=None, ai_service=None):
         super().__init__(parent)
+        self._ai_service = ai_service
         self.setWindowTitle("Settings")
         self.setObjectName("settingsDialog")
         # Keep Settings feeling like a dialog, not a maximized application
@@ -313,7 +330,7 @@ class SettingsDialog(QDialog):
                 font-size: 12px;
             }}
         """)
-        settings = load_settings()
+        settings = self._load_settings()
         self._k8s_titles = list(k8s_tab_titles or [])
         self._hidden = set(settings.get("k8s_hidden_tabs", []))
         self._lock = security.get_lock_settings()
@@ -339,6 +356,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_k8s_tab(), "⎈ Kubernetes")
         tabs.addTab(self._build_ai_tab(), "🤖 AI")
         tabs.addTab(self._build_webapp_tab(), "🌐 Web App")
+        tabs.addTab(self._build_service_status_tab(), "⚙ Service Status")
         tabs.tabBar().setExpanding(False)
         tabs.setUsesScrollButtons(True)
         lay.addWidget(tabs, 1)
@@ -349,6 +367,61 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self._on_save)
         btns.rejected.connect(self.reject)
         lay.addWidget(btns)
+
+    def _build_service_status_tab(self):
+        """Show a read-only snapshot of in-process service health."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        heading = QLabel("Application service health")
+        heading.setStyleSheet(f"color: {T['TEXT_PRIMARY']}; font-weight: 600;")
+        layout.addWidget(heading)
+        note = QLabel(
+            "Services are created in-process. Optional background work starts "
+            "only when its feature is used. This snapshot contains no credentials."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {T['TEXT_MUTED']};")
+        layout.addWidget(note)
+
+        table = QTableWidget(0, 9)
+        table.setHorizontalHeaderLabels([
+            "Service", "State", "Paused", "Workers", "Active operations",
+            "Last success", "Last refresh", "Last duration", "Last error",
+        ])
+        for column in range(8):
+            table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeToContents
+            )
+        table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        services = getattr(self.parent(), "services", None)
+        statuses = services.service_status() if services is not None else {}
+        for name, status in statuses.items():
+            row = table.rowCount()
+            table.insertRow(row)
+            values = (
+                name.replace("_", " ").title(),
+                status.state.value,
+                "Yes" if status.paused else "No",
+                str(status.worker_count),
+                str(status.active_operations),
+                (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status.last_success_at))
+                 if status.last_success_at else "—"),
+                (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status.last_refresh_at))
+                 if status.last_refresh_at else "—"),
+                ("{:.2f}s".format(status.last_duration_seconds)
+                 if status.last_duration_seconds is not None else "—"),
+                status.last_error or "—",
+            )
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(value))
+        if not statuses:
+            table.setRowCount(1)
+            table.setItem(0, 0, QTableWidgetItem("Service runtime unavailable"))
+        layout.addWidget(table, 1)
+        return page
 
     def _build_general_tab(self):
         w = QWidget()
@@ -364,7 +437,7 @@ class SettingsDialog(QDialog):
         intro.setObjectName("secondary_text")
         root.addWidget(intro, 0, 0, 1, 2)
 
-        perf = normalize_performance_settings(load_settings())
+        perf = normalize_performance_settings(self._load_settings())
         self._performance_values = {}
         self._applying_performance_profile = False
 
@@ -454,7 +527,7 @@ class SettingsDialog(QDialog):
         self.reduce_motion_chk = QCheckBox(
             "Reduce motion (disable animated page transitions)"
         )
-        self.reduce_motion_chk.setChecked(bool(load_settings().get("reduce_motion", False)))
+        self.reduce_motion_chk.setChecked(bool(self._load_settings().get("reduce_motion", False)))
         appearance_layout.addWidget(self.reduce_motion_chk)
         appearance_hint = QLabel(
             "Useful when you prefer less movement while switching between pages."
@@ -551,7 +624,7 @@ class SettingsDialog(QDialog):
         intro.setObjectName("secondary_text")
         root.addWidget(intro, 0, 0, 1, 2)
 
-        connection = normalize_connection_preferences(load_settings())
+        connection = normalize_connection_preferences(self._load_settings())
         ssh_group = QGroupBox("SSH defaults")
         ssh_form = QFormLayout(ssh_group)
         ssh_form.setContentsMargins(12, 18, 12, 12)
@@ -861,7 +934,7 @@ class SettingsDialog(QDialog):
         self.ai_response_detail_combo.addItem("Concise", "concise")
         self.ai_response_detail_combo.addItem("Balanced", "balanced")
         self.ai_response_detail_combo.addItem("Detailed", "detailed")
-        current_detail = str(load_settings().get("ai_response_detail", "balanced") or "balanced")
+        current_detail = str(self._load_settings().get("ai_response_detail", "balanced") or "balanced")
         detail_index = self.ai_response_detail_combo.findData(current_detail)
         self.ai_response_detail_combo.setCurrentIndex(detail_index if detail_index >= 0 else 1)
         self.ai_response_detail_combo.setMaximumWidth(220)
@@ -1133,7 +1206,13 @@ class SettingsDialog(QDialog):
             return
         self.test_model_btn.setEnabled(False)
         self.test_model_btn.setText("Testing…")
-        worker = ai_assist.AIModelTestWorker(pid, api_key, model_id, self)
+        worker = (
+            self._ai_service.create_model_test_worker(
+                pid, api_key, model_id, self,
+            )
+            if self._ai_service is not None
+            else ai_assist.AIModelTestWorker(pid, api_key, model_id, self)
+        )
         self._model_test_worker = worker
         worker.succeeded.connect(self._on_model_test_success)
         worker.failed.connect(self._on_model_test_failure)
@@ -1335,7 +1414,7 @@ class SettingsDialog(QDialog):
             "pause_dashboard_when_inactive": self.pause_dashboard_chk.isChecked(),
             **{key: widget.value() for key, widget in self._performance_values.items()},
         }
-        save_settings(
+        self._save_settings(
             performance_settings=performance,
             connection_preferences={
                 "ssh_connect_timeout_seconds": self.ssh_timeout_spin.value(),
@@ -1367,7 +1446,7 @@ class SettingsDialog(QDialog):
             usage_telemetry_enabled=self.usage_telemetry_chk.isChecked(),
             cloud_ai_enabled=not self.local_only_ai_chk.isChecked(),
         )
-        save_settings(
+        self._save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),
             webapp_username="",
             webapp_password="",

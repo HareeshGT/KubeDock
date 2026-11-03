@@ -73,7 +73,21 @@ class FileStreamReadWorker(QThread):
         # to return on its own, and a second worker starting concurrently
         # against the same connection in the meantime can wedge both.
         self._handle    = None
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
+
+    def _ensure_session_current(self):
+        guard = getattr(self, "_session_guard", None)
+        if guard is None:
+            return
+        try:
+            current = bool(guard())
+        except Exception:
+            current = False
+        if not current:
+            raise RuntimeError(
+                "The active connection changed while reading this remote file; retry the operation."
+            )
 
     def cancel(self):
         self._cancelled = True
@@ -86,6 +100,7 @@ class FileStreamReadWorker(QThread):
 
     def run(self):
         try:
+            self._ensure_session_current()
             if hasattr(self._sftp, "_ftp"):
                 self._run_ftp_stream()
             elif self._sudo_user:
@@ -117,6 +132,7 @@ class FileStreamReadWorker(QThread):
         self._handle = reader
         try:
             while True:
+                self._ensure_session_current()
                 if self._cancelled or (self._max_bytes and done >= self._max_bytes):
                     break
                 try:
@@ -183,6 +199,7 @@ class FileStreamReadWorker(QThread):
             # read(CHUNK_SIZE) below never has more than one request
             # outstanding, so there's nothing to mis-file.
             while True:
+                self._ensure_session_current()
                 if self._cancelled:
                     return
                 try:
@@ -231,6 +248,7 @@ class FileStreamReadWorker(QThread):
             channel.exec_command(cmd)
             done = 0
             while True:
+                self._ensure_session_current()
                 if self._cancelled:
                     return
                 try:
@@ -269,17 +287,45 @@ class _TransferWorker(QThread):
         self._local     = local_path
         self._remote    = remote_path
         self._cancelled = False
+        self._session_guard = None
+        self._handle = None
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+
+    def _ensure_session_current(self):
+        if not self._session_is_current():
+            raise RuntimeError(
+                "The active connection changed during this file transfer; retry the operation."
+            )
 
     def cancel(self):
         self._cancelled = True
+        handle = self._handle
+        if handle is not None:
+            try:
+                abort = getattr(handle, "abort", None)
+                abort() if callable(abort) else handle.close()
+            except Exception:
+                pass
 
     def run(self):
         try:
+            if self._cancelled:
+                return
+            self._ensure_session_current()
             if self._direction == "download":
                 self._download()
             else:
                 self._upload()
+            self._ensure_session_current()
             if not self._cancelled:
                 self.finished_ok.emit()
         except Exception as e:
@@ -303,14 +349,29 @@ class _TransferWorker(QThread):
     # ── helpers ──────────────────────────────────────────────
     def _download(self):
         if hasattr(self._sftp, "_ftp"):
-            try: total = self._sftp.stat(self._remote).st_size
-            except Exception: total = 0
-            done = [0]
-            with open(self._local, "wb") as f:
-                def cb(data):
-                    if self._cancelled: return
-                    f.write(data); done[0] += len(data); self.progress.emit(done[0], total)
-                self._sftp._ftp.retrbinary("RETR " + self._sftp.normalize(self._remote), cb, blocksize=256*1024)
+            try:
+                total, _supports_rest = self._sftp.stream_probe(self._remote)
+            except Exception:
+                total = 0
+            self._ensure_session_current()
+            reader = self._sftp.open_stream(self._remote)
+            self._handle = reader
+            done = 0
+            try:
+                with open(self._local, "wb") as local_file:
+                    while True:
+                        self._ensure_session_current()
+                        if self._cancelled:
+                            return
+                        data = reader.read(256 * 1024)
+                        if not data:
+                            break
+                        local_file.write(data)
+                        done += len(data)
+                        self.progress.emit(done, total)
+            finally:
+                self._handle = None
+                reader.close()
             return
         if self._sftp.sudo_user:
             # Explicit sudo-user mode: every read already runs as that user.
@@ -354,19 +415,24 @@ class _TransferWorker(QThread):
                 raise
             done  = 0
             chunk = REQUEST_SIZE
-            with remote_f:
-                remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
-                remote_f.prefetch(total)
-                with open(self._local, "wb") as local_f:
-                    while True:
-                        if self._cancelled:
-                            return
-                        buf = remote_f.read(chunk)
-                        if not buf:
-                            break
-                        local_f.write(buf)
-                        done += len(buf)
-                        self.progress.emit(done, total)
+            self._handle = remote_f
+            try:
+                with remote_f:
+                    remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
+                    remote_f.prefetch(total)
+                    with open(self._local, "wb") as local_f:
+                        while True:
+                            self._ensure_session_current()
+                            if self._cancelled:
+                                return
+                            buf = remote_f.read(chunk)
+                            if not buf:
+                                break
+                            local_f.write(buf)
+                            done += len(buf)
+                            self.progress.emit(done, total)
+            finally:
+                self._handle = None
 
     def _download_elevated(self, sudo_user, total, original_exc=None):
         """Read the remote file with ``sudo -n cat`` (see elevated_read.py)."""
@@ -375,7 +441,7 @@ class _TransferWorker(QThread):
                 self._sftp._ssh, self._remote, self._local,
                 sudo_user=sudo_user, total=total,
                 on_progress=lambda d, t: self.progress.emit(d, t),
-                is_cancelled=lambda: self._cancelled,
+                is_cancelled=lambda: self._cancelled or not self._session_is_current(),
             )
         except ElevatedReadError as err:
             raise IOError(str(err))
@@ -383,21 +449,30 @@ class _TransferWorker(QThread):
     def _upload(self):
         if hasattr(self._sftp, "_ftp"):
             total = os.path.getsize(self._local)
-            done = [0]
-
-            with open(self._local, "rb") as f:
-                def cb(data):
-                    if self._cancelled:
-                        return
-                    done[0] += len(data)
-                    self.progress.emit(done[0], total)
-
-                self._sftp._ftp.storbinary(
-                    "STOR " + self._sftp.normalize(self._remote),
-                    f,
-                    blocksize=256 * 1024,
-                    callback=cb,
-                )
+            self._ensure_session_current()
+            writer = self._sftp.open_upload_stream(self._remote)
+            self._handle = writer
+            done = 0
+            completed = False
+            try:
+                with open(self._local, "rb") as local_file:
+                    while True:
+                        self._ensure_session_current()
+                        if self._cancelled:
+                            return
+                        data = local_file.read(256 * 1024)
+                        if not data:
+                            completed = True
+                            break
+                        writer.write(data)
+                        done += len(data)
+                        self.progress.emit(done, total)
+            finally:
+                self._handle = None
+                if completed and not self._cancelled and self._session_is_current():
+                    writer.close()
+                else:
+                    writer.abort()
             return
 
         # ── SFTP / sudo upload ───────────────────────────────────
@@ -431,18 +506,24 @@ class _TransferWorker(QThread):
             REQUEST_SIZE = 32 * 1024
             chunk = REQUEST_SIZE
             with open(self._local, "rb") as local_f:
-                with self._sftp._sftp.open(self._remote, "wb") as remote_f:
-                    remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
-                    remote_f.set_pipelined(True)
-                    while True:
-                        if self._cancelled:
-                            return
-                        buf = local_f.read(chunk)
-                        if not buf:
-                            break
-                        remote_f.write(buf)
-                        done += len(buf)
-                        self.progress.emit(done, total)
+                remote_f = self._sftp._sftp.open(self._remote, "wb")
+                self._handle = remote_f
+                try:
+                    with remote_f:
+                        remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
+                        remote_f.set_pipelined(True)
+                        while True:
+                            self._ensure_session_current()
+                            if self._cancelled:
+                                return
+                            buf = local_f.read(chunk)
+                            if not buf:
+                                break
+                            remote_f.write(buf)
+                            done += len(buf)
+                            self.progress.emit(done, total)
+                finally:
+                    self._handle = None
 
         # Never report success on faith: confirm the file is really there
         # and the right size. (A silent no-op like the one above would have
@@ -622,7 +703,17 @@ class ScpTransferWorker(QThread):
         self._total     = total_size or 0
         self._cancelled = False
         self._proc      = None
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
 
     def cancel(self):
         self._cancelled = True
@@ -679,6 +770,8 @@ class ScpTransferWorker(QThread):
         import subprocess
         import select
 
+        if self._cancelled:
+            return
         if not self._total and self._direction == "upload":
             try:
                 self._total = os.path.getsize(self._local)
@@ -688,6 +781,12 @@ class ScpTransferWorker(QThread):
         # Safety net (dialogs.py already routes these to SFTP via
         # supports()): never launch scp for a password login when there's
         # no pty to answer its prompt — it would ask on the local console.
+        if not self._session_is_current():
+            self.finished_err.emit(
+                "The active connection changed before this file transfer could start."
+            )
+            return
+
         if not self.supports(self._pem, self._password):
             self.finished_err.emit(
                 "Password transfers via scp aren't supported on this OS; "
@@ -762,6 +861,7 @@ class ScpTransferWorker(QThread):
         # log does, and is what the failure message is built from.
         log           = bytearray()
         prompt_abort  = None
+        stale_session = False
         # Drive this off the process's own exit status (poll()), not off
         # read() returning EOF. ssh/scp can leave the pty/pipe's write end
         # referenced by a lingering child process even after the transfer
@@ -772,6 +872,10 @@ class ScpTransferWorker(QThread):
         # keep reading in the meantime to surface live progress.
         while True:
             if self._cancelled:
+                proc.kill()
+                break
+            if not self._session_is_current():
+                stale_session = True
                 proc.kill()
                 break
 
@@ -851,6 +955,11 @@ class ScpTransferWorker(QThread):
             return
 
         ret = proc.wait()
+        if stale_session:
+            self.finished_err.emit(
+                "The active connection changed during this file transfer; the stale transfer was stopped."
+            )
+            return
         if prompt_abort:
             self.finished_err.emit(
                 "scp stopped at a prompt it can't answer: {!r}".format(prompt_abort)

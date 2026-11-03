@@ -5,8 +5,15 @@ class FileTransferDialog(QDialog):
 
   def __init__(self, parent, sftp, direction: str, local_path: str, remote_path: str,
          host: str = None, port: int = 22, user: str = None, pem: str = None,
-         password: str = None, sudo_user: str = None):
+         password: str = None, sudo_user: str = None, service=None):
     super().__init__(parent)
+    self._service = service
+    self._session_generation = None
+    self._session_snapshot = None
+    if service is not None:
+      sftp, snapshot = service.capture_transfer_session()
+      self._session_generation = snapshot.generation
+      self._session_snapshot = snapshot
     self._direction = direction
     self._local   = local_path
     self._remote   = remote_path
@@ -139,16 +146,36 @@ class FileTransferDialog(QDialog):
     self._start_worker(worker)
     self._timer.start()
 
+  def _session_is_current(self):
+    if self._service is None:
+      return True
+    return self._service.is_current(self._session_generation)
+
   def _start_worker(self, worker):
+    if self._service is not None:
+      self._service.bind_worker(worker, self._session_snapshot)
     self._worker = worker
     worker.progress.connect(self._on_progress)
     worker.finished_ok.connect(self._on_success)
     worker.finished_err.connect(self._on_worker_error)
+    worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
     worker.start()
+
+  def _on_worker_thread_finished(self, worker):
+    """Surface lifecycle cancellation even when a worker emits no result signal."""
+    if worker is not self._worker or self._done:
+      return
+    if self._service is not None and not self._session_is_current():
+      self._on_error("The active connection changed; the transfer was cancelled.")
+    elif getattr(worker, "_cancelled", False):
+      self._on_error("The transfer was cancelled.")
 
   def _on_worker_error(self, msg: str):
     """scp failing *before any bytes moved* falls back to the SFTP path;
     anything else (SFTP failing, or a failure mid-transfer) is final."""
+    if self._service is not None and not self._session_is_current():
+      self._on_error(msg)
+      return
     if self._using_scp and not self._progressed:
       self._using_scp = False
       first = msg.splitlines()[0] if msg else "unknown error"
@@ -225,7 +252,9 @@ class FileTransferDialog(QDialog):
 
   def _on_cancel(self):
     if not self._done:
-      self._worker.cancel()
+      self._done = True
+      if self._worker is not None:
+        self._worker.cancel()
       self._timer.stop()
     self.reject()
 
@@ -243,18 +272,18 @@ class FileTransferDialog(QDialog):
   @classmethod
   def download(cls, parent, sftp, remote_path: str, local_path: str,
          host: str = None, port: int = 22, user: str = None, pem: str = None,
-         password: str = None, sudo_user: str = None) -> bool:
+         password: str = None, sudo_user: str = None, service=None) -> bool:
     dlg = cls(parent, sftp, "download", local_path, remote_path,
          host=host, port=port, user=user, pem=pem, password=password,
-         sudo_user=sudo_user)
+         sudo_user=sudo_user, service=service)
     return dlg.exec_() == QDialog.Accepted
 
   @classmethod
   def upload(cls, parent, sftp, local_path: str, remote_path: str,
         host: str = None, port: int = 22, user: str = None, pem: str = None,
-        password: str = None, sudo_user: str = None) -> bool:
+        password: str = None, sudo_user: str = None, service=None) -> bool:
     dlg = cls(parent, sftp, "upload", local_path, remote_path,
          host=host, port=port, user=user, pem=pem, password=password,
-         sudo_user=sudo_user)
+         sudo_user=sudo_user, service=service)
     return dlg.exec_() == QDialog.Accepted
 

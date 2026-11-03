@@ -111,7 +111,11 @@ class ThemeSecurityMixin:
       refreshed styles into every tab. Runs at the faded-out midpoint of
       _change_theme's cross-fade so the color jump itself is hidden."""
       apply_theme_vars(theme_name)
-      save_settings()
+      services = getattr(self, "services", None)
+      if services is not None:
+        services.settings.save_current_theme()
+      else:
+        save_settings()
       qss = build_qss()
       self.setStyleSheet(qss)
 
@@ -147,7 +151,11 @@ class ThemeSecurityMixin:
       self.status.showMessage("Theme changed to {}".format(theme_name))
 
     def _open_settings(self):
-      dlg = SettingsDialog(self, k8s_tab_titles=self.k8s_tab.visible_tab_titles())
+      dlg = SettingsDialog(
+        self,
+        k8s_tab_titles=self.k8s_tab.visible_tab_titles(),
+        ai_service=getattr(getattr(self, "services", None), "ai", None),
+      )
       if dlg.exec_() != QDialog.Accepted:
         return
 

@@ -303,7 +303,8 @@ class KubernetesResourcesMixin:
         self.ssh,
         ns,
         pod,
-        containers[0] if containers else None
+        containers[0] if containers else None,
+        service=self.kubernetes_service,
       ).exec_()
       return
 
@@ -320,7 +321,8 @@ class KubernetesResourcesMixin:
         self.ssh,
         ns,
         pod,
-        dlg.selected_container()
+        dlg.selected_container(),
+        service=self.kubernetes_service,
       ).exec_()
 
   # ── Inline " AI" button on troubled pod cards ─────────────
@@ -372,7 +374,11 @@ class KubernetesResourcesMixin:
     inner = f"kubectl {self._context_flag()} logs --tail=200 -n {ns} {prev} {pod} 2>&1".replace("kubectl logs", "kubectl logs")
     cmd = f"bash -lc {shlex.quote(inner)}"
 
-    worker = CommandWorker(self.ssh, cmd)
+    worker = (
+      self.kubernetes_service.create_worker(None, cmd)
+      if self.kubernetes_service is not None
+      else CommandWorker(self.ssh, cmd)
+    )
     worker.done.connect(lambda out, pod=pod, ns=ns: self._on_pod_ai_logs_fetched(pod, ns, out))
     worker.error.connect(lambda err: self._on_pod_ai_logs_error(err))
     self._pod_ai_log_worker = worker
@@ -394,9 +400,14 @@ class KubernetesResourcesMixin:
       self._pod_ai_dialog.set_loading()
 
     provider = ai_assist.get_provider()
-    worker = ai_assist.AIExplainWorker(
-      provider, ai_assist.get_api_key(provider), ai_assist.get_model(provider),
-      pod, ns, None, log_text,
+    ai_service = getattr(getattr(self, "_services", None), "ai", None)
+    worker = (
+      ai_service.create_explain_worker(pod, ns, None, log_text)
+      if ai_service is not None
+      else ai_assist.AIExplainWorker(
+        provider, ai_assist.get_api_key(provider), ai_assist.get_model(provider),
+        pod, ns, None, log_text,
+      )
     )
     worker.done.connect(self._on_pod_ai_done)
     worker.error.connect(self._on_pod_ai_error)
@@ -452,13 +463,21 @@ class KubernetesResourcesMixin:
     # Same trailing-quote defensiveness as _populate_namespaces.
     containers = out.strip().strip("'").split()
     if len(containers) <= 1:
-      ExecDialog(self, self.ssh, ns, pod, containers[0] if containers else None,
-            context=self._current_context).exec_()
+      ExecDialog(
+        self, self.ssh if self.kubernetes_service is None else None,
+        ns, pod, containers[0] if containers else None,
+        context=self._current_context, service=self.kubernetes_service,
+        ai_service=getattr(getattr(self, "_services", None), "ai", None),
+      ).exec_()
       return
     dlg = ContainerPickerDialog(self, pod, containers)
     if dlg.exec_() == QDialog.Accepted:
-      ExecDialog(self, self.ssh, ns, pod, dlg.selected_container(),
-            context=self._current_context).exec_()
+      ExecDialog(
+        self, self.ssh if self.kubernetes_service is None else None,
+        ns, pod, dlg.selected_container(),
+        context=self._current_context, service=self.kubernetes_service,
+        ai_service=getattr(getattr(self, "_services", None), "ai", None),
+      ).exec_()
 
 
   def _pod_delete(self):

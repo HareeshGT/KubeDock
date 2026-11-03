@@ -369,6 +369,7 @@ class UIMixin:
 
       # ── Kubernetes tab ────────────────────────────────────
       self.k8s_tab = KubernetesTab()
+      self.k8s_tab.set_services(self.services)
       self.k8s_tab.status_msg.connect(lambda m: self.status.showMessage(m))
       # Kubernetes gets the ⎈ helm-wheel glyph instead of the SVG icon set
       # used for every other tab — it's the symbol most people recognize
@@ -382,6 +383,7 @@ class UIMixin:
 
       # ── Dashboard tab ──────────────────────────────────────
       self.dashboard_tab = DashboardTab()
+      self.dashboard_tab.set_services(self.services)
       self.dashboard_tab.status_msg.connect(lambda m: self.status.showMessage(m))
       # Keep the Dashboard's node/pod snapshot pinned to whatever cluster
       # context is selected in the Kubernetes tab. Without this, DashboardTab
@@ -398,6 +400,7 @@ class UIMixin:
 
       # ── Docker tab ─────────────────────────────────────────
       self.docker_tab = DockerTab()
+      self.docker_tab.set_services(self.services)
       self.docker_tab.status_msg.connect(lambda m: self.status.showMessage(m))
       add_icon_tab(self.main_tabs, self.docker_tab, " Docker")
 

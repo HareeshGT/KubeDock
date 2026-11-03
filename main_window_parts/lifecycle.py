@@ -49,6 +49,8 @@ from settings_dialog import SettingsDialog
 from lock_screen import AppLockDialog
 import security
 
+from services import AppServices
+
 _EXECUTABLE_EXTS = {
     ".py", ".sh", ".bash", ".rb", ".js", ".ts", ".php", ".pl",
     ".lua", ".r", ".go", ".java", ".kt", ".rs", ".c", ".cpp", ".swift",
@@ -58,8 +60,35 @@ _MEDIA_KINDS = {"video", "audio"}
 
 
 class LifecycleMixin:
+    @property
+    def ssh(self):
+      services = getattr(self, "services", None)
+      if services is not None:
+        return services.connection.get_ssh_client()
+      return getattr(self, "_ssh_compat", None)
+
+    @ssh.setter
+    def ssh(self, value):
+      # Compatibility storage for partially initialized windows. Once the
+      # service container exists, the ConnectionService is authoritative.
+      self._ssh_compat = value
+
+    @property
+    def sftp(self):
+      services = getattr(self, "services", None)
+      if services is not None:
+        return services.connection.get_filesystem()
+      return getattr(self, "_sftp_compat", None)
+
+    @sftp.setter
+    def sftp(self, value):
+      self._sftp_compat = value
+
     def __init__(self):
       super().__init__()
+      # All feature modules share this process-local service composition root.
+      self.services = AppServices()
+      self.connection_service = self.services.connection
       self.ssh      = None
       self.sftp     = None
       self._health_worker = None
@@ -130,20 +159,54 @@ class LifecycleMixin:
       self._setup_app_lock()
 
     def closeEvent(self, event):
-      try:
-        if self._terminal_popout_win is not None:
-          self._terminal_popout_win.close()
-        if self._term_ai_worker is not None:
-          self._term_ai_worker.quit()
-        self.k8s_tab.clear_connection_info() # also stops any active tunnel
-        self.dashboard_tab.shutdown() # stop all dashboard timers (focused + background)
-        if self._health_worker:
-          worker = self._health_worker
-          self._health_worker = None
-          worker.stop() # don't leave the heartbeat thread running into interpreter teardown
-        if self.ssh: close_ssh_connection_pool(self.ssh)
-        if self.sftp: self.sftp.close()
-        if self.ssh: self.ssh.close()
-      except Exception:
-        pass
+      # Keep teardown best-effort, but isolate each step. A failure while
+      # closing a popout or stopping a dashboard timer must never skip the
+      # shared connection service shutdown and leak the active SSH/FTP session.
+      def _cleanup(action):
+        try:
+          action()
+        except Exception:
+          pass
+
+      popout = getattr(self, "_terminal_popout_win", None)
+      if popout is not None:
+        _cleanup(popout.close)
+
+      term_ai_worker = getattr(self, "_term_ai_worker", None)
+      if term_ai_worker is not None:
+        _cleanup(term_ai_worker.quit)
+
+      k8s_tab = getattr(self, "k8s_tab", None)
+      if k8s_tab is not None:
+        # Also stops any active tunnel before the shared session is closed.
+        _cleanup(k8s_tab.clear_connection_info)
+
+      dashboard_tab = getattr(self, "dashboard_tab", None)
+      if dashboard_tab is not None:
+        # Stop focused and background dashboard timers.
+        _cleanup(dashboard_tab.shutdown)
+
+      connect_worker = getattr(self, "_connect_worker", None)
+      if connect_worker is not None:
+        # A connection handshake must not finish and publish a new session
+        # while the window is shutting down.
+        _cleanup(connect_worker.cancel)
+        _cleanup(lambda: connect_worker.wait(1500))
+
+      health_worker = getattr(self, "_health_worker", None)
+      self._health_worker = None
+      if health_worker is not None:
+        # Stop and join the heartbeat before closing its SSH transport.
+        _cleanup(health_worker.stop)
+        _cleanup(lambda: health_worker.wait(1000))
+
+      # ConnectionService owns the primary session and managed secondary SSH
+      # pool. Always attempt its idempotent teardown, regardless of failures
+      # in UI cleanup above.
+      services = getattr(self, "services", None)
+      if services is not None:
+        _cleanup(services.shutdown)
+
+      _cleanup(lambda: setattr(self, "ssh", None))
+      _cleanup(lambda: setattr(self, "sftp", None))
       event.accept()

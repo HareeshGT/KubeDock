@@ -14,7 +14,7 @@ class MediaPlayerDialog(QDialog):
   # Strong references to open (non-modal) players.
   _open_players = set()
 
-  def __init__(self, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None):
+  def __init__(self, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None, service=None):
     # macOS: the main window runs in a native fullscreen Space. Any separate
     # top-level window (dialog, tool window, sheet) can be placed on a
     # different Space, which makes macOS switch desktops and the app "loses
@@ -39,6 +39,14 @@ class MediaPlayerDialog(QDialog):
       super().__init__(parent)
     self.setAttribute(Qt.WA_DeleteOnClose, True)
     self._embed_fullscreen = False
+    self._service = service
+    self._session_generation = None
+    self._session_snapshot = None
+    if service is not None:
+      snapshot = service.connection.snapshot
+      self._session_generation = snapshot.generation
+      self._session_snapshot = snapshot
+      sftp = ssh = None
     self._sftp = sftp
     self._ssh = ssh
     self._remote = remote_path
@@ -314,9 +322,18 @@ class MediaPlayerDialog(QDialog):
 
   def _start_stream(self):
     self._status_lbl.setText("Connecting...")
-    self._stream_server = MediaStreamServer(
-      self._ssh, self._sftp, self._remote, sudo_user=self._sudo_user)
-    self._start_worker = _StreamServerStartWorker(self._stream_server)
+    if self._service is not None:
+      (
+        self._stream_server, self._start_worker,
+        self._session_snapshot,
+      ) = self._service.create_media_stream_start_worker(
+        self._remote, sudo_user=self._sudo_user,
+      )
+      self._session_generation = self._session_snapshot.generation
+    else:
+      self._stream_server = MediaStreamServer(
+        self._ssh, self._sftp, self._remote, sudo_user=self._sudo_user)
+      self._start_worker = _StreamServerStartWorker(self._stream_server)
     self._start_worker.ready.connect(self._on_stream_ready)
     self._start_worker.error.connect(self._on_stream_error)
     self._start_worker.start()
@@ -479,7 +496,12 @@ class MediaPlayerDialog(QDialog):
       rate = self._speed_combo.currentText()
       muted = "Yes" if self._player.isMuted() else "No"
       volume = self._player.volume()
-      source = "SFTP/SSH" if not hasattr(self._sftp, "_ftp") else "FTP/FTPS"
+      protocol = (
+        self._session_snapshot.protocol
+        if self._service is not None and self._session_snapshot is not None
+        else ("ftp" if hasattr(self._sftp, "_ftp") else "ssh")
+      )
+      source = "FTP/FTPS" if protocol in ("ftp", "ftps") else "SFTP/SSH"
       seek = "Available" if self._stream_server and self._stream_server.supports_range else "Unavailable"
       lines = [
         "File: {}".format(os.path.basename(self._remote)),
@@ -768,7 +790,7 @@ class MediaPlayerDialog(QDialog):
         except (TypeError, RuntimeError):
           pass
         try:
-          worker.requestInterruption()
+          worker.cancel()
         except RuntimeError:
           worker = None
         if worker is not None:
@@ -807,8 +829,8 @@ class MediaPlayerDialog(QDialog):
     self.close()
 
   @classmethod
-  def open_remote(cls, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None):
-    dlg = cls(parent, sftp, ssh, remote_path, kind, sudo_user=sudo_user)
+  def open_remote(cls, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None, service=None):
+    dlg = cls(parent, sftp, ssh, remote_path, kind, sudo_user=sudo_user, service=service)
     if not dlg._embedded:
       dlg.exec_()
       return dlg

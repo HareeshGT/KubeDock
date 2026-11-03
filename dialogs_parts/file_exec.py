@@ -1,4 +1,5 @@
 from .common import *
+from workers import ExecStreamWorker as _ExecStreamWorker
 
 def _exec_cmd_for(ext: str, quoted: str, dirpath: str) -> tuple:
   q = quoted
@@ -25,81 +26,13 @@ def _exec_cmd_for(ext: str, quoted: str, dirpath: str) -> tuple:
   return _map.get(ext, (None, None))
 
 
-class _ExecStreamWorker(QThread):
-  """Streams SSH command output line by line via signals."""
-  line   = pyqtSignal(str)
-  error  = pyqtSignal(str)
-  finished = pyqtSignal(int)  # exit code
-
-  def __init__(self, ssh, cmd: str):
-    super().__init__()
-    self._ssh   = ssh
-    self._cmd   = cmd
-    self._stop  = False
-    self._channel = None  # set once the session is opened; used by send_input()
-    self.finished.connect(self.deleteLater)
-
-  def request_stop(self):
-    self._stop = True
-
-  def send_input(self, text: str):
-    """Write text to the running remote process's stdin (via the PTY).
-    Safe to call from the UI thread — Paramiko channels serialize
-    sends internally. No-ops silently if there's no live channel yet
-    or the command has already finished."""
-    if self._channel is None:
-      return
-    try:
-      self._channel.send(text)
-    except Exception:
-      pass
-
-  def run(self):
-    channel = None
-    exit_code = -1
-    try:
-      channel = open_managed_session(self._ssh)
-      channel.get_pty()
-      channel.settimeout(0.5)
-      channel.exec_command(self._cmd)
-      self._channel = channel
-
-      while True:
-        if self._stop:
-          exit_code = -1
-          return
-        try:
-          if channel.recv_ready():
-            chunk = channel.recv(4096)
-            if chunk:
-              self.line.emit(chunk.decode("utf-8", errors="replace"))
-            continue
-        except Exception:
-          pass
-        if channel.exit_status_ready() and not channel.recv_ready():
-          break
-        self.msleep(50)
-
-      exit_code = channel.recv_exit_status() if not self._stop else -1
-    except Exception as e:
-      self.error.emit(str(e))
-      exit_code = -1
-    finally:
-      self._channel = None
-      close_managed_session(channel)
-      # Always notify the dialog that this worker is finished, including
-      # when Stop caused run() to return early. This keeps the worker
-      # lifecycle consistent and lets the dialog drop its reference before
-      # Qt deletes the QThread wrapper.
-      self.finished.emit(exit_code)
-
-
 class FileExecDialog(QDialog):
   """Run a remote script and stream its output line by line."""
 
-  def __init__(self, parent, ssh, remote_path: str, sudo_user=None):
+  def __init__(self, parent, ssh, remote_path: str, sudo_user=None, service=None):
     super().__init__(parent)
     self._ssh    = ssh
+    self._service = service
     self._remote  = remote_path
     self._sudo_user = sudo_user
     self._worker  = None
@@ -304,7 +237,16 @@ class FileExecDialog(QDialog):
     self._send_btn.setEnabled(True)
     self._input_inp.setFocus()
 
-    self._worker = _ExecStreamWorker(self._ssh, cmd)
+    try:
+      self._worker = (
+        self._service.create_exec_stream_worker(cmd)
+        if self._service is not None
+        else _ExecStreamWorker(self._ssh, cmd)
+      )
+    except Exception as exc:
+      self._on_error(str(exc))
+      self._on_finished(-1)
+      return
     self._worker.line.connect(self._on_line)
     self._worker.error.connect(self._on_error)
     self._worker.finished.connect(self._on_finished)

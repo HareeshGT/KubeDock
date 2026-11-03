@@ -67,10 +67,10 @@ class _FTPStreamReader:
     def read(self, n):
         if self._closed:
             return b""
-        try:
-            return self._conn.recv(n)
-        except (OSError, socket.timeout):
-            return b""
+        # A timeout is not EOF: returning b"" here makes callers treat a
+        # stalled transfer as a successful, truncated file. Only an explicit
+        # close() should turn subsequent reads into EOF.
+        return self._conn.recv(n)
 
     def close(self):
         if self._closed:
@@ -81,6 +81,63 @@ class _FTPStreamReader:
                 closer()
             except Exception:
                 pass
+
+
+class _FTPStreamWriter:
+    """File-like writer over one dedicated FTP/FTPS STOR data connection."""
+
+    def __init__(self, fs, ftp, data_conn):
+        self._fs = fs
+        self._ftp = ftp
+        self._conn = data_conn
+        self._closed = False
+        self._bytes_written = 0
+
+    def write(self, data):
+        if self._closed:
+            raise ValueError("I/O operation on closed FTP stream")
+        payload = bytes(data)
+        if payload:
+            self._conn.sendall(payload)
+            self._bytes_written += len(payload)
+        return len(payload)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._conn.close()
+            self._ftp.voidresp()
+        finally:
+            try:
+                self._ftp.quit()
+            except Exception:
+                try:
+                    self._ftp.close()
+                except Exception:
+                    pass
+        if self._bytes_written:
+            self._fs._record_transfer("upload", self._bytes_written)
+
+    def abort(self):
+        if self._closed:
+            return
+        self._closed = True
+        for closer in (self._conn.close, self._ftp.close):
+            try:
+                closer()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.close()
+        else:
+            self.abort()
 
 
 class FTPFS:
@@ -279,6 +336,22 @@ class FTPFS:
                 pass
             raise
         return _FTPStreamReader(ftp, conn)
+
+    def open_upload_stream(self, path):
+        """Open a dedicated control+data connection for one STOR transfer."""
+        normalized = self.normalize(path)
+        ftp = self._new_connection()
+        try:
+            ftp.voidcmd("TYPE I")
+            conn = ftp.transfercmd("STOR " + normalized)
+            conn.settimeout(60)
+        except Exception:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+            raise
+        return _FTPStreamWriter(self, ftp, conn)
 
     def _record_transfer(self, direction, amount):
         with self._stats_lock:

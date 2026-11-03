@@ -66,6 +66,7 @@ _AUTH_USER: ContextVar[str] = ContextVar("kubedeck_web_auth_user", default="-")
 _KUBE_CONTEXT: ContextVar[str] = ContextVar("kubedock_web_kube_context", default="")
 _SESSION_CONTEXTS: dict[str, str] = {}
 _APP_PROVIDER: Optional[Callable[[], object]] = None
+_WEBAPP_SERVICE = None
 _DESKTOP_BRIDGE = None
 _ACTIVE_TERMINALS: dict[str, int] = {}
 _TERMINAL_LOCK = threading.RLock()
@@ -114,11 +115,13 @@ class _DesktopBridge(QObject):
 def configure_runtime(
     ssh_provider: Callable[[], Optional[paramiko.SSHClient]],
     app_provider: Optional[Callable[[], object]] = None,
+    webapp_service=None,
 ) -> None:
-    global _SSH_PROVIDER, _APP_PROVIDER, _DESKTOP_BRIDGE
+    global _SSH_PROVIDER, _APP_PROVIDER, _DESKTOP_BRIDGE, _WEBAPP_SERVICE
     with _RUNTIME_LOCK:
         _SSH_PROVIDER = ssh_provider
         _APP_PROVIDER = app_provider
+        _WEBAPP_SERVICE = webapp_service
         if app_provider is not None:
             try:
                 window = app_provider()
@@ -411,7 +414,14 @@ def _exec(
         request_id, _AUTH_USER.get(), logged_command
     )
     try:
-        if managed_exec_command is None:
+        if _WEBAPP_SERVICE is not None:
+            # Execute via the shared desktop command service rather than
+            # opening a request-specific Paramiko connection/channel here.
+            code, out, err = _WEBAPP_SERVICE.execute(
+                command, timeout=timeout, input_data=input_data,
+                expected_ssh=ssh,
+            )
+        elif managed_exec_command is None:
             stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
             try:
                 if input_data is not None:
@@ -1000,6 +1010,8 @@ def _safe_remote_path(value: str) -> str:
 
 def _sftp():
     try:
+        if _WEBAPP_SERVICE is not None:
+            return _WEBAPP_SERVICE.open_sftp()
         return _ssh().open_sftp()
     except Exception:
         logger.exception("Unable to open SFTP channel")
@@ -1799,8 +1811,13 @@ async def remote_terminal(websocket: WebSocket) -> None:
         await websocket.close(code=4403, reason="Secure WebSocket required")
         return
     try:
-        ssh = _ssh()
-        channel = ssh.invoke_shell(term="xterm-256color", width=120, height=32)
+        channel = (
+            _WEBAPP_SERVICE.open_terminal_channel(
+                term="xterm-256color", width=120, height=32,
+            )
+            if _WEBAPP_SERVICE is not None
+            else _ssh().invoke_shell(term="xterm-256color", width=120, height=32)
+        )
     except Exception:
         logger.exception("Unable to open remote PTY")
         await websocket.close(code=1011, reason="Unable to open remote terminal")
@@ -2489,6 +2506,7 @@ def start_server(
     host: Optional[str] = None,
     port: Optional[int] = None,
     app_provider: Optional[Callable[[], object]] = None,
+    webapp_service=None,
 ) -> bool:
     global _server, _server_thread, _server_port, _server_host
     # Bind to loopback unless TLS is configured (then all interfaces, so a
@@ -2505,7 +2523,10 @@ def start_server(
     except ValueError:
         preferred_port = 8000
 
-    configure_runtime(ssh_provider, app_provider=app_provider)
+    configure_runtime(
+        ssh_provider, app_provider=app_provider,
+        webapp_service=webapp_service,
+    )
 
     with _SERVER_LOCK:
         if _server_thread is not None and _server_thread.is_alive():
@@ -2560,7 +2581,7 @@ def start_server(
 
 
 def stop_server(timeout: float = 3.0) -> None:
-    global _server, _server_thread, _server_port, _server_host, _APP_PROVIDER, _DESKTOP_BRIDGE
+    global _server, _server_thread, _server_port, _server_host, _APP_PROVIDER, _DESKTOP_BRIDGE, _WEBAPP_SERVICE
     with _SERVER_LOCK:
         server, thread = _server, _server_thread
         _server = None
@@ -2570,6 +2591,7 @@ def stop_server(timeout: float = 3.0) -> None:
     with _RUNTIME_LOCK:
         _APP_PROVIDER = None
         _DESKTOP_BRIDGE = None
+        _WEBAPP_SERVICE = None
 
     # A stop/restart must invalidate browser sessions, even when it occurs
     # inside the same desktop process rather than via a full app shutdown.
