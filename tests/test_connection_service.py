@@ -458,3 +458,41 @@ def test_kubernetes_log_stream_worker_is_bound_to_shared_connection_generation()
 
     connection.attach_ssh(FakeResource(), host="replacement.example")
     assert not worker._session_is_current()
+
+
+
+def test_domain_command_services_share_one_generation_guarded_worker_factory():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    connection.attach_ssh(FakeResource(), host="shared.example")
+    pool = []
+
+    workers = [
+        services.kubernetes.create_worker(pool, "kubectl get pods", timeout=11),
+        services.docker.create_worker(pool, "docker ps", sudo_user="ops", timeout=12),
+        services.dashboard.create_worker(pool, "uname -a", timeout=13, raw=True),
+        services.terminal.create_command_worker(
+            pool, "pwd", cwd="/srv/app", sudo_user="ops", timeout=14,
+        ),
+        services.files.create_command_worker(pool, "ls -la", timeout=15),
+    ]
+
+    assert pool == workers
+    assert len({worker.connection_generation for worker in workers}) == 1
+    assert len({worker.connection_session_id for worker in workers}) == 1
+    assert all(worker._session_is_current() for worker in workers)
+
+    assert workers[0].cmd == "kubectl get pods"
+    assert workers[0].timeout == 11
+    assert workers[1].sudo_user == "ops"
+    assert workers[1].timeout == 12
+    assert workers[2].raw is True
+    assert workers[2].timeout == 13
+    assert workers[3].cwd == "/srv/app"
+    assert workers[3].sudo_user == "ops"
+    assert workers[3].timeout == 14
+    assert workers[4].cmd == "ls -la"
+    assert workers[4].timeout == 15
+
+    connection.disconnect()
+    assert all(not worker._session_is_current() for worker in workers)
