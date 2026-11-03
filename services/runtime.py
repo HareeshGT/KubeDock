@@ -44,6 +44,19 @@ class AppServices:
         self.lifecycle.register("terminal", self.terminal, dependencies=("commands",))
         self.lifecycle.register("ai", self.ai)
         self.lifecycle.register("webapp", self.webapp, dependencies=("connection", "commands"))
+        for name, service in (
+            ("connection", self.connection),
+            ("commands", self.commands),
+            ("kubernetes", self.kubernetes),
+            ("docker", self.docker),
+            ("monitoring", self.dashboard),
+            ("files", self.files),
+            ("terminal", self.terminal),
+            ("ai", self.ai),
+            ("webapp", self.webapp),
+        ):
+            service._lifecycle_manager = self.lifecycle
+            service._lifecycle_name = name
         self._lock = threading.Lock()
         self._stopped = False
 
