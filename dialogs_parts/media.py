@@ -14,7 +14,7 @@ class MediaPlayerDialog(QDialog):
   # Strong references to open (non-modal) players.
   _open_players = set()
 
-  def __init__(self, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None):
+  def __init__(self, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None, service=None):
     # macOS: the main window runs in a native fullscreen Space. Any separate
     # top-level window (dialog, tool window, sheet) can be placed on a
     # different Space, which makes macOS switch desktops and the app "loses
@@ -39,6 +39,10 @@ class MediaPlayerDialog(QDialog):
       super().__init__(parent)
     self.setAttribute(Qt.WA_DeleteOnClose, True)
     self._embed_fullscreen = False
+    self._service = service
+    if service is not None:
+      sftp = service.filesystem
+      ssh = service.ssh_client
     self._sftp = sftp
     self._ssh = ssh
     self._remote = remote_path
@@ -807,8 +811,8 @@ class MediaPlayerDialog(QDialog):
     self.close()
 
   @classmethod
-  def open_remote(cls, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None):
-    dlg = cls(parent, sftp, ssh, remote_path, kind, sudo_user=sudo_user)
+  def open_remote(cls, parent, sftp, ssh, remote_path: str, kind: str, sudo_user=None, service=None):
+    dlg = cls(parent, sftp, ssh, remote_path, kind, sudo_user=sudo_user, service=service)
     if not dlg._embedded:
       dlg.exec_()
       return dlg
