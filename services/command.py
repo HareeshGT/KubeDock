@@ -243,6 +243,7 @@ class CommandService:
         timeout: Optional[int] = None,
         raw: bool = False,
         operation_key: str = None,
+        diagnostic_key: str = None,
     ):
         activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
@@ -281,7 +282,7 @@ class CommandService:
         # register_worker so we never return or track an unowned duplicate.
         worker = self.register_worker(
             worker, operation_key=operation_token,
-            diagnostic_key=operation_key,
+            diagnostic_key=diagnostic_key or operation_key,
         )
         if worker_pool is not None:
             track_worker(worker_pool, worker)
