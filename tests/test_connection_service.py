@@ -1054,3 +1054,25 @@ def test_exec_stream_worker_is_owned_by_worker_layer_and_stop_closes_channel():
 
     assert worker._stop
     assert channel.close_calls == 1
+
+
+
+def test_domain_services_and_shared_exec_worker_do_not_import_dialog_modules():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    modules = [
+        root / "services" / "kubernetes.py",
+        root / "services" / "docker.py",
+        root / "services" / "files.py",
+        root / "services" / "dashboard.py",
+        root / "services" / "terminal.py",
+        root / "services" / "ai.py",
+        root / "services" / "webapp.py",
+        root / "workers_parts" / "exec_stream.py",
+    ]
+
+    for module in modules:
+        source = module.read_text(encoding="utf-8")
+        assert "dialogs_parts" not in source, module
+        assert "from dialogs " not in source, module
