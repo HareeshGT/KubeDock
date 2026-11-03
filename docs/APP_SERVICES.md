@@ -72,7 +72,7 @@ bounded managed channel from the existing pool.
 | `DashboardService` | Host, process and cluster telemetry workers, including selected-context binding for cluster snapshots | Dashboard refresh pipeline |
 | `FileManagerService` | Filesystem access, metadata lookup, byte writes, path normalization, create/delete/rename, directory listing, guarded streaming readers, remote file execution, and shared adapter access for media/transfer dialogs | Remote file manager, Edit, Run, Play, Upload, Download, and large-file viewer dialogs |
 | `TerminalService` | Integrated terminal and working-directory command workers | Main terminal |
-| `AIService` | Provider-backed explain, Kubernetes interpretation and investigation worker construction | Pod AI, terminal explain, Ops Mind |
+| `AIService` | Provider-backed explain, Kubernetes interpretation, investigation and Settings model-connectivity worker construction | Pod AI, terminal explain, Ops Mind, Settings |
 | `WebAppService` | Restricted access to the active session and shared backend command execution | Embedded FastAPI application |
 
 Feature widgets receive the shared services from the main window. Their
@@ -114,12 +114,14 @@ bound to the same SSH client that was validated for that request.
   is no longer current.
 - The one existing SSH health monitor is retained to avoid duplicate probes.
 
-## Compatibility and next cleanup
+## Compatibility boundary
 
-This migration introduces real service ownership and service-first operation
-factories while retaining compatibility fallbacks for widgets created outside
-the main application. Those fallbacks should only be removed after standalone
-widget tests and all remaining legacy call sites have been migrated. New
-features should depend on `AppServices` or a narrow service interface and
-must never create their own SSH connection or bypass the managed command
-service.
+The desktop application injects the same `AppServices` instance into the
+Kubernetes, Docker, Dashboard, terminal, file manager, Web App and AI feature
+paths. The remaining direct-worker branches are compatibility adapters for
+standalone widgets and focused tests; they are not used by the normal desktop
+composition path. Keep these adapters until standalone widget construction is
+covered by dedicated tests, but do not add new direct connection or worker
+creation paths to production feature code. New features should depend on
+`AppServices` or a narrow service interface and must never create their own
+primary SSH connection or bypass the managed command service.
