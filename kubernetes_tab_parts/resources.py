@@ -303,7 +303,8 @@ class KubernetesResourcesMixin:
         self.ssh,
         ns,
         pod,
-        containers[0] if containers else None
+        containers[0] if containers else None,
+        service=self.kubernetes_service,
       ).exec_()
       return
 
@@ -320,7 +321,8 @@ class KubernetesResourcesMixin:
         self.ssh,
         ns,
         pod,
-        dlg.selected_container()
+        dlg.selected_container(),
+        service=self.kubernetes_service,
       ).exec_()
 
   # ── Inline " AI" button on troubled pod cards ─────────────
