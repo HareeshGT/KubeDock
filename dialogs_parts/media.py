@@ -790,7 +790,7 @@ class MediaPlayerDialog(QDialog):
         except (TypeError, RuntimeError):
           pass
         try:
-          worker.requestInterruption()
+          worker.cancel()
         except RuntimeError:
           worker = None
         if worker is not None:
