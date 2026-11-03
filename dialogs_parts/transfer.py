@@ -258,6 +258,6 @@ class FileTransferDialog(QDialog):
         password: str = None, sudo_user: str = None, service=None) -> bool:
     dlg = cls(parent, sftp, "upload", local_path, remote_path,
          host=host, port=port, user=user, pem=pem, password=password,
-         sudo_user=sudo_user)
+         sudo_user=sudo_user, service=service)
     return dlg.exec_() == QDialog.Accepted
 
