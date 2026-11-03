@@ -37,6 +37,8 @@ def main():
     current_bytes, peak_bytes = tracemalloc.get_traced_memory()
     rss_after = _rss_bytes()
     statuses = services.service_status()
+    registered_workers = services.commands.registered_worker_count()
+    active_workers = services.commands.active_worker_count()
 
     result = {
         "measurement": "AppServices composition-root startup",
@@ -46,9 +48,9 @@ def main():
         "rss_before_bytes": rss_before,
         "rss_after_bytes": rss_after,
         "registered_services": len(statuses),
-        "registered_workers": services.commands.registered_worker_count(),
-        "active_workers": services.commands.active_worker_count(),
-        "background_workers_started_during_construction": 0,
+        "registered_workers": registered_workers,
+        "active_workers": active_workers,
+        "background_workers_started_during_construction": active_workers,
     }
     print(json.dumps(result, indent=2, sort_keys=True))
     services.shutdown()
