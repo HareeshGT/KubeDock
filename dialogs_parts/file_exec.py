@@ -1,4 +1,5 @@
 from .common import *
+from workers import ExecStreamWorker as _ExecStreamWorker
 
 def _exec_cmd_for(ext: str, quoted: str, dirpath: str) -> tuple:
   q = quoted
@@ -23,92 +24,6 @@ def _exec_cmd_for(ext: str, quoted: str, dirpath: str) -> tuple:
     ".swift": ("swift",    f"cd {d} && swift {q}"),
   }
   return _map.get(ext, (None, None))
-
-
-class _ExecStreamWorker(QThread):
-  """Streams SSH command output line by line via signals."""
-  line   = pyqtSignal(str)
-  error  = pyqtSignal(str)
-  finished = pyqtSignal(int)  # exit code
-
-  def __init__(self, ssh, cmd: str):
-    super().__init__()
-    self._ssh   = ssh
-    self._cmd   = cmd
-    self._stop  = False
-    self._channel = None  # set once the session is opened; used by send_input()
-    self._session_guard = None
-    self.finished.connect(self.deleteLater)
-
-  def _session_is_current(self):
-    guard = self._session_guard
-    if guard is None:
-      return True
-    try:
-      return bool(guard())
-    except Exception:
-      return False
-
-  def request_stop(self):
-    self._stop = True
-
-  def send_input(self, text: str):
-    """Write text to the running remote process's stdin (via the PTY).
-    Safe to call from the UI thread — Paramiko channels serialize
-    sends internally. No-ops silently if there's no live channel yet
-    or the command has already finished."""
-    if self._channel is None:
-      return
-    try:
-      self._channel.send(text)
-    except Exception:
-      pass
-
-  def run(self):
-    channel = None
-    exit_code = -1
-    try:
-      if not self._session_is_current():
-        self.error.emit("The active connection changed before the stream could start.")
-        return
-      channel = open_managed_session(self._ssh)
-      channel.get_pty()
-      channel.settimeout(0.5)
-      channel.exec_command(self._cmd)
-      self._channel = channel
-
-      while True:
-        if self._stop:
-          exit_code = -1
-          return
-        if not self._session_is_current():
-          self.error.emit("The active connection changed while the stream was running.")
-          exit_code = -1
-          return
-        try:
-          if channel.recv_ready():
-            chunk = channel.recv(4096)
-            if chunk:
-              self.line.emit(chunk.decode("utf-8", errors="replace"))
-            continue
-        except Exception:
-          pass
-        if channel.exit_status_ready() and not channel.recv_ready():
-          break
-        self.msleep(50)
-
-      exit_code = channel.recv_exit_status() if not self._stop else -1
-    except Exception as e:
-      self.error.emit(str(e))
-      exit_code = -1
-    finally:
-      self._channel = None
-      close_managed_session(channel)
-      # Always notify the dialog that this worker is finished, including
-      # when Stop caused run() to return early. This keeps the worker
-      # lifecycle consistent and lets the dialog drop its reference before
-      # Qt deletes the QThread wrapper.
-      self.finished.emit(exit_code)
 
 
 class FileExecDialog(QDialog):
