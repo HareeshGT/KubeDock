@@ -153,6 +153,7 @@ class FileTransferDialog(QDialog):
   def _start_worker(self, worker):
     if self._service is not None:
       worker._session_guard = self._session_is_current
+      self._service.register_worker(worker)
     self._worker = worker
     worker.progress.connect(self._on_progress)
     worker.finished_ok.connect(self._on_success)
