@@ -59,3 +59,15 @@ service lifecycles, requests cancellation of outstanding command workers,
 disconnects the shared transport to release blocked I/O, and performs a
 bounded worker wait. Shutdown is idempotent and cleanup errors in one service
 must not prevent transport teardown.
+
+
+## Performance baseline
+
+Run `python scripts/benchmark_service_runtime.py` from the repository root.
+It records composition-root construction time, Python heap current/peak
+allocations, optional process RSS (when `psutil` is installed), registered
+service count, and worker counts. For a meaningful before/after comparison,
+run the same script on the base revision and this branch with the same machine,
+Python version, and installed dependencies. This benchmark intentionally
+measures service-container startup only; it must not be presented as full GUI
+startup or steady-state application memory.
