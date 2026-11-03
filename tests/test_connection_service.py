@@ -1302,3 +1302,31 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
     assert "self.ssh if self.docker_service is None else None" in docker_tab
     resources = (root / "kubernetes_tab_parts" / "resources.py").read_text(encoding="utf-8")
     assert "self.ssh if self.kubernetes_service is None else None" in resources
+
+
+
+def test_file_service_captures_and_binds_transfer_session_workers():
+    class TransferWorker:
+        def __init__(self):
+            self.finished = type("Signal", (), {"connect": lambda self, _callback: None})()
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    filesystem = FakeFilesystem()
+    snapshot = connection.attach_ssh(FakeResource(), filesystem, host="transfer.example")
+    services = AppServices(connection)
+
+    captured_filesystem, captured_snapshot = services.files.capture_transfer_session()
+    worker = TransferWorker()
+    services.files.bind_worker(worker, captured_snapshot)
+
+    assert captured_filesystem is filesystem
+    assert captured_snapshot == snapshot
+    assert worker.connection_generation == snapshot.generation
+    assert worker in services.commands._workers
+
+    connection.disconnect()
+    assert worker.cancelled
