@@ -11,11 +11,12 @@ from .files import FileManagerService
 from .terminal import TerminalService
 from .ai import AIService
 from .webapp import WebAppService
+from .persistence import DatabaseService, SettingsService
 
 __all__ = [
     "AppServices", "ConnectionService", "ConnectionSnapshot",
     "CommandService", "ServiceLifecycleManager", "ServiceState",
     "ServiceStatus", "KubernetesService", "DockerService",
     "DashboardService", "FileManagerService", "TerminalService",
-    "AIService", "WebAppService",
+    "AIService", "WebAppService", "DatabaseService", "SettingsService",
 ]
