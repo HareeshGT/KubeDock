@@ -1035,3 +1035,24 @@ def test_ftp_stream_reader_propagates_timeout_instead_of_reporting_eof():
 
     reader.close()
     assert reader.read(4096) == b""
+
+
+
+def test_exec_stream_worker_is_owned_by_worker_layer_and_stop_closes_channel():
+    from workers import ExecStreamWorker
+
+    class FakeChannel:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    worker = ExecStreamWorker(FakeResource(), "tail -f /var/log/app.log")
+    channel = FakeChannel()
+    worker._channel = channel
+
+    worker.request_stop()
+
+    assert worker._stop
+    assert channel.close_calls == 1
