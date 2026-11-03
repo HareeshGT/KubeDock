@@ -16,6 +16,65 @@ class CommandService:
 
     def __init__(self, connection):
         self.connection = connection
+        self._workers = []
+        self._workers_lock = threading.RLock()
+        self._shutting_down = False
+
+    def register_worker(self, worker):
+        """Keep service-created workers alive and include them in app shutdown."""
+        with self._workers_lock:
+            if worker not in self._workers:
+                self._workers.append(worker)
+                worker.finished.connect(
+                    lambda w=worker: self._forget_worker(w)
+                )
+            shutting_down = self._shutting_down
+        if shutting_down:
+            self._request_worker_stop(worker)
+        return worker
+
+    def _forget_worker(self, worker):
+        with self._workers_lock:
+            if worker in self._workers:
+                self._workers.remove(worker)
+
+    @staticmethod
+    def _request_worker_stop(worker):
+        for method_name in ("cancel", "request_stop", "stop"):
+            method = getattr(worker, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+                return
+        try:
+            worker.requestInterruption()
+        except Exception:
+            pass
+
+    def request_worker_shutdown(self):
+        with self._workers_lock:
+            self._shutting_down = True
+            workers = list(self._workers)
+        for worker in workers:
+            self._request_worker_stop(worker)
+
+    def wait_for_workers(self, timeout_seconds=3.0):
+        deadline = __import__("time").monotonic() + max(0.0, float(timeout_seconds))
+        with self._workers_lock:
+            workers = list(self._workers)
+        for worker in workers:
+            try:
+                if worker.isRunning():
+                    remaining_ms = max(0, int((deadline - __import__("time").monotonic()) * 1000))
+                    if remaining_ms <= 0:
+                        break
+                    worker.wait(remaining_ms)
+            except Exception:
+                pass
+        with self._workers_lock:
+            self._workers = [w for w in self._workers if getattr(w, "isRunning", lambda: False)()]
 
     def create_worker(
         self,
@@ -41,6 +100,7 @@ class CommandService:
         worker.connection_generation = snapshot.generation
         worker.connection_session_id = snapshot.session_id
         worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.register_worker(worker)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
