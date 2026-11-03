@@ -18,6 +18,17 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
 
+from .ui import _QT_MULTIMEDIA_AVAILABLE, QMediaContent
+from PyQt5.QtGui import QKeySequence
+from PyQt5.QtWidgets import QGraphicsBlurEffect
+
+from ui_icons import set_icon, apply_text_icon, icon_button
+from themes import T, load_settings, save_settings
+from utils import monospace_font
+from .core import *
+from .core import _NarrationThread, _OpenAINeuralTTSWorker, _Qwen3TTSWorker, _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE, _QWEN_TTS_AVAILABLE
+
+
 _ACTIVE_VOICE_DISCOVERY_WORKERS = set()
 
 
@@ -35,16 +46,6 @@ class _VoiceDiscoveryWorker(QThread):
             self.voices_ready.emit(list_voices())
         except Exception:
             self.voices_ready.emit([])
-
-from .ui import _QT_MULTIMEDIA_AVAILABLE, QMediaContent
-from PyQt5.QtGui import QKeySequence
-from PyQt5.QtWidgets import QGraphicsBlurEffect
-
-from ui_icons import set_icon, apply_text_icon, icon_button
-from themes import T, load_settings, save_settings
-from utils import monospace_font
-from .core import *
-from .core import _NarrationThread, _OpenAINeuralTTSWorker, _Qwen3TTSWorker, _TTS_AVAILABLE, _VOICE_AVAILABLE, _NEURAL_TTS_AVAILABLE, _QWEN_TTS_AVAILABLE
 
 
 class K8sAIOpsVoiceMixin:
