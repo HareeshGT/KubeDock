@@ -11,10 +11,6 @@ class KubernetesService:
         self.connection = connection
         self.commands = commands
 
-    @property
-    def ssh_client(self):
-        return self.connection.get_ssh_client()
-
     @staticmethod
     def context_flag(context):
         value = str(context or "").strip()
