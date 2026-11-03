@@ -923,7 +923,7 @@ class DockerTab(QWidget):
     if not name or self.ssh is None:
       return
     try:
-      dlg = DockerLogDialog(self.window(), self.ssh, name, self._sudo_user)
+      dlg = DockerLogDialog(self.window(), self.ssh, name, self._sudo_user, self.docker_service)
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
