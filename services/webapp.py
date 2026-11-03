@@ -24,8 +24,8 @@ class WebAppService:
         return self.connection.get_filesystem()
 
     def open_sftp(self):
-        activate_lifecycle(self)
         """Open a short-lived SFTP channel on the active shared SSH session."""
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before opening SFTP")
@@ -39,8 +39,8 @@ class WebAppService:
         return sftp
 
     def open_terminal_channel(self, *, term="xterm-256color", width=120, height=32):
-        activate_lifecycle(self)
         """Open an interactive PTY on the active session, never a new SSH client."""
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before opening a terminal")
