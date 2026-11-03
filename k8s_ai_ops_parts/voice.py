@@ -18,6 +18,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
 
+_ACTIVE_VOICE_DISCOVERY_WORKERS = set()
+
+
+def _release_voice_discovery_worker(worker):
+    _ACTIVE_VOICE_DISCOVERY_WORKERS.discard(worker)
+
+
 class _VoiceDiscoveryWorker(QThread):
     """Enumerate offline voices away from Qt's UI thread."""
 
@@ -65,9 +72,14 @@ class K8sAIOpsVoiceMixin:
         if current_worker is not None and current_worker.isRunning():
             return
 
-        worker = _VoiceDiscoveryWorker(self)
+        worker = _VoiceDiscoveryWorker()
         self._voice_discovery_worker = worker
+        _ACTIVE_VOICE_DISCOVERY_WORKERS.add(worker)
         worker.voices_ready.connect(self._on_voice_discovery_finished)
+        worker.finished.connect(
+            lambda worker=worker: _release_voice_discovery_worker(worker)
+        )
+        worker.finished.connect(self._on_voice_discovery_thread_finished)
         worker.start()
 
     def _on_voice_discovery_finished(self, voices):
@@ -87,6 +99,8 @@ class K8sAIOpsVoiceMixin:
         idx = self.voice_combo.findData(self._voice_id)
         self.voice_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.voice_combo.blockSignals(False)
+
+    def _on_voice_discovery_thread_finished(self):
         self._voice_discovery_worker = None
 
     def _on_voice_engine_changed(self, index: int):
