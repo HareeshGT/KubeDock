@@ -92,8 +92,15 @@ bound to the same SSH client that was validated for that request.
   AI evidence redaction remain in their existing paths.
 - Service snapshots do not contain passwords, private-key contents, or
   private-key paths.
-- A feature service must not open its own SSH/FTP connection. Connection
-  workers establish sessions; `ConnectionService` adopts and owns them.
+- A feature service must not establish an independent primary SSH or
+  file-transfer session. Connection workers establish the user session;
+  `ConnectionService` adopts and owns it.
+- The Dashboard's FTP/FTPS telemetry worker is a deliberate exception for
+  read-only observation: it opens a short-lived probe control connection so
+  dashboard `PWD`/`FEAT`/directory metadata commands cannot interleave with
+  uploads or downloads on the user's active file-transfer session. It closes
+  that probe in `finally`; it is not used for file mutations or as a second
+  application session.
 - Async worker results are discarded when their captured session generation
   is no longer current.
 - The one existing SSH health monitor is retained to avoid duplicate probes.
