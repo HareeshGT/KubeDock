@@ -114,9 +114,9 @@ class CommandWorker(QThread):
         started = time.monotonic()
         operation = command_operation_label(self.cmd)
         try:
-            if self._cancel_event.is_set():
-                return
             if self._discard_stale_result():
+                return
+            if self._cancel_event.is_set():
                 return
             if self.raw:
                 self._run_raw()
@@ -150,7 +150,9 @@ class CommandWorker(QThread):
                         exit_code = -1
                 finally:
                     self._clear_active_channel(channel)
-            if self._cancel_event.is_set() or self._discard_stale_result():
+            if self._discard_stale_result():
+                return
+            if self._cancel_event.is_set():
                 return
             self.result.emit(out, err, exit_code)
             self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
@@ -184,7 +186,9 @@ class CommandWorker(QThread):
                     exit_code = -1
             finally:
                 self._clear_active_channel(channel)
-        if self._cancel_event.is_set() or self._discard_stale_result():
+        if self._discard_stale_result():
+            return
+        if self._cancel_event.is_set():
             return
         self.result.emit(out, err, exit_code)
         self.done.emit(out + ("\n[stderr]\n{}".format(err) if err else ""))
