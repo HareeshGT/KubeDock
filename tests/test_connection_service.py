@@ -1220,3 +1220,32 @@ def test_file_service_stream_reader_is_bound_and_registered():
     connection.attach_ssh(FakeResource(), FakeFilesystem(), host="replacement.example")
 
     assert worker._cancelled
+
+
+
+def test_media_start_worker_cancels_server_created_after_dialog_closes():
+    from workers_parts.media import _StreamServerStartWorker
+
+    class ClosingMediaServer:
+        def __init__(self):
+            self.worker = None
+            self.stop_calls = 0
+
+        def start(self):
+            self.worker.cancel()
+            return "http://127.0.0.1:8000/media"
+
+        def stop(self):
+            self.stop_calls += 1
+
+    server = ClosingMediaServer()
+    worker = _StreamServerStartWorker(server)
+    server.worker = worker
+    ready = []
+    worker.ready.connect(ready.append)
+
+    worker.run()
+
+    assert not ready
+    assert worker._cancelled.is_set()
+    assert server.stop_calls >= 1
