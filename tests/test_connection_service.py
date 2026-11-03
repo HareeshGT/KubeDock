@@ -1298,11 +1298,11 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
     exec_dialog = (root / "dialogs_parts" / "exec_dialog.py").read_text(encoding="utf-8")
     assert "self.ssh = ssh if service is None else None" in exec_dialog
     assert "self._ai_service.create_command_explain_worker(" in exec_dialog
-    assert "ai_service=getattr(getattr(self, \"_services\", None), \"ai\", None)" in resources
 
     docker_tab = (root / "docker_tab.py").read_text(encoding="utf-8")
     assert "self.ssh if self.docker_service is None else None" in docker_tab
     resources = (root / "kubernetes_tab_parts" / "resources.py").read_text(encoding="utf-8")
+    assert "ai_service=getattr(getattr(self, \"_services\", None), \"ai\", None)" in resources
     assert "self.ssh if self.kubernetes_service is None else None" in resources
 
     file_manager = (root / "main_window_parts" / "file_manager.py").read_text(encoding="utf-8")
@@ -1352,9 +1352,9 @@ def test_kubernetes_service_loads_and_saves_tunnel_csv_through_command_service(m
     executed = []
     services.commands.execute = lambda command, timeout=30, **_kwargs: (
         executed.append((command, timeout))
-        or (0, "service_name,local_port,container_port,namespace\\n"
-               "api,8080,80,default\\n"
-               "worker,9000,9000,apps\\n", "")
+        or (0, "service_name,local_port,container_port,namespace\n"
+               "api,8080,80,default\n"
+               "worker,9000,9000,apps\n", "")
     )
 
     loaded = services.kubernetes.load_tunnel_services("~/.tunnel/services.csv")
