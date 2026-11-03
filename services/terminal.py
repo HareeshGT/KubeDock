@@ -14,4 +14,5 @@ class TerminalService:
         activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, cwd=cwd, sudo_user=sudo_user, timeout=timeout,
+            diagnostic_key="terminal:command",
         )
