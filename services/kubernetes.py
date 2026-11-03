@@ -89,11 +89,16 @@ class KubernetesService:
         ).format(path=path_expr, payload=shlex.quote(encoded))
         return self.create_worker(worker_pool, command, timeout=20)
 
-    def create_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
+    def create_worker(
+        self, worker_pool, command, *, sudo_user=None, timeout=None,
+        raw=False, operation_key=None,
+    ):
         """Run a prepared kubectl command without opening a feature connection."""
         activate_lifecycle(self)
         return self.commands.create_worker(
-            worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
+            worker_pool, command, sudo_user=sudo_user, timeout=timeout,
+            raw=raw, operation_key=operation_key,
+            diagnostic_key="kubernetes:command",
         )
     def create_pod_exec_stream_worker(
         self, namespace, pod, container=None, context=None, *, cols=120, rows=32,
@@ -108,7 +113,7 @@ class KubernetesService:
             ssh, namespace, pod, container, context, cols=cols, rows=rows,
         )
         self.connection.bind_worker(worker, snapshot)
-        return self.commands.register_worker(worker)
+        return self.commands.register_worker(worker, diagnostic_key="kubernetes:pod-exec")
     def create_log_stream_worker(self, command):
         """Create a live Kubernetes log stream guarded by the shared session generation."""
         ssh, snapshot = self.connection.get_ssh_session()
@@ -118,4 +123,4 @@ class KubernetesService:
 
         worker = ExecStreamWorker(ssh, command)
         self.connection.bind_worker(worker, snapshot)
-        return self.commands.register_worker(worker)
+        return self.commands.register_worker(worker, diagnostic_key="kubernetes:logs")
