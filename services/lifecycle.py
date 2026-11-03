@@ -24,6 +24,7 @@ class ServiceState(str, Enum):
 class ServiceStatus:
     name: str
     state: ServiceState
+    paused: bool = False
     active_operations: int = 0
     worker_count: int = 0
     last_success_at: Optional[float] = None
@@ -38,6 +39,7 @@ class _Entry:
     service: Any
     dependencies: tuple[str, ...] = ()
     state: ServiceState = ServiceState.STOPPED
+    paused: bool = False
     active_operations: int = 0
     worker_count: int = 0
     last_success_at: Optional[float] = None
@@ -87,6 +89,7 @@ class ServiceLifecycleManager:
                 raise RuntimeError(f"Service {key} is transitioning ({entry.state.value})")
             dependencies = entry.dependencies
             entry.state = ServiceState.STARTING
+            entry.paused = False
             entry.last_error = None
         try:
             for dependency in dependencies:
@@ -127,6 +130,7 @@ class ServiceLifecycleManager:
                 cleanup()
             with self._lock:
                 entry.state = ServiceState.STOPPED
+                entry.paused = False
                 return self.status(key)
         except Exception as exc:
             with self._lock:
@@ -141,7 +145,7 @@ class ServiceLifecycleManager:
             raise NotImplementedError(f"Service {name} does not support pause")
         pause()
         with self._lock:
-            entry.state = ServiceState.STOPPED
+            entry.paused = True
             return self.status(name)
 
     def resume(self, name: str) -> ServiceStatus:
@@ -151,6 +155,7 @@ class ServiceLifecycleManager:
             resume()
             with self._lock:
                 entry.state = ServiceState.RUNNING
+                entry.paused = False
                 entry.last_success_at = time.time()
                 return self.status(name)
         return self.start(name)
@@ -188,7 +193,7 @@ class ServiceLifecycleManager:
         with self._lock:
             e = self._entry(name)
             return ServiceStatus(
-                name=str(name).lower(), state=e.state,
+                name=str(name).lower(), state=e.state, paused=e.paused,
                 active_operations=e.active_operations,
                 worker_count=e.worker_count,
                 last_success_at=e.last_success_at,
