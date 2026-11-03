@@ -45,7 +45,7 @@ class DockerLogDialog(QDialog):
 
   def __init__(self, parent, ssh, container: str, sudo_user=None, service=None):
     super().__init__(parent)
-    self.ssh = ssh
+    self.ssh = ssh if service is None else None
     self._service = service
     self._container = du.validate_name(container, "container")
     self._sudo_user = sudo_user
