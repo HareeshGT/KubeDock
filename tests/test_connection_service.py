@@ -678,3 +678,65 @@ def test_stream_workers_abort_before_opening_channels_after_reconnect():
 
     assert len(errors) == len(workers)
     assert all("connection changed" in error.lower() for error in errors)
+
+
+
+def test_media_start_worker_rejects_a_replaced_session_before_starting():
+    from workers_parts.media import _StreamServerStartWorker
+
+    class FakeMediaServer:
+        def __init__(self):
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start(self):
+            self.start_calls += 1
+            return "http://127.0.0.1:8000/media"
+
+        def stop(self):
+            self.stop_calls += 1
+
+    connection = ConnectionService()
+    services = AppServices(connection)
+    snapshot = connection.attach_ssh(FakeResource(), host="first.example")
+    server = FakeMediaServer()
+    worker = _StreamServerStartWorker(server)
+    connection.bind_worker(worker, snapshot)
+    errors = []
+    worker.error.connect(errors.append)
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+    worker.run()
+
+    assert server.start_calls == 0
+    assert errors and "connection changed" in errors[0].lower()
+
+
+def test_media_start_worker_stops_server_if_session_changes_during_start():
+    from workers_parts.media import _StreamServerStartWorker
+
+    connection = ConnectionService()
+    services = AppServices(connection)
+    snapshot = connection.attach_ssh(FakeResource(), host="first.example")
+
+    class ReconnectingMediaServer:
+        def __init__(self):
+            self.stop_calls = 0
+
+        def start(self):
+            connection.attach_ssh(FakeResource(), host="second.example")
+            return "http://127.0.0.1:8000/media"
+
+        def stop(self):
+            self.stop_calls += 1
+
+    server = ReconnectingMediaServer()
+    worker = _StreamServerStartWorker(server)
+    connection.bind_worker(worker, snapshot)
+    errors = []
+    worker.error.connect(errors.append)
+
+    worker.run()
+
+    assert server.stop_calls == 1
+    assert errors and "connection changed" in errors[0].lower()
