@@ -176,8 +176,9 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(True)
             self._execute_action(followup['action'])
             return
-        provider = ai_assist.get_provider()
-        api_key = ai_assist.get_api_key(provider)
+        ai_service = getattr(self, "ai_service", None)
+        provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
+        api_key = ai_service.api_key(provider) if ai_service is not None else ai_assist.get_api_key(provider)
         if not api_key:
             label = ai_assist.PROVIDERS.get(provider, {}).get('label', provider)
             QMessageBox.information(self, 'No API key set', f'Add a {label} API key in Settings → AI to use AI Kubernetes Operations.')
@@ -192,7 +193,7 @@ class K8sAIOpsOperationsMixin:
         self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')}</span>""")
         self._set_busy(True)
         self._speak('Processing your request.')
-        model = ai_assist.get_model(provider)
+        model = ai_service.model(provider) if ai_service is not None else ai_assist.get_model(provider)
         worker = (
             self.ai_service.create_kubernetes_interpret_worker(
                 provider, api_key, model, request, namespace, context,
@@ -370,18 +371,26 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(False)
             return
 
-        fallback_provider = ai_assist.get_provider()
-        fallback_key = ai_assist.get_api_key(fallback_provider)
-        fallback_model = ai_assist.get_model(fallback_provider)
-        provider, api_key, model, selection_error = ai_assist._task_provider_selection(
-            "deep_diagnosis", fallback_provider, fallback_key, fallback_model
+        ai_service = getattr(self, "ai_service", None)
+        fallback_provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
+        fallback_key = ai_service.api_key(fallback_provider) if ai_service is not None else ai_assist.get_api_key(fallback_provider)
+        fallback_model = ai_service.model(fallback_provider) if ai_service is not None else ai_assist.get_model(fallback_provider)
+        selection = (
+            ai_service.task_provider_selection(
+                "deep_diagnosis", fallback_provider, fallback_key, fallback_model,
+            )
+            if ai_service is not None
+            else ai_assist._task_provider_selection(
+                "deep_diagnosis", fallback_provider, fallback_key, fallback_model,
+            )
         )
+        provider, api_key, model, selection_error = selection
         if selection_error:
             self._write_error("\n" + selection_error)
             self._set_busy(False)
             return
 
-        settings = ai_assist.get_ai_settings()
+        settings = ai_service.settings() if ai_service is not None else ai_assist.get_ai_settings()
         if provider != "ollama":
             if not settings.get("cloud_ai_enabled", True):
                 self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
