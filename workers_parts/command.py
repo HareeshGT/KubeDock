@@ -179,9 +179,19 @@ class PodExecStreamWorker(QThread):
         self._cols = max(20, int(cols))
         self._rows = max(5, int(rows))
         self._channel = None
+        self._session_guard = None
         self._stop = threading.Event()
         self._send_lock = threading.RLock()
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
 
     @staticmethod
     def _quote(value):
@@ -246,6 +256,9 @@ class PodExecStreamWorker(QThread):
         out_dec = codecs.getincrementaldecoder("utf-8")("replace")
         err_dec = codecs.getincrementaldecoder("utf-8")("replace")
         try:
+            if not self._session_is_current():
+                self.error.emit("The active connection changed before the pod shell could start.")
+                return
             channel = open_managed_session(self.ssh)
             self._channel = channel
             channel.get_pty(term="xterm-256color", width=self._cols, height=self._rows)
@@ -253,6 +266,9 @@ class PodExecStreamWorker(QThread):
             channel.exec_command(self._command())
 
             while not self._stop.is_set():
+                if not self._session_is_current():
+                    self.error.emit("The active connection changed while the pod shell was running.")
+                    return
                 got_data = False
                 try:
                     if channel.recv_ready():
