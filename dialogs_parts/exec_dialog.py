@@ -70,9 +70,10 @@ class ExecDialog(QDialog):
   _FLUSH_MAX_CHARS = 200000    # per tick, so a huge dump can't freeze the UI
   _CAPTURE_MAX     = 60000     # raw chars kept for "Analyze with AI"
 
-  def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context: str = None):
+  def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context: str = None, service=None):
     super().__init__(parent)
     self.ssh = ssh
+    self._service = service
     self._pod = pod
     self._ns = namespace
     self._container = container
@@ -175,8 +176,14 @@ class ExecDialog(QDialog):
   # ── session lifecycle ───────────────────────────────────────
   def _start_stream(self):
     cols, rows = self._terminal_size()
-    worker = PodExecStreamWorker(
-      self.ssh, self._ns, self._pod, self._container, self.context, cols=cols, rows=rows
+    worker = (
+      self._service.create_pod_exec_stream_worker(
+        self._ns, self._pod, self._container, self.context, cols=cols, rows=rows,
+      )
+      if self._service is not None
+      else PodExecStreamWorker(
+        self.ssh, self._ns, self._pod, self._container, self.context, cols=cols, rows=rows
+      )
     )
     worker.chunk.connect(self._append_stream)
     worker.exited.connect(self._on_stream_exit)
