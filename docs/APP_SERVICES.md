@@ -16,7 +16,7 @@ pause/resume/restart hooks; and credential-free diagnostic snapshots.
 Services that do not implement a lifecycle hook remain passive objects. The
 manager does not create threads or start work simply because a service exists.
 
-`AppServices.service_status()` exposes service states, active-operation and
+`AppServices.service_status()` exposes service states, paused status, active-operation and
 worker counts, last success/refresh, duration, and last error. Do not place
 credentials, private-key paths, tokens, or raw connection objects in these
 snapshots.
@@ -34,7 +34,7 @@ second primary connection.
 
 - `KubernetesService`: Kubernetes commands, context-aware operations,
   workload/resource access, streams and tunnel configuration.
-- `DockerService`: Docker CLI operations and log streams.
+- `DockerService`: Docker CLI command policy, resource actions, and log streams. The Docker tab owns Qt presentation and the user-configured refresh timer; command construction and validation are delegated to the service.
 - `DashboardService`: host/process/cluster telemetry command adapters.
 - `FileManagerService`: filesystem operations and generation-bound transfers.
 - `TerminalService`: terminal command workers.
