@@ -265,8 +265,9 @@ class CustomModelManagerDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None, k8s_tab_titles=None):
+    def __init__(self, parent=None, k8s_tab_titles=None, ai_service=None):
         super().__init__(parent)
+        self._ai_service = ai_service
         self.setWindowTitle("Settings")
         self.setObjectName("settingsDialog")
         # Keep Settings feeling like a dialog, not a maximized application
@@ -1133,7 +1134,13 @@ class SettingsDialog(QDialog):
             return
         self.test_model_btn.setEnabled(False)
         self.test_model_btn.setText("Testing…")
-        worker = ai_assist.AIModelTestWorker(pid, api_key, model_id, self)
+        worker = (
+            self._ai_service.create_model_test_worker(
+                pid, api_key, model_id, self,
+            )
+            if self._ai_service is not None
+            else ai_assist.AIModelTestWorker(pid, api_key, model_id, self)
+        )
         self._model_test_worker = worker
         worker.succeeded.connect(self._on_model_test_success)
         worker.failed.connect(self._on_model_test_failure)
