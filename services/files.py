@@ -42,6 +42,10 @@ class FileManagerService:
         worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
         return self.commands.register_worker(worker)
 
+    def register_worker(self, worker):
+        """Register a file-related worker with application shutdown ownership."""
+        return self.commands.register_worker(worker)
+
     def create_command_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
@@ -92,4 +96,4 @@ class FileManagerService:
         worker.connection_generation = snapshot.generation
         worker.connection_session_id = snapshot.session_id
         worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
-        return worker
+        return self.commands.register_worker(worker)
