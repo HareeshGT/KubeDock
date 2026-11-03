@@ -72,7 +72,7 @@ class ExecDialog(QDialog):
 
   def __init__(self, parent, ssh, namespace: str, pod: str, container: str = None, context: str = None, service=None):
     super().__init__(parent)
-    self.ssh = ssh
+    self.ssh = ssh if service is None else None
     self._service = service
     self._pod = pod
     self._ns = namespace
