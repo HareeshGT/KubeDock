@@ -37,7 +37,9 @@ class KubernetesService:
         value = str(path or "").strip()
         if not value:
             raise ValueError("A remote tunnel CSV path is required")
-        if value.startswith("~"):
+        if value == "~":
+            return '"$HOME"'
+        if value.startswith("~/"):
             return '"$HOME"' + shlex.quote(value[1:])
         return shlex.quote(value)
 
