@@ -127,8 +127,8 @@ class FileManagerService:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.rename(old_path, new_path)
     def create_media_stream_start_worker(self, path, *, sudo_user=None):
-        activate_lifecycle(self)
         """Create a media server and its generation-bound startup worker."""
+        activate_lifecycle(self)
         filesystem, ssh, snapshot = self.connection.get_file_session()
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system before streaming media")
@@ -143,8 +143,8 @@ class FileManagerService:
         return server, worker, snapshot
 
     def create_exec_stream_worker(self, command):
-        activate_lifecycle(self)
         """Create a streaming remote-file execution worker on the active SSH session."""
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before executing a remote file")
