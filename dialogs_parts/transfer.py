@@ -8,11 +8,10 @@ class FileTransferDialog(QDialog):
          password: str = None, sudo_user: str = None, service=None):
     super().__init__(parent)
     self._service = service
-    self._session_generation = (
-      service.connection.snapshot.generation if service is not None else None
-    )
+    self._session_generation = None
     if service is not None:
-      sftp = service.filesystem
+      sftp, snapshot = service.connection.get_filesystem_session()
+      self._session_generation = snapshot.generation
     self._direction = direction
     self._local   = local_path
     self._remote   = remote_path
