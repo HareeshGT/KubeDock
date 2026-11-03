@@ -1338,3 +1338,41 @@ def test_file_service_captures_and_binds_transfer_session_workers():
 
     connection.disconnect()
     assert worker.cancelled
+
+
+
+def test_kubernetes_service_loads_and_saves_tunnel_csv_through_command_service(monkeypatch):
+    services = AppServices()
+    executed = []
+    services.commands.execute = lambda command, timeout=30, **_kwargs: (
+        executed.append((command, timeout))
+        or (0, "service_name,local_port,container_port,namespace\\n"
+               "api,8080,80,default\\n"
+               "worker,9000,9000,apps\\n", "")
+    )
+
+    loaded = services.kubernetes.load_tunnel_services("~/.tunnel/services.csv")
+
+    assert loaded == [
+        {"name": "api", "port": 8080, "container_port": 80, "namespace": "default"},
+        {"name": "worker", "port": 9000, "container_port": 9000, "namespace": "apps"},
+    ]
+    assert executed[0][0] == 'cat "$HOME"' + "'/.tunnel/services.csv' 2>/dev/null"
+    assert executed[0][1] == 10
+
+    captured = {}
+    def fake_create_worker(worker_pool, command, **kwargs):
+        captured.update(worker_pool=worker_pool, command=command, kwargs=kwargs)
+        return object()
+
+    monkeypatch.setattr(services.kubernetes, "create_worker", fake_create_worker)
+    worker = services.kubernetes.create_tunnel_save_worker(
+        None, "~/.tunnel/services.csv", "api,8080,80,default\\n",
+    )
+
+    assert worker is not None
+    assert captured["worker_pool"] is None
+    assert 'target="$HOME"' + "'/.tunnel/services.csv'" in captured["command"]
+    assert "base64 -d" in captured["command"]
+    assert captured["kwargs"]["timeout"] == 20
+    assert KubernetesService._remote_path_expression("~someone/file") == "'~someone/file'"
