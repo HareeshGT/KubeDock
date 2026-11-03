@@ -110,7 +110,7 @@ class CommandService:
         manager = getattr(self, "_lifecycle_manager", None)
         if manager is None:
             return
-        prefix = str(operation_key).split(":")[-2] if str(operation_key).count(":") >= 2 else str(operation_key).split(":")[0]
+        prefix = str(operation_key).split(":", 1)[0]
         service_name = {
             "dashboard": "monitoring",
             "docker": "docker",
