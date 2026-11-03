@@ -63,13 +63,19 @@ class AppServices:
     def service_status(self):
         """Return credential-free diagnostics for all registered services."""
         statuses = self.lifecycle.statuses()
-        worker_count = self.commands.registered_worker_count()
-        operation_count = self.commands.active_operation_count()
+        worker_counts = self.commands.worker_counts_by_service()
+        operation_counts = self.commands.active_operation_counts_by_service()
         for name in statuses:
             self.lifecycle.set_activity(
                 name,
-                worker_count=worker_count if name in ("commands", "connection") else 0,
-                active_operations=operation_count if name == "commands" else 0,
+                worker_count=(
+                    self.commands.registered_worker_count()
+                    if name == "commands" else worker_counts.get(name, 0)
+                ),
+                active_operations=(
+                    self.commands.active_worker_count()
+                    if name == "commands" else operation_counts.get(name, 0)
+                ),
             )
         return self.lifecycle.statuses()
 
