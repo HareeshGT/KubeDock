@@ -8,6 +8,9 @@ class FileTransferDialog(QDialog):
          password: str = None, sudo_user: str = None, service=None):
     super().__init__(parent)
     self._service = service
+    self._session_generation = (
+      service.connection.snapshot.generation if service is not None else None
+    )
     if service is not None:
       sftp = service.filesystem
     self._direction = direction
@@ -142,7 +145,14 @@ class FileTransferDialog(QDialog):
     self._start_worker(worker)
     self._timer.start()
 
+  def _session_is_current(self):
+    if self._service is None:
+      return True
+    return self._service.connection.is_current(self._session_generation)
+
   def _start_worker(self, worker):
+    if self._service is not None:
+      worker._session_guard = self._session_is_current
     self._worker = worker
     worker.progress.connect(self._on_progress)
     worker.finished_ok.connect(self._on_success)
@@ -152,6 +162,9 @@ class FileTransferDialog(QDialog):
   def _on_worker_error(self, msg: str):
     """scp failing *before any bytes moved* falls back to the SFTP path;
     anything else (SFTP failing, or a failure mid-transfer) is final."""
+    if self._service is not None and not self._session_is_current():
+      self._on_error(msg)
+      return
     if self._using_scp and not self._progressed:
       self._using_scp = False
       first = msg.splitlines()[0] if msg else "unknown error"
