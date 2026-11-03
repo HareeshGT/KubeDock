@@ -80,3 +80,15 @@ class FileManagerService:
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.rename(old_path, new_path)
+    def create_exec_stream_worker(self, command):
+        """Create a streaming remote-file execution worker on the active SSH session."""
+        ssh, snapshot = self.connection.get_ssh_session()
+        if ssh is None:
+            raise RuntimeError("Connect to an SSH host before executing a remote file")
+        from dialogs_parts.file_exec import _ExecStreamWorker
+
+        worker = _ExecStreamWorker(ssh, command)
+        worker.connection_generation = snapshot.generation
+        worker.connection_session_id = snapshot.session_id
+        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        return worker
