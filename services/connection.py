@@ -9,6 +9,8 @@ Existing feature modules can temporarily obtain the underlying client through
 
 from __future__ import annotations
 
+from .lifecycle import activate_lifecycle
+
 from dataclasses import dataclass
 import logging
 import threading
@@ -228,6 +230,7 @@ class ConnectionService:
         return snapshot
 
     def attach_ssh(
+        activate_lifecycle(self)
         self,
         ssh,
         filesystem=None,
@@ -276,6 +279,7 @@ class ConnectionService:
         return worker
 
     def attach_file_connection(
+        activate_lifecycle(self)
         self,
         filesystem,
         *,
