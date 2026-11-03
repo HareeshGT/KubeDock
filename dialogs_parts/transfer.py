@@ -159,7 +159,17 @@ class FileTransferDialog(QDialog):
     worker.progress.connect(self._on_progress)
     worker.finished_ok.connect(self._on_success)
     worker.finished_err.connect(self._on_worker_error)
+    worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
     worker.start()
+
+  def _on_worker_thread_finished(self, worker):
+    """Surface lifecycle cancellation even when a worker emits no result signal."""
+    if worker is not self._worker or self._done:
+      return
+    if self._service is not None and not self._session_is_current():
+      self._on_error("The active connection changed; the transfer was cancelled.")
+    elif getattr(worker, "_cancelled", False):
+      self._on_error("The transfer was cancelled.")
 
   def _on_worker_error(self, msg: str):
     """scp failing *before any bytes moved* falls back to the SFTP path;
@@ -243,7 +253,9 @@ class FileTransferDialog(QDialog):
 
   def _on_cancel(self):
     if not self._done:
-      self._worker.cancel()
+      self._done = True
+      if self._worker is not None:
+        self._worker.cancel()
       self._timer.stop()
     self.reject()
 
