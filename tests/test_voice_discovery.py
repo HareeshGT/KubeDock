@@ -122,3 +122,16 @@ def test_voice_combo_shows_default_before_background_discovery(monkeypatch):
     worker.finished.emit()
     assert widget._voice_discovery_worker is None
     assert worker not in voice._ACTIVE_VOICE_DISCOVERY_WORKERS
+
+def test_list_voices_skips_child_process_in_frozen_app(monkeypatch):
+    def unexpected_run(*_args, **_kwargs):
+        raise AssertionError(
+            "a frozen PyInstaller app must not relaunch its own executable for voice discovery"
+        )
+
+    monkeypatch.setattr(core, "_TTS_AVAILABLE", True)
+    monkeypatch.setattr(core.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(core.subprocess, "run", unexpected_run)
+
+    assert core.list_voices() == []
+
