@@ -1141,3 +1141,34 @@ def test_file_service_exposes_ssh_availability_without_returning_raw_client():
 
     connection.attach_ssh(FakeResource(), FakeFilesystem(), host="files.example")
     assert services.files.has_ssh
+
+
+
+def test_feature_modules_do_not_create_primary_network_sessions():
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    feature_modules = [
+        "main_window.py",
+        "main_window_parts/connection.py",
+        "main_window_parts/terminal.py",
+        "main_window_parts/file_manager.py",
+        "kubernetes_tab.py",
+        "kubernetes_tab_parts/core.py",
+        "kubernetes_tab_parts/resources.py",
+        "kubernetes_tab_parts/tunnels.py",
+        "docker_tab.py",
+        "dashboard_tab.py",
+        "dashboard_tab_parts/refresh.py",
+        "dashboard_tab_parts/nodes_history.py",
+        "k8s_ai_ops_parts/ui.py",
+    ]
+    patterns = (
+        re.compile(r"\\bparamiko\\.SSHClient\\s*\\("),
+        re.compile(r"\\b(?:FTP|FTP_TLS)\\s*\\("),
+    )
+
+    for relative_path in feature_modules:
+        source = (root / relative_path).read_text(encoding="utf-8")
+        assert not any(pattern.search(source) for pattern in patterns), relative_path
