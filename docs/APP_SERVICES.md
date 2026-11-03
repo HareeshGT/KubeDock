@@ -8,7 +8,9 @@ Python components; only the optional Embedded Web App owns an HTTP server.
 `AppServices` is the composition root. It creates one shared
 `ConnectionService` and one `CommandService`, then injects them into the
 feature services. It also registers services with `ServiceLifecycleManager`.
-Registration is lazy and does not start polling or optional servers.
+Registration is lazy and does not start polling or optional servers. Feature
+services are marked RUNNING when their first real operation is requested;
+dependencies are activated first.
 
 The lifecycle manager provides explicit `STOPPED`, `STARTING`, `RUNNING`,
 `STOPPING`, and `FAILED` states; dependency-aware start; stop/cleanup;
