@@ -36,6 +36,33 @@ operations, attribute instrumented workers to their owning feature, and update
 last-success, last-error, duration, and refresh timestamps from worker results. Feature services must use these shared facilities rather than
 opening a second primary connection.
 
+## SSH connection autoscaling
+
+The SSH pool is owned by the primary session and configured through
+\`ConnectionService\`. The configured maximum counts all SSH transports:
+the primary transport plus up to four secondary transports (five total by
+default). The primary remains dedicated to SFTP and health monitoring;
+short-lived command and stream work uses pooled secondary transports.
+
+Each secondary transport supports up to six concurrent session channels.
+The pool fills the least-loaded healthy transport first. When every existing
+transport reaches 70% channel utilization, it lazily creates another
+transport, up to the five-transport total cap. If the cap is reached, work is
+balanced onto the least-loaded transport with remaining channel capacity.
+Channel acquisition remains bounded by the existing timeout and connection
+creation cooldown.
+
+A pool maintenance thread closes idle secondary transports after 60 seconds.
+The primary connection is never reaped by this policy. Active channels are
+never reaped; closing/replacing the primary shuts down the entire pool.
+Unhealthy secondary transports are evicted and a failed channel open is
+retried once on a fresh transport where safe.
+
+\`ConnectionService.pool_status()\` returns credential-free metrics:
+total/max connections, secondary connection count, active channels,
+channel capacity, scale-up threshold and idle timeout. It never exposes
+passwords, key material, or connection objects.
+
 ## Feature services
 
 - `KubernetesService`: Kubernetes commands, context-aware operations,
