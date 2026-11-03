@@ -90,8 +90,8 @@ class FileManagerService:
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before executing a remote file")
-        from dialogs_parts.file_exec import _ExecStreamWorker
+        from workers import ExecStreamWorker
 
-        worker = _ExecStreamWorker(ssh, command)
+        worker = ExecStreamWorker(ssh, command)
         self.connection.bind_worker(worker, snapshot)
         return self.commands.register_worker(worker)
