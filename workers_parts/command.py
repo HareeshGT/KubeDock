@@ -131,22 +131,23 @@ class CommandWorker(QThread):
             with managed_exec_command(self.ssh, cmd) as (_stdin, stdout, stderr):
                 channel = stdout.channel
                 self._set_active_channel(channel)
-                channel.settimeout(self.timeout)
                 try:
-                    out = stdout.read().decode(errors="replace")
-                    err = stderr.read().decode(errors="replace")
-                except Exception as read_err:
-                    if not self._cancel_event.is_set():
-                        self.error.emit(
-                            "Command is still running after {}s with no output — it looks like it's "
-                            "blocking in the foreground rather than exiting (raw error: {})."
-                            .format(self.timeout, read_err)
-                        )
-                    return
-                try:
-                    exit_code = channel.recv_exit_status()
-                except Exception:
-                    exit_code = -1
+                    channel.settimeout(self.timeout)
+                    try:
+                        out = stdout.read().decode(errors="replace")
+                        err = stderr.read().decode(errors="replace")
+                    except Exception as read_err:
+                        if not self._cancel_event.is_set():
+                            self.error.emit(
+                                "Command is still running after {}s with no output — it looks like it's "
+                                "blocking in the foreground rather than exiting (raw error: {})."
+                                .format(self.timeout, read_err)
+                            )
+                        return
+                    try:
+                        exit_code = channel.recv_exit_status()
+                    except Exception:
+                        exit_code = -1
                 finally:
                     self._clear_active_channel(channel)
             if self._discard_stale_result():
@@ -168,18 +169,19 @@ class CommandWorker(QThread):
         with managed_exec_command(self.ssh, self.cmd) as (_stdin, stdout, stderr):
             channel = stdout.channel
             self._set_active_channel(channel)
-            channel.settimeout(self.timeout)
             try:
-                out = stdout.read().decode(errors="replace")
-                err = stderr.read().decode(errors="replace")
-            except Exception as read_err:
-                if not self._cancel_event.is_set():
-                    self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
-                return
-            try:
-                exit_code = channel.recv_exit_status()
-            except Exception:
-                exit_code = -1
+                channel.settimeout(self.timeout)
+                try:
+                    out = stdout.read().decode(errors="replace")
+                    err = stderr.read().decode(errors="replace")
+                except Exception as read_err:
+                    if not self._cancel_event.is_set():
+                        self.error.emit("Command timed out after {}s ({})".format(self.timeout, read_err))
+                    return
+                try:
+                    exit_code = channel.recv_exit_status()
+                except Exception:
+                    exit_code = -1
             finally:
                 self._clear_active_channel(channel)
         if self._discard_stale_result():
