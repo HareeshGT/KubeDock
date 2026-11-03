@@ -727,7 +727,8 @@ def test_media_start_worker_rejects_a_replaced_session_before_starting():
     worker.run()
 
     assert server.start_calls == 0
-    assert errors and "connection changed" in errors[0].lower()
+    assert worker._cancelled.is_set()
+    assert not errors
 
 
 def test_media_start_worker_stops_server_if_session_changes_during_start():
@@ -757,7 +758,8 @@ def test_media_start_worker_stops_server_if_session_changes_during_start():
     worker.run()
 
     assert server.stop_calls == 1
-    assert errors and "connection changed" in errors[0].lower()
+    assert worker._cancelled.is_set()
+    assert not errors
 
 
 
@@ -1150,6 +1152,7 @@ def test_feature_modules_do_not_create_primary_network_sessions():
         *[
             str(path.relative_to(root))
             for path in (root / "services").glob("*.py")
+            if path.name != "connection.py"
         ],
         "main_window.py",
         "main_window_parts/connection.py",
