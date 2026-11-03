@@ -454,7 +454,7 @@ class FileManagerMixin:
         return
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
-      dlg = FileExecDialog(self, self._file_ssh(), remote, sudo_user=self._sudo_user)
+      dlg = FileExecDialog(self, self._file_ssh(), remote, sudo_user=self._sudo_user, service=self._file_service())
       dlg.exec_()
 
     def _run_selected(self):
