@@ -90,3 +90,29 @@ def test_shutdown_is_idempotent():
     manager.shutdown()
     assert service.calls.count("stop") == 1
     assert manager.status("feature").state == ServiceState.STOPPED
+
+
+class PausableService:
+    def __init__(self):
+        self.paused = False
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.paused = False
+
+
+def test_pause_and_resume_preserve_running_lifecycle_state():
+    manager = ServiceLifecycleManager()
+    service = PausableService()
+    manager.register("monitoring", service)
+    manager.start("monitoring")
+
+    paused = manager.pause("monitoring")
+    assert paused.state == ServiceState.RUNNING
+    assert paused.paused is True
+
+    resumed = manager.resume("monitoring")
+    assert resumed.state == ServiceState.RUNNING
+    assert resumed.paused is False
