@@ -7,6 +7,11 @@ from .lifecycle import activate_lifecycle
 
 class WebAppService:
     """Expose only the active session providers required by the web backend.
+    def stop(self):
+        """Cancel background work owned by this feature service."""
+        if self.commands is not None:
+            self.commands.stop_service("webapp")
+
 
     The FastAPI server remains embedded in the desktop process. It does not
     own or create SSH connections and resolves the active client for each
