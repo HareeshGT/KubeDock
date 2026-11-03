@@ -26,8 +26,6 @@ class DashboardService:
         state without reaching into transport internals.
         """
         snapshot = getattr(self.connection, "snapshot", None)
-        if snapshot is None:
-            snapshot = None
         pool_status = getattr(self.connection, "pool_status", None)
         pool = pool_status() if callable(pool_status) else {}
         worker_counts = getattr(self.commands, "worker_counts_by_service", None)
