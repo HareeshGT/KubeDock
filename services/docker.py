@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .lifecycle import activate_lifecycle
+
 
 class DockerService:
     def __init__(self, connection, commands):
@@ -12,6 +14,7 @@ class DockerService:
         self, worker_pool, command, *, sudo_user=None, timeout=None,
         raw=False, operation_key=None,
     ):
+        activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout,
             raw=raw, operation_key=operation_key,
