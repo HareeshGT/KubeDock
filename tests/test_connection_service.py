@@ -407,3 +407,15 @@ def test_webapp_service_rejects_sftp_and_terminal_without_active_ssh():
     with pytest.raises(RuntimeError, match="active SSH"):
         services.webapp.open_terminal_channel()
 
+def test_docker_log_stream_worker_is_bound_to_shared_connection_generation():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    first = FakeResource()
+    original = connection.attach_ssh(first, host="first.example")
+
+    worker = services.docker.create_log_stream_worker("docker logs -f app")
+    assert worker.connection_generation == original.generation
+    assert worker._session_is_current()
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+    assert not worker._session_is_current()
