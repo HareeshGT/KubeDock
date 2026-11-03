@@ -369,16 +369,16 @@ class SettingsDialog(QDialog):
         note.setStyleSheet(f"color: {T['TEXT_MUTED']};")
         layout.addWidget(note)
 
-        table = QTableWidget(0, 8)
+        table = QTableWidget(0, 9)
         table.setHorizontalHeaderLabels([
-            "Service", "State", "Workers", "Active operations",
+            "Service", "State", "Paused", "Workers", "Active operations",
             "Last success", "Last refresh", "Last duration", "Last error",
         ])
-        for column in range(7):
+        for column in range(8):
             table.horizontalHeader().setSectionResizeMode(
                 column, QHeaderView.ResizeToContents
             )
-        table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
 
@@ -390,6 +390,7 @@ class SettingsDialog(QDialog):
             values = (
                 name.replace("_", " ").title(),
                 status.state.value,
+                "Yes" if status.paused else "No",
                 str(status.worker_count),
                 str(status.active_operations),
                 (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status.last_success_at))
