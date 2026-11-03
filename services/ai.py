@@ -7,6 +7,11 @@ from .lifecycle import activate_lifecycle
 
 class AIService:
     """Centralize AI worker construction and provider configuration access."""
+    def stop(self):
+        """Cancel background work owned by this feature service."""
+        if self.commands is not None:
+            self.commands.stop_service("ai")
+
 
     def __init__(self, commands=None):
         self.commands = commands
