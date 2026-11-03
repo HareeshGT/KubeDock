@@ -318,6 +318,8 @@ class _TransferWorker(QThread):
 
     def run(self):
         try:
+            if self._cancelled:
+                return
             self._ensure_session_current()
             if self._direction == "download":
                 self._download()
@@ -413,20 +415,24 @@ class _TransferWorker(QThread):
                 raise
             done  = 0
             chunk = REQUEST_SIZE
-            with remote_f:
-                remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
-                remote_f.prefetch(total)
-                with open(self._local, "wb") as local_f:
-                    while True:
-                        self._ensure_session_current()
-                        if self._cancelled:
-                            return
-                        buf = remote_f.read(chunk)
-                        if not buf:
-                            break
-                        local_f.write(buf)
-                        done += len(buf)
-                        self.progress.emit(done, total)
+            self._handle = remote_f
+            try:
+                with remote_f:
+                    remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
+                    remote_f.prefetch(total)
+                    with open(self._local, "wb") as local_f:
+                        while True:
+                            self._ensure_session_current()
+                            if self._cancelled:
+                                return
+                            buf = remote_f.read(chunk)
+                            if not buf:
+                                break
+                            local_f.write(buf)
+                            done += len(buf)
+                            self.progress.emit(done, total)
+            finally:
+                self._handle = None
 
     def _download_elevated(self, sudo_user, total, original_exc=None):
         """Read the remote file with ``sudo -n cat`` (see elevated_read.py)."""
@@ -500,19 +506,24 @@ class _TransferWorker(QThread):
             REQUEST_SIZE = 32 * 1024
             chunk = REQUEST_SIZE
             with open(self._local, "rb") as local_f:
-                with self._sftp._sftp.open(self._remote, "wb") as remote_f:
-                    remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
-                    remote_f.set_pipelined(True)
-                    while True:
-                        self._ensure_session_current()
-                        if self._cancelled:
-                            return
-                        buf = local_f.read(chunk)
-                        if not buf:
-                            break
-                        remote_f.write(buf)
-                        done += len(buf)
-                        self.progress.emit(done, total)
+                remote_f = self._sftp._sftp.open(self._remote, "wb")
+                self._handle = remote_f
+                try:
+                    with remote_f:
+                        remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
+                        remote_f.set_pipelined(True)
+                        while True:
+                            self._ensure_session_current()
+                            if self._cancelled:
+                                return
+                            buf = local_f.read(chunk)
+                            if not buf:
+                                break
+                            remote_f.write(buf)
+                            done += len(buf)
+                            self.progress.emit(done, total)
+                finally:
+                    self._handle = None
 
         # Never report success on faith: confirm the file is really there
         # and the right size. (A silent no-op like the one above would have
@@ -759,6 +770,8 @@ class ScpTransferWorker(QThread):
         import subprocess
         import select
 
+        if self._cancelled:
+            return
         if not self._total and self._direction == "upload":
             try:
                 self._total = os.path.getsize(self._local)
