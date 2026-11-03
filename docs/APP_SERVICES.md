@@ -32,7 +32,8 @@ the shared bounded command-worker factory and backend command executor. It
 supports de-duplicating named in-flight operations; those keys are scoped to
 the active connection generation so an old worker cannot be reused after a
 reconnect. Diagnostics distinguish registered workers from currently active
-operations. Feature services must use these shared facilities rather than
+operations, attribute instrumented workers to their owning feature, and update
+last-success, last-error, duration, and refresh timestamps from worker results. Feature services must use these shared facilities rather than
 opening a second primary connection.
 
 ## Feature services
