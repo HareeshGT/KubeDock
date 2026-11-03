@@ -656,7 +656,7 @@ def test_dashboard_service_pins_each_kubectl_line_to_selected_context():
 
 
 
-def test_stream_workers_abort_before_opening_channels_after_reconnect():
+def test_stream_workers_are_cancelled_on_reconnect_before_starting():
     connection = ConnectionService(pool_closer=lambda _ssh: None)
     services = AppServices(connection)
     connection.attach_ssh(FakeResource(), host="first.example")
@@ -669,16 +669,14 @@ def test_stream_workers_abort_before_opening_channels_after_reconnect():
         ),
         services.files.create_exec_stream_worker("python3 /tmp/task.py"),
     ]
-    errors = []
-    for worker in workers:
-        worker.error.connect(errors.append)
 
     connection.attach_ssh(FakeResource(), host="replacement.example")
-    for worker in workers:
-        worker.run()
 
-    assert len(errors) == len(workers)
-    assert all("connection changed" in error.lower() for error in errors)
+    assert workers[0]._stop is True
+    assert workers[1]._stop is True
+    assert workers[2]._stop.is_set()
+    assert workers[3]._stop is True
+    assert all(not worker._session_is_current() for worker in workers)
 
 
 
