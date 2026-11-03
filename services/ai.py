@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .lifecycle import activate_lifecycle
+
 
 class AIService:
     """Centralize AI worker construction and provider configuration access."""
@@ -10,6 +12,7 @@ class AIService:
         self.commands = commands
 
     def _register(self, worker):
+        activate_lifecycle(self)
         return self.commands.register_worker(worker) if self.commands is not None else worker
 
     @staticmethod
