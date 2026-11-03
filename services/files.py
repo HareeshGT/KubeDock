@@ -45,7 +45,7 @@ class FileManagerService:
             sudo_user=sudo_user, max_bytes=max_bytes,
         )
         self.connection.bind_worker(worker, snapshot)
-        return self.commands.register_worker(worker)
+        return self.commands.register_worker(worker, diagnostic_key="files:worker")
 
     def capture_transfer_session(self):
         """Capture the active filesystem adapter and generation for a transfer."""
@@ -70,6 +70,7 @@ class FileManagerService:
         activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
+            diagnostic_key="files:command",
         )
 
     def normalize(self, path):
