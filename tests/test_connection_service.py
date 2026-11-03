@@ -543,3 +543,33 @@ def test_scp_transfer_worker_does_not_start_after_session_replacement(monkeypatc
     worker.run()
 
     assert errors and "connection changed" in errors[0].lower()
+
+
+
+def test_app_services_shutdown_stops_and_joins_registered_workers():
+    from PyQt5.QtCore import QThread
+
+    class StoppableWorker(QThread):
+        def __init__(self):
+            super().__init__()
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+        def run(self):
+            while not self.cancelled:
+                self.msleep(5)
+
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    workers = [StoppableWorker(), StoppableWorker(), StoppableWorker()]
+    for worker in workers:
+        services.files.register_worker(worker)
+        worker.start()
+
+    services.shutdown()
+
+    assert all(worker.cancelled for worker in workers)
+    assert all(not worker.isRunning() for worker in workers)
+    assert services.commands._workers == []
