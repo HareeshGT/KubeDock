@@ -979,3 +979,34 @@ def test_reconnect_cancels_an_active_transfer_handle():
 
     assert worker._cancelled
     assert handle.closed
+
+
+
+def test_connection_health_worker_is_registered_for_session_replacement(monkeypatch):
+    import workers
+
+    class FakeSignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class FakeHealthWorker:
+        def __init__(self, ssh):
+            self.ssh = ssh
+            self.finished = FakeSignal()
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr(workers, "ConnectionHealthWorker", FakeHealthWorker)
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    connection.attach_ssh(FakeResource(), host="first.example")
+
+    health_worker = connection.create_health_worker()
+    assert health_worker.connection_generation == 1
+    assert health_worker._session_guard()
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+
+    assert health_worker.stopped
+    assert not health_worker._session_guard()
