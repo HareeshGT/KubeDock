@@ -12,6 +12,11 @@ class DashboardService:
     def __init__(self, connection, commands):
         self.connection = connection
         self.commands = commands
+    def stop(self):
+        """Cancel background work owned by this feature service."""
+        if self.commands is not None:
+            self.commands.stop_service("monitoring")
+
 
     def contextual_command(self, command, context):
         """Pin every top-level kubectl invocation to the selected context."""
