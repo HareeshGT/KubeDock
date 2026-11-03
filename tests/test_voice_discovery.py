@@ -63,8 +63,15 @@ def test_list_voices_returns_empty_when_tts_dependency_is_missing(monkeypatch):
 
 def test_voice_combo_shows_default_before_background_discovery(monkeypatch):
     class FakeSignal:
-        def connect(self, _callback):
-            pass
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+        def emit(self):
+            for callback in self.callbacks:
+                callback()
 
     class FakeCombo:
         def __init__(self):
@@ -109,4 +116,9 @@ def test_voice_combo_shows_default_before_background_discovery(monkeypatch):
 
     assert widget.voice_combo.items == [("System Default", "")]
     assert widget.voice_combo.current_index == 0
-    assert widget._voice_discovery_worker.started is True
+    worker = widget._voice_discovery_worker
+    assert worker.started is True
+
+    worker.finished.emit()
+    assert widget._voice_discovery_worker is None
+    assert worker not in voice._ACTIVE_VOICE_DISCOVERY_WORKERS
