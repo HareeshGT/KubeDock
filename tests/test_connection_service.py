@@ -1297,6 +1297,8 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
     assert "self.ssh = ssh if service is None else None" in docker_dialogs
     exec_dialog = (root / "dialogs_parts" / "exec_dialog.py").read_text(encoding="utf-8")
     assert "self.ssh = ssh if service is None else None" in exec_dialog
+    assert "self._ai_service.create_command_explain_worker(" in exec_dialog
+    assert "ai_service=getattr(getattr(self, \"_services\", None), \"ai\", None)" in resources
 
     docker_tab = (root / "docker_tab.py").read_text(encoding="utf-8")
     assert "self.ssh if self.docker_service is None else None" in docker_tab
