@@ -131,3 +131,17 @@ def test_unstarted_worker_reserves_operation_key():
     assert service.register_worker(first, operation_key="docker:list:containers") is first
     assert service.register_worker(duplicate, operation_key="docker:list:containers") is first
     assert service.registered_worker_count() == 1
+
+
+
+def test_feature_stop_cancels_only_workers_owned_by_that_service():
+    service = CommandService(FakeConnection())
+    docker_worker = FakeWorker()
+    dashboard_worker = FakeWorker()
+
+    service.register_worker(docker_worker, diagnostic_key="docker:list:containers")
+    service.register_worker(dashboard_worker, diagnostic_key="dashboard:host-metrics")
+
+    assert service.stop_service("docker") == 1
+    assert docker_worker.stop_requested is True
+    assert dashboard_worker.stop_requested is False
