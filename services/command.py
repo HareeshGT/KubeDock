@@ -24,6 +24,7 @@ class CommandService:
         self._shutting_down = False
         self._operation_workers = {}
         self._worker_started_at = {}
+        self._worker_service_names = {}
 
     def register_worker(self, worker, *, operation_key=None, diagnostic_key=None):
         """Keep workers alive, de-duplicate operations, and collect diagnostics."""
@@ -50,6 +51,7 @@ class CommandService:
             metric_key = diagnostic_key or operation_key
             if metric_key is not None:
                 self._worker_started_at[id(worker)] = time.monotonic()
+                self._worker_service_names[id(worker)] = self._diagnostic_service_name(metric_key)
                 started_signal = getattr(worker, "started", None)
                 if started_signal is not None:
                     started_signal.connect(
@@ -72,7 +74,7 @@ class CommandService:
                         lambda error, w=worker, key=str(metric_key): self._record_worker_error(w, key, error)
                     )
                 worker.finished.connect(
-                    lambda w=worker: self._worker_started_at.pop(id(w), None)
+                    lambda w=worker: self._forget_worker_diagnostics(w)
                 )
             shutting_down = self._shutting_down
         if shutting_down:
@@ -88,6 +90,45 @@ class CommandService:
         with self._workers_lock:
             if self._operation_workers.get(key) is worker:
                 self._operation_workers.pop(key, None)
+
+    @staticmethod
+    def _diagnostic_service_name(operation_key):
+        prefix = str(operation_key).split(":", 1)[0]
+        return {
+            "dashboard": "monitoring",
+            "docker": "docker",
+            "kubernetes": "kubernetes",
+            "terminal": "terminal",
+            "files": "files",
+            "ai": "ai",
+            "webapp": "webapp",
+        }.get(prefix, "commands")
+
+    def _forget_worker_diagnostics(self, worker):
+        with self._workers_lock:
+            self._worker_started_at.pop(id(worker), None)
+            self._worker_service_names.pop(id(worker), None)
+
+    def worker_counts_by_service(self):
+        with self._workers_lock:
+            counts = {}
+            for name in self._worker_service_names.values():
+                counts[name] = counts.get(name, 0) + 1
+            return counts
+
+    def active_operation_counts_by_service(self):
+        with self._workers_lock:
+            workers = tuple(self._workers)
+            names = dict(self._worker_service_names)
+        counts = {}
+        for worker in workers:
+            try:
+                if worker.isRunning():
+                    name = names.get(id(worker), "commands")
+                    counts[name] = counts.get(name, 0) + 1
+            except RuntimeError:
+                continue
+        return counts
 
     def _mark_worker_started(self, worker):
         with self._workers_lock:
@@ -111,15 +152,7 @@ class CommandService:
         if manager is None:
             return
         prefix = str(operation_key).split(":", 1)[0]
-        service_name = {
-            "dashboard": "monitoring",
-            "docker": "docker",
-            "kubernetes": "kubernetes",
-            "terminal": "terminal",
-            "files": "files",
-            "ai": "ai",
-            "webapp": "webapp",
-        }.get(prefix, "commands")
+        service_name = self._diagnostic_service_name(operation_key)
         with self._workers_lock:
             started = self._worker_started_at.get(id(worker), time.monotonic())
         duration = max(0.0, time.monotonic() - started)
