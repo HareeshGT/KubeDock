@@ -206,3 +206,33 @@ def test_feature_lifecycle_stop_invokes_owned_worker_cancellation():
 
     assert worker.stop_requested is True
     assert manager.status("docker").state.value == "STOPPED"
+
+
+
+def test_ai_style_succeeded_failed_signals_update_diagnostics():
+    from services.lifecycle import ServiceLifecycleManager
+
+    class AIWorker:
+        def __init__(self):
+            self.finished = Signal()
+            self.started = Signal()
+            self.succeeded = Signal()
+            self.failed = Signal()
+
+        def isRunning(self):
+            return True
+
+        def cancel(self):
+            pass
+
+    manager = ServiceLifecycleManager()
+    manager.register("ai", object())
+    service = CommandService(FakeConnection())
+    service._lifecycle_manager = manager
+    worker = AIWorker()
+
+    service.register_worker(worker, diagnostic_key="ai:model-test")
+    worker.started.emit()
+    worker.succeeded.emit("connected")
+
+    assert manager.status("ai").last_success_at is not None
