@@ -145,3 +145,43 @@ def test_feature_stop_cancels_only_workers_owned_by_that_service():
     assert service.stop_service("docker") == 1
     assert docker_worker.stop_requested is True
     assert dashboard_worker.stop_requested is False
+
+
+
+def test_command_worker_cancel_closes_active_channel():
+    from workers import CommandWorker
+
+    class Channel:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    worker = CommandWorker(None, "sleep 30")
+    channel = Channel()
+    worker._set_active_channel(channel)
+
+    worker.cancel()
+
+    assert worker._cancel_event.is_set()
+    assert channel.closed is True
+
+
+def test_command_worker_cancel_before_channel_open_closes_later_channel():
+    from workers import CommandWorker
+
+    class Channel:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    worker = CommandWorker(None, "sleep 30")
+    worker.cancel()
+    channel = Channel()
+
+    worker._set_active_channel(channel)
+
+    assert channel.closed is True
