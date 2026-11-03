@@ -106,6 +106,21 @@ class FileManagerService:
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.rename(old_path, new_path)
+    def create_media_stream_start_worker(self, path, *, sudo_user=None):
+        """Create a media server and its generation-bound startup worker."""
+        filesystem, ssh, snapshot = self.connection.get_file_session()
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system before streaming media")
+        if ssh is None and not hasattr(filesystem, "_ftp"):
+            raise RuntimeError("The active file session cannot stream this media source")
+        from workers import MediaStreamServer, _StreamServerStartWorker
+
+        server = MediaStreamServer(ssh, filesystem, path, sudo_user=sudo_user)
+        worker = _StreamServerStartWorker(server)
+        self.connection.bind_worker(worker, snapshot)
+        self.register_worker(worker)
+        return server, worker, snapshot
+
     def create_exec_stream_worker(self, command):
         """Create a streaming remote-file execution worker on the active SSH session."""
         ssh, snapshot = self.connection.get_ssh_session()
