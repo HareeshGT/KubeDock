@@ -74,6 +74,7 @@ class DockerService:
 
     def create_log_stream_worker(self, command):
         """Create a live Docker log worker bound to the active session generation."""
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before streaming Docker logs")
