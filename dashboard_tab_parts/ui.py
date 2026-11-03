@@ -26,8 +26,8 @@ class DashboardUIMixin:
       # Page header: 22px title + secondary subtitle (design-system hierarchy)
       title_col = QVBoxLayout()
       title_col.setSpacing(0)
-      self.page_title_lbl = QLabel("Dashboard")
-      self.page_sub_lbl = QLabel("Live infrastructure overview")
+      self.page_title_lbl = QLabel("Connected Machine")
+      self.page_sub_lbl = QLabel("Live host and Kubernetes infrastructure")
       title_col.addWidget(self.page_title_lbl)
       title_col.addWidget(self.page_sub_lbl)
       cb.addLayout(title_col)
@@ -653,6 +653,14 @@ class DashboardUIMixin:
       }
       for key, value in values.items():
         self._app_connection_values[key][0].setText(str(value))
+      state_color = (
+        T["SUCCESS"] if state == "connected"
+        else T["WARNING"] if state == "degraded"
+        else _dashboard_text("muted")
+      )
+      self._app_connection_values["state"][0].setStyleSheet(
+        f"color: {state_color}; font-size: 16px; font-weight: 700;"
+      )
       self.app_connection_empty.setVisible(not active)
       self.app_connection_error.setText(
         f"Last connection issue: {overview.get('last_error')}"
