@@ -114,9 +114,10 @@ class _ExecStreamWorker(QThread):
 class FileExecDialog(QDialog):
   """Run a remote script and stream its output line by line."""
 
-  def __init__(self, parent, ssh, remote_path: str, sudo_user=None):
+  def __init__(self, parent, ssh, remote_path: str, sudo_user=None, service=None):
     super().__init__(parent)
     self._ssh    = ssh
+    self._service = service
     self._remote  = remote_path
     self._sudo_user = sudo_user
     self._worker  = None
@@ -321,7 +322,16 @@ class FileExecDialog(QDialog):
     self._send_btn.setEnabled(True)
     self._input_inp.setFocus()
 
-    self._worker = _ExecStreamWorker(self._ssh, cmd)
+    try:
+      self._worker = (
+        self._service.create_exec_stream_worker(cmd)
+        if self._service is not None
+        else _ExecStreamWorker(self._ssh, cmd)
+      )
+    except Exception as exc:
+      self._on_error(str(exc))
+      self._on_finished(-1)
+      return
     self._worker.line.connect(self._on_line)
     self._worker.error.connect(self._on_error)
     self._worker.finished.connect(self._on_finished)
