@@ -36,6 +36,7 @@ class DashboardService:
         return self.commands.create_worker(
             worker_pool, command, timeout=timeout, raw=raw,
             operation_key=operation_key,
+            diagnostic_key=operation_key or "dashboard:collection",
         )
 
 
