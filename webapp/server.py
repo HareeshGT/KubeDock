@@ -1010,6 +1010,8 @@ def _safe_remote_path(value: str) -> str:
 
 def _sftp():
     try:
+        if _WEBAPP_SERVICE is not None:
+            return _WEBAPP_SERVICE.open_sftp()
         return _ssh().open_sftp()
     except Exception:
         logger.exception("Unable to open SFTP channel")
@@ -1809,8 +1811,13 @@ async def remote_terminal(websocket: WebSocket) -> None:
         await websocket.close(code=4403, reason="Secure WebSocket required")
         return
     try:
-        ssh = _ssh()
-        channel = ssh.invoke_shell(term="xterm-256color", width=120, height=32)
+        channel = (
+            _WEBAPP_SERVICE.open_terminal_channel(
+                term="xterm-256color", width=120, height=32,
+            )
+            if _WEBAPP_SERVICE is not None
+            else _ssh().invoke_shell(term="xterm-256color", width=120, height=32)
+        )
     except Exception:
         logger.exception("Unable to open remote PTY")
         await websocket.close(code=1011, reason="Unable to open remote terminal")
