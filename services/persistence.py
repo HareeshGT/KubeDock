@@ -14,7 +14,8 @@ class DatabaseService:
     """
 
     def initialize(self):
-        activate_lifecycle(self)
+        # Invoked by ServiceLifecycleManager.start(); do not recursively
+        # activate the same service while it is in STARTING state.
         import db
         db.initialize()
 
