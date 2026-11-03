@@ -496,3 +496,50 @@ def test_domain_command_services_share_one_generation_guarded_worker_factory():
 
     connection.disconnect()
     assert all(not worker._session_is_current() for worker in workers)
+
+
+
+def test_sftp_transfer_worker_rejects_replaced_session_before_io():
+    from workers_parts.transfer import _TransferWorker
+
+    connection = ConnectionService()
+    filesystem = FakeFilesystem()
+    original = connection.attach_file_connection(
+        filesystem, protocol="ftp", host="first.example",
+    )
+    worker = _TransferWorker(filesystem, "download", "/tmp/out", "/remote/file")
+    worker._session_guard = lambda: connection.is_current(original.generation)
+    errors = []
+    worker.finished_err.connect(errors.append)
+
+    connection.attach_file_connection(
+        FakeFilesystem(), protocol="ftp", host="second.example",
+    )
+    worker.run()
+
+    assert errors and "connection changed" in errors[0].lower()
+    assert filesystem.calls == []
+
+
+def test_scp_transfer_worker_does_not_start_after_session_replacement(monkeypatch):
+    import pytest
+    import workers_parts.transfer as transfer_parts
+
+    connection = ConnectionService()
+    original = connection.attach_ssh(FakeResource(), host="first.example")
+    worker = transfer_parts.ScpTransferWorker(
+        "first.example", 22, "operator", "/tmp/operator.pem", None,
+        "upload", "/tmp/local", "/remote/file",
+    )
+    worker._session_guard = lambda: connection.is_current(original.generation)
+    errors = []
+    worker.finished_err.connect(errors.append)
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+    monkeypatch.setattr(
+        transfer_parts.os, "forkpty",
+        lambda: pytest.fail("stale SCP worker must not start a subprocess"),
+    )
+    worker.run()
+
+    assert errors and "connection changed" in errors[0].lower()
