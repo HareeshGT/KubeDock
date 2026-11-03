@@ -211,6 +211,24 @@ class CommandService:
         except Exception:
             pass
 
+    def stop_service(self, service_name):
+        """Request cancellation of workers owned by one feature service."""
+        with self._workers_lock:
+            workers = [
+                worker for worker in self._workers
+                if self._worker_service_names.get(id(worker)) == service_name
+            ]
+        for worker in workers:
+            self._request_worker_stop(worker)
+        return len(workers)
+
+    def stop(self):
+        """Stop remaining generic command work during lifecycle shutdown."""
+        with self._workers_lock:
+            workers = list(self._workers)
+        for worker in workers:
+            self._request_worker_stop(worker)
+
     def request_worker_shutdown(self):
         with self._workers_lock:
             self._shutting_down = True
