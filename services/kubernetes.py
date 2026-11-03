@@ -17,3 +17,19 @@ class KubernetesService:
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
         )
+    def create_pod_exec_stream_worker(
+        self, namespace, pod, container=None, context=None, *, cols=120, rows=32,
+    ):
+        """Create a persistent pod shell worker bound to the active SSH generation."""
+        ssh, snapshot = self.connection.get_ssh_session()
+        if ssh is None:
+            raise RuntimeError("Connect to an SSH host before opening a pod shell")
+        from workers import PodExecStreamWorker
+
+        worker = PodExecStreamWorker(
+            ssh, namespace, pod, container, context, cols=cols, rows=rows,
+        )
+        worker.connection_generation = snapshot.generation
+        worker.connection_session_id = snapshot.session_id
+        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        return worker
