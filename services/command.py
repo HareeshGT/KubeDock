@@ -109,9 +109,7 @@ class CommandService:
             ssh, command, cwd=cwd, sudo_user=sudo_user,
             timeout=timeout, raw=raw,
         )
-        worker.connection_generation = snapshot.generation
-        worker.connection_session_id = snapshot.session_id
-        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.connection.bind_worker(worker, snapshot)
         self.register_worker(worker)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
