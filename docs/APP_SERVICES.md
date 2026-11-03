@@ -78,6 +78,10 @@ bounded managed channel from the existing pool.
 Feature widgets receive the shared services from the main window. Their
 legacy `ssh` accessors now resolve through `ConnectionService`; the stored
 legacy value is only a compatibility fallback for standalone widget tests.
+Domain services do not expose raw `ssh_client` properties: they expose
+operation-specific worker factories and connection capabilities instead.
+The Web App's `ssh_provider` is the narrow exception because its existing
+request adapter requires the active client for a validated request.
 Feature command workers are created through their domain service in the desktop app. Command, directory, file-stream, file-transfer, and media-start workers capture the session generation and reject stale work after a reconnect. `ConnectionService` actively cancels generation-bound workers when a session is replaced, lost, or disconnected, so blocking transfer handles are closed promptly rather than waiting for the next result check. FTP/FTPS downloads and uploads use dedicated per-transfer control/data connections, leaving the shared browsing control channel available for directory and metadata operations. FTP stream timeouts propagate as transfer errors rather than being mistaken for EOF, preventing a stalled read from silently producing a truncated file. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while metadata lookup, byte writes, common path and mutation operations are service methods. The editor's streaming read and save paths, regular uploads/downloads, and large-file viewer downloads all receive the shared file service so their workers are generation-bound and registered for shutdown. The optional local OpenSSH `scp` optimization is also bound to that generation and is terminated if the application session changes; it is a transfer subprocess, not a replacement for or owner of the app's primary SSH session.
 The embedded Web App is passed `WebAppService` and routes command
 execution, short-lived SFTP channel creation, and interactive PTY channel
