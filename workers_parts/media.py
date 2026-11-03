@@ -475,11 +475,31 @@ class _StreamServerStartWorker(QThread):
     def __init__(self, server: "MediaStreamServer"):
         super().__init__()
         self._server = server
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
 
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+
     def run(self):
+        if not self._session_is_current():
+            self.error.emit("The active connection changed before media streaming could start.")
+            return
         try:
             url = self._server.start()
+            if not self._session_is_current():
+                try:
+                    self._server.stop()
+                except Exception:
+                    pass
+                self.error.emit("The active connection changed while media streaming was starting.")
+                return
             self.ready.emit(url)
         except Exception as e:
             self.error.emit(str(e))
