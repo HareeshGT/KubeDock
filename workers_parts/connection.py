@@ -20,7 +20,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .ssh import _configure_host_key_policy, _configure_transport, attach_ssh_connection_pool, managed_exec_command
+from .ssh import _configure_host_key_policy, _configure_transport, attach_ssh_connection_pool, close_ssh_connection_pool, managed_exec_command
 
 class ConnectWorker(QThread):
     """Establishes an SSH connection (and opens SFTP) in a background thread
@@ -46,6 +46,8 @@ class ConnectWorker(QThread):
 
     def cancel(self):
         self._cancelled.set()
+        if self._ssh_client is not None:
+            close_ssh_connection_pool(self._ssh_client)
         for resource in (self._sftp_client, self._ssh_client):
             if resource is not None:
                 try:
@@ -186,6 +188,7 @@ class ConnectWorker(QThread):
                 max_total_connections=self.max_ssh_connections,
             )
             if self._cancelled.is_set():
+                close_ssh_connection_pool(ssh)
                 sftp.close()
                 ssh.close()
                 return
@@ -195,6 +198,7 @@ class ConnectWorker(QThread):
                 if 'sftp' in locals() and sftp:
                     sftp.close()
                 if 'ssh' in locals() and ssh:
+                    close_ssh_connection_pool(ssh)
                     ssh.close()
             except Exception:
                 pass
