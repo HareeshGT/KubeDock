@@ -287,17 +287,35 @@ class _TransferWorker(QThread):
         self._local     = local_path
         self._remote    = remote_path
         self._cancelled = False
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+
+    def _ensure_session_current(self):
+        if not self._session_is_current():
+            raise RuntimeError(
+                "The active connection changed during this file transfer; retry the operation."
+            )
 
     def cancel(self):
         self._cancelled = True
 
     def run(self):
         try:
+            self._ensure_session_current()
             if self._direction == "download":
                 self._download()
             else:
                 self._upload()
+            self._ensure_session_current()
             if not self._cancelled:
                 self.finished_ok.emit()
         except Exception as e:
@@ -326,6 +344,7 @@ class _TransferWorker(QThread):
             done = [0]
             with open(self._local, "wb") as f:
                 def cb(data):
+                    self._ensure_session_current()
                     if self._cancelled: return
                     f.write(data); done[0] += len(data); self.progress.emit(done[0], total)
                 self._sftp._ftp.retrbinary("RETR " + self._sftp.normalize(self._remote), cb, blocksize=256*1024)
@@ -377,6 +396,7 @@ class _TransferWorker(QThread):
                 remote_f.prefetch(total)
                 with open(self._local, "wb") as local_f:
                     while True:
+                        self._ensure_session_current()
                         if self._cancelled:
                             return
                         buf = remote_f.read(chunk)
@@ -405,6 +425,7 @@ class _TransferWorker(QThread):
 
             with open(self._local, "rb") as f:
                 def cb(data):
+                    self._ensure_session_current()
                     if self._cancelled:
                         return
                     done[0] += len(data)
@@ -453,6 +474,7 @@ class _TransferWorker(QThread):
                     remote_f.MAX_REQUEST_SIZE = REQUEST_SIZE
                     remote_f.set_pipelined(True)
                     while True:
+                        self._ensure_session_current()
                         if self._cancelled:
                             return
                         buf = local_f.read(chunk)
@@ -640,7 +662,17 @@ class ScpTransferWorker(QThread):
         self._total     = total_size or 0
         self._cancelled = False
         self._proc      = None
+        self._session_guard = None
         self.finished.connect(self.deleteLater)
+
+    def _session_is_current(self):
+        guard = self._session_guard
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
 
     def cancel(self):
         self._cancelled = True
@@ -706,6 +738,12 @@ class ScpTransferWorker(QThread):
         # Safety net (dialogs.py already routes these to SFTP via
         # supports()): never launch scp for a password login when there's
         # no pty to answer its prompt — it would ask on the local console.
+        if not self._session_is_current():
+            self.finished_err.emit(
+                "The active connection changed before this file transfer could start."
+            )
+            return
+
         if not self.supports(self._pem, self._password):
             self.finished_err.emit(
                 "Password transfers via scp aren't supported on this OS; "
@@ -780,6 +818,7 @@ class ScpTransferWorker(QThread):
         # log does, and is what the failure message is built from.
         log           = bytearray()
         prompt_abort  = None
+        stale_session = False
         # Drive this off the process's own exit status (poll()), not off
         # read() returning EOF. ssh/scp can leave the pty/pipe's write end
         # referenced by a lingering child process even after the transfer
@@ -790,6 +829,10 @@ class ScpTransferWorker(QThread):
         # keep reading in the meantime to surface live progress.
         while True:
             if self._cancelled:
+                proc.kill()
+                break
+            if not self._session_is_current():
+                stale_session = True
                 proc.kill()
                 break
 
@@ -869,6 +912,11 @@ class ScpTransferWorker(QThread):
             return
 
         ret = proc.wait()
+        if stale_session:
+            self.finished_err.emit(
+                "The active connection changed during this file transfer; the stale transfer was stopped."
+            )
+            return
         if prompt_abort:
             self.finished_err.emit(
                 "scp stopped at a prompt it can't answer: {!r}".format(prompt_abort)
