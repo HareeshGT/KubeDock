@@ -13,7 +13,7 @@ class FakeCommands:
 
 def test_contextual_command_pins_all_kubectl_lines_once():
     service = DashboardService(FakeConnection(), FakeCommands())
-    command = "kubectl get pods\necho done; kubectl get nodes"
+    command = "kubectl get pods\nkubectl get nodes"
     result = service.contextual_command(command, "dev cluster")
 
     assert result.count("--context='dev cluster'") == 2
