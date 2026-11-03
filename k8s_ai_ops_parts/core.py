@@ -551,12 +551,17 @@ def save_voice_feedback_enabled(enabled: bool):
 def list_voices() -> list:
   """Return installed pyttsx3 voices using a bounded, isolated process.
 
-  macOS NSSpeechSynthesizer can hang while pyttsx3 enumerates voices. Run
-  enumeration in a child interpreter so a stuck native speech framework can
-  be terminated without taking down or freezing the KubeDock process.
-  Callers that run this during UI initialization must still do so on a worker.
+  macOS NSSpeechSynthesizer can hang while pyttsx3 enumerates voices. In a
+  source run, use a child interpreter so a stuck native speech framework can
+  be terminated without freezing KubeDock.
+
+  A frozen PyInstaller app must not use sys.executable with -c: that path
+  points to the KubeDock app executable, not a standalone Python interpreter.
+  Re-launching it for voice discovery starts another copy of the GUI app.
+  Frozen builds therefore keep the safe System Default voice and skip optional
+  voice enumeration.
   """
-  if not _TTS_AVAILABLE:
+  if not _TTS_AVAILABLE or getattr(sys, "frozen", False):
     return []
 
   script = (
