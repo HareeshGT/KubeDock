@@ -395,6 +395,10 @@ class ConnectionService:
         self._publish(snapshot)
         return snapshot
 
+    def stop(self):
+        """Release the active transport when the lifecycle manager stops it."""
+        return self.disconnect()
+
     def disconnect(self) -> ConnectionSnapshot:
         """Clear the active session and close its resources exactly once."""
         with self._lock:
