@@ -467,7 +467,7 @@ class KubernetesResourcesMixin:
     dlg = ContainerPickerDialog(self, pod, containers)
     if dlg.exec_() == QDialog.Accepted:
       ExecDialog(self, self.ssh, ns, pod, dlg.selected_container(),
-            context=self._current_context).exec_()
+            context=self._current_context, service=self.kubernetes_service).exec_()
 
 
   def _pod_delete(self):
