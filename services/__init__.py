@@ -3,6 +3,7 @@
 from .connection import ConnectionService, ConnectionSnapshot
 from .runtime import AppServices
 from .command import CommandService
+from .lifecycle import ServiceLifecycleManager, ServiceState, ServiceStatus
 from .kubernetes import KubernetesService
 from .docker import DockerService
 from .dashboard import DashboardService
@@ -13,7 +14,8 @@ from .webapp import WebAppService
 
 __all__ = [
     "AppServices", "ConnectionService", "ConnectionSnapshot",
-    "CommandService", "KubernetesService", "DockerService",
+    "CommandService", "ServiceLifecycleManager", "ServiceState",
+    "ServiceStatus", "KubernetesService", "DockerService",
     "DashboardService", "FileManagerService", "TerminalService",
     "AIService", "WebAppService",
 ]
