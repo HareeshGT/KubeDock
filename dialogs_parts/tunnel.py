@@ -395,11 +395,12 @@ class _ServiceFormPanel(QFrame):
   save_clicked  = pyqtSignal(dict, object)  # (new_data, original_svc_or_None)
   cancel_clicked = pyqtSignal()
 
-  def __init__(self, ssh=None, namespaces=None, parent=None):
+  def __init__(self, ssh=None, namespaces=None, parent=None, service=None):
     super().__init__(parent)
     self.setObjectName("tunnel_form_panel")
     self._editing  = None
-    self.ssh     = ssh
+    self._service = service
+    self.ssh = ssh if service is None else None
     self._namespaces = list(namespaces or [])
     self._workers  = []
 
@@ -504,11 +505,10 @@ class _ServiceFormPanel(QFrame):
     )
 
   # ── Context from the owning dialog ──────────────────────────
-  def set_context(self, ssh, namespaces: list):
-    """Called by ManageTunnelServicesDialog whenever it (re)opens, so
-    the form always has the current SSH connection and namespace list
-    rather than whatever was passed in at construction time."""
-    self.ssh = ssh
+  def set_context(self, ssh, namespaces: list, service=None):
+    """Refresh the shared Kubernetes service and namespace choices."""
+    self._service = service
+    self.ssh = ssh if service is None else None
     self._namespaces = list(namespaces or [])
     current = self.ns_input.currentText()
     self.ns_input.blockSignals(True)
@@ -519,12 +519,18 @@ class _ServiceFormPanel(QFrame):
 
   # ── Dependent-dropdown queries ───────────────────────────────
   def _run_query(self, cmd: str, callback):
-    if not self.ssh:
-      return
-    worker = CommandWorker(self.ssh, cmd)
+    if self._service is not None:
+      try:
+        worker = self._service.create_worker(self._workers, cmd)
+      except Exception:
+        return
+    else:
+      if not self.ssh:
+        return
+      worker = CommandWorker(self.ssh, cmd)
+      track_worker(self._workers, worker)
     worker.done.connect(callback)
     worker.error.connect(lambda _e: None) # best-effort autocomplete only
-    track_worker(self._workers, worker)
     worker.start()
 
   def _on_ns_picked(self, ns: str):
@@ -647,9 +653,10 @@ class ManageTunnelServicesDialog(QDialog):
 
   services_saved = pyqtSignal(list)
 
-  def __init__(self, ssh, services: list, csv_path: str, namespaces: list = None, parent=None):
+  def __init__(self, ssh, services: list, csv_path: str, namespaces: list = None, parent=None, service=None):
     super().__init__(parent)
-    self.ssh = ssh
+    self._service = service
+    self.ssh = ssh if service is None else None
     self.csv_path = csv_path
     self._services = [dict(s) for s in services]
     self._namespaces = list(namespaces or [])
@@ -716,7 +723,9 @@ class ManageTunnelServicesDialog(QDialog):
     self.stack.addWidget(list_page)
 
     # ── Form page ────────────────────────────────────────
-    self.form_panel = _ServiceFormPanel(ssh=self.ssh, namespaces=self._namespaces)
+    self.form_panel = _ServiceFormPanel(
+      ssh=self.ssh, namespaces=self._namespaces, service=self._service,
+    )
     self.form_panel.save_clicked.connect(self._on_form_save)
     self.form_panel.cancel_clicked.connect(self._show_list)
     self.stack.addWidget(self.form_panel)
@@ -842,7 +851,7 @@ class ManageTunnelServicesDialog(QDialog):
     return "\n".join(lines) + "\n"
 
   def _save_to_vm(self):
-    if not self.ssh:
+    if self._service is None and not self.ssh:
       QMessageBox.warning(self, "Not connected", "Connect to a VM before saving.")
       return
     if not self._services:
@@ -869,23 +878,27 @@ class ManageTunnelServicesDialog(QDialog):
     # every newly added service looked like it hadn't been saved.
     # Fix: resolve '~' to the actual remote $HOME first, then quote the
     # already-expanded absolute path.
-    csv_path = self.csv_path
-    if csv_path.startswith("~"):
-      with managed_exec_command(self.ssh, "echo $HOME") as (_stdin, _home_out, _stderr):
-        home = _home_out.read().decode(errors="replace").strip()
-      if home:
-        csv_path = home + csv_path[1:]
+    if self._service is not None:
+      worker = self._service.create_tunnel_save_worker(
+        None, self.csv_path, csv_text,
+      )
+    else:
+      csv_path = self.csv_path
+      if csv_path.startswith("~"):
+        with managed_exec_command(self.ssh, "echo $HOME") as (_stdin, _home_out, _stderr):
+          home = _home_out.read().decode(errors="replace").strip()
+        if home:
+          csv_path = home + csv_path[1:]
 
-    remote_dir = os.path.dirname(csv_path) or "."
-    cmd = "mkdir -p {d} 2>/dev/null; echo {b64} | base64 -d > {p}".format(
-      d=shlex.quote(remote_dir), b64=shlex.quote(b64), p=shlex.quote(csv_path),
-    )
+      remote_dir = os.path.dirname(csv_path) or "."
+      cmd = "mkdir -p {d} 2>/dev/null; echo {b64} | base64 -d > {p}".format(
+        d=shlex.quote(remote_dir), b64=shlex.quote(b64), p=shlex.quote(csv_path),
+      )
+      worker = CommandWorker(self.ssh, cmd)
 
     self.save_all_btn.setEnabled(False)
     self.save_all_btn.setText("Saving…")
     self.status_lbl.setText("Writing changes to the VM…")
-
-    worker = CommandWorker(self.ssh, cmd)
 
     def on_done(_out):
       self.save_all_btn.setEnabled(True)
