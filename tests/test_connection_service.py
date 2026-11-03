@@ -877,3 +877,55 @@ def test_ftp_upload_stream_abort_does_not_finalize_or_count_partial_transfer():
     assert transfer_ftp.close_calls == 1
     assert fs.uploaded_bytes == 0
     assert fs.upload_count == 0
+
+
+
+def test_ftp_download_worker_uses_a_dedicated_stream_not_the_shared_control_channel(tmp_path):
+    from workers_parts.transfer import _TransferWorker
+
+    class FakeReader:
+        def __init__(self):
+            self.chunks = [b"first-", b"second", b""]
+            self.closed = False
+
+        def read(self, _size):
+            return self.chunks.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    class SharedControl:
+        def retrbinary(self, *_args, **_kwargs):
+            raise AssertionError("transfer must not use the shared FTP control channel")
+
+    class FakeFTPFilesystem:
+        _ftp = SharedControl()
+
+        def __init__(self):
+            self.reader = FakeReader()
+            self.probe_calls = 0
+            self.stream_calls = 0
+
+        def stream_probe(self, _path):
+            self.probe_calls += 1
+            return 12, True
+
+        def open_stream(self, _path):
+            self.stream_calls += 1
+            return self.reader
+
+    filesystem = FakeFTPFilesystem()
+    destination = tmp_path / "download.bin"
+    worker = _TransferWorker(
+        filesystem, "download", str(destination), "/remote/file.bin",
+    )
+    completed = []
+    worker.finished_ok.connect(lambda: completed.append(True))
+
+    worker.run()
+
+    assert completed == [True]
+    assert filesystem.probe_calls == 1
+    assert filesystem.stream_calls == 1
+    assert filesystem.reader.closed
+    assert destination.read_bytes() == b"first-second"
