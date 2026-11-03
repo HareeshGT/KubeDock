@@ -111,7 +111,11 @@ class ThemeSecurityMixin:
       refreshed styles into every tab. Runs at the faded-out midpoint of
       _change_theme's cross-fade so the color jump itself is hidden."""
       apply_theme_vars(theme_name)
-      save_settings()
+      services = getattr(self, "services", None)
+      if services is not None:
+        services.settings.save_current_theme()
+      else:
+        save_settings()
       qss = build_qss()
       self.setStyleSheet(qss)
 
