@@ -272,7 +272,7 @@ class ConnectionService:
         from workers import ConnectionHealthWorker
 
         worker = ConnectionHealthWorker(ssh)
-        worker.connection_generation = snapshot.generation
+        self.bind_worker(worker, snapshot)
         return worker
 
     def attach_file_connection(
