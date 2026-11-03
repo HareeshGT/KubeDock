@@ -67,7 +67,7 @@ bounded managed channel from the existing pool.
 | `KubernetesService` | Kubernetes command execution and generation-guarded interactive pod shells | Kubernetes resources, tunnels, Ops Mind, pod Exec dialog |
 | `DockerService` | Docker command execution and generation-guarded live log streams | Docker tab and Docker log dialog |
 | `DashboardService` | Host, process and cluster telemetry commands | Dashboard refresh pipeline |
-| `FileManagerService` | Filesystem access, path normalization, create/delete/rename, directory listing, and guarded streaming file readers | Remote file manager |
+| `FileManagerService` | Filesystem access, path normalization, create/delete/rename, directory listing, guarded streaming file readers, and remote file execution streams | Remote file manager and Run dialog |
 | `TerminalService` | Integrated terminal and working-directory command workers | Main terminal |
 | `AIService` | Provider-backed explain, Kubernetes interpretation and investigation worker construction | Pod AI, terminal explain, Ops Mind |
 | `WebAppService` | Restricted access to the active session and shared backend command execution | Embedded FastAPI application |
