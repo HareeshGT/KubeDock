@@ -92,8 +92,8 @@ class FileManagerService:
         return filesystem.mkdir(path)
 
     def write_bytes(self, path, data):
-        activate_lifecycle(self)
         """Write bytes through the active SSH/SFTP or FTP filesystem adapter."""
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
