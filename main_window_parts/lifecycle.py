@@ -186,11 +186,19 @@ class LifecycleMixin:
         # Stop focused and background dashboard timers.
         _cleanup(dashboard_tab.shutdown)
 
+      connect_worker = getattr(self, "_connect_worker", None)
+      if connect_worker is not None:
+        # A connection handshake must not finish and publish a new session
+        # while the window is shutting down.
+        _cleanup(connect_worker.cancel)
+        _cleanup(lambda: connect_worker.wait(1500))
+
       health_worker = getattr(self, "_health_worker", None)
       self._health_worker = None
       if health_worker is not None:
-        # Don't leave the heartbeat thread running into interpreter teardown.
+        # Stop and join the heartbeat before closing its SSH transport.
         _cleanup(health_worker.stop)
+        _cleanup(lambda: health_worker.wait(1000))
 
       # ConnectionService owns the primary session and managed secondary SSH
       # pool. Always attempt its idempotent teardown, regardless of failures
