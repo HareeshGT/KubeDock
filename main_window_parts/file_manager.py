@@ -424,6 +424,7 @@ class FileManagerMixin:
           user=self._conn_user, pem=self._conn_pem,
           password=self._conn_password,
           sudo_user=self._sudo_user,
+          service=self._file_service(),
         )
         return
       service = self._file_service()
