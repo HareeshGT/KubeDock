@@ -67,7 +67,7 @@ bounded managed channel from the existing pool.
 |---|---|---|
 | `ConnectionService` | Active SSH/FTP(S) session, health state, replacement and teardown | Main window, feature tabs, Web App |
 | `CommandService` | Shared bounded remote command workers and backend command execution | Kubernetes, Docker, Dashboard, terminal, Ops Mind, Web App |
-| `KubernetesService` | Kubernetes command workers, context application, generation-guarded pod shells, log streams, and evidence collection | Kubernetes resources, tunnels, Ops Mind, pod Exec and Logs dialogs |
+| `KubernetesService` | Kubernetes command workers, context application, generation-guarded pod shells and log streams, tunnel CSV loading/saving, and evidence collection | Kubernetes resources, tunnels, Ops Mind, pod Exec and Logs dialogs |
 | `DockerService` | Docker command execution and generation-guarded live log streams | Docker tab and Docker log dialog |
 | `DashboardService` | Host, process and cluster telemetry workers, including selected-context binding for cluster snapshots | Dashboard refresh pipeline |
 | `FileManagerService` | Filesystem access, metadata lookup, byte writes, path normalization, create/delete/rename, directory listing, guarded streaming readers, generation-bound transfer lifecycle, remote file execution, and media-stream startup | Remote file manager, Edit, Run, Play, Upload, Download, and large-file viewer dialogs |
