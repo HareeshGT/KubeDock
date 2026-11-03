@@ -43,9 +43,10 @@ class DockerTextDialog(QDialog):
 class DockerLogDialog(QDialog):
   """Live-tails ``docker logs -f`` for one container over SSH."""
 
-  def __init__(self, parent, ssh, container: str, sudo_user=None):
+  def __init__(self, parent, ssh, container: str, sudo_user=None, service=None):
     super().__init__(parent)
     self.ssh = ssh
+    self._service = service
     self._container = du.validate_name(container, "container")
     self._sudo_user = sudo_user
     self._stream_worker = None
@@ -119,7 +120,11 @@ class DockerLogDialog(QDialog):
     self.status_lbl.setText("● live")
     self.status_lbl.setStyleSheet(f"color: {T['SUCCESS']};")
 
-    worker = _ExecStreamWorker(self.ssh, cmd)
+    worker = (
+      self._service.create_log_stream_worker(cmd)
+      if self._service is not None
+      else _ExecStreamWorker(self.ssh, cmd)
+    )
     worker.line.connect(self._on_stream_line)
     worker.error.connect(self._on_stream_error)
     worker.finished.connect(self._on_stream_finished)
