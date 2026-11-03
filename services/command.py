@@ -134,20 +134,28 @@ class CommandService:
         raw: bool = False,
         operation_key: str = None,
     ):
-        if operation_key is not None:
+        ssh, snapshot = self.connection.get_ssh_session()
+        if ssh is None:
+            raise RuntimeError("Connect to an SSH host before running remote commands")
+
+        # Scope de-duplication to a connection generation. A worker from an
+        # old SSH session must never satisfy a request on a newly connected host.
+        operation_token = (
+            "{}:{}".format(snapshot.generation, operation_key)
+            if operation_key is not None else None
+        )
+        if operation_token is not None:
             with self._workers_lock:
-                existing = self._operation_workers.get(str(operation_key))
+                existing = self._operation_workers.get(operation_token)
             if existing is not None:
                 try:
                     if existing.isRunning():
                         if worker_pool is not None:
+                            from workers import track_worker
                             track_worker(worker_pool, existing)
                         return existing
                 except RuntimeError:
                     pass
-        ssh, snapshot = self.connection.get_ssh_session()
-        if ssh is None:
-            raise RuntimeError("Connect to an SSH host before running remote commands")
 
         # Lazy imports avoid coupling service startup to Qt worker modules.
         from workers import CommandWorker, track_worker
@@ -157,7 +165,7 @@ class CommandService:
             timeout=timeout, raw=raw,
         )
         self.connection.bind_worker(worker, snapshot)
-        self.register_worker(worker, operation_key=operation_key)
+        self.register_worker(worker, operation_key=operation_token)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
