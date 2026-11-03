@@ -42,3 +42,34 @@ PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND
 
 def test_process_snapshot_parser_returns_none_for_missing_marker():
     assert DashboardService.parse_process_snapshot("no process data") is None
+
+
+
+class RecordingCommands:
+    def __init__(self):
+        self.calls = []
+
+    def create_worker(self, worker_pool, command, **kwargs):
+        worker = {"command": command, **kwargs}
+        self.calls.append(worker)
+        return worker
+
+
+def test_posix_collection_plan_is_owned_by_dashboard_service():
+    commands = RecordingCommands()
+    service = DashboardService(FakeConnection(), commands)
+
+    workers = service.create_posix_collection_workers(
+        None,
+        host_command="host metrics",
+        kubernetes_command="kubectl get all",
+        pod_placement_command="kubectl get pods -o wide",
+    )
+
+    assert set(workers) == {"host", "kubernetes", "pod_placement"}
+    assert [call["operation_key"] for call in commands.calls] == [
+        "dashboard:host-metrics",
+        "dashboard:kubernetes-metrics",
+        "dashboard:pod-placement",
+    ]
+    assert commands.calls[2]["timeout"] == 15
