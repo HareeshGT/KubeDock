@@ -57,11 +57,31 @@ class FileManagerService:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.normalize(path or "")
 
+    def stat(self, path):
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        return filesystem.stat(path)
+
     def mkdir(self, path):
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.mkdir(path)
+
+    def write_bytes(self, path, data):
+        """Write bytes through the active SSH/SFTP or FTP filesystem adapter."""
+        filesystem = self.filesystem
+        if filesystem is None:
+            raise RuntimeError("Connect to a remote file system first")
+        payload = bytes(data)
+        if hasattr(filesystem, "write_bytes"):
+            return filesystem.write_bytes(path, payload)
+        if hasattr(filesystem, "_ftp"):
+            import io
+            return filesystem.putfo(io.BytesIO(payload), path)
+        import io
+        return filesystem._sftp.putfo(io.BytesIO(payload), path)
 
     def create_empty_file(self, path):
         filesystem = self.filesystem
