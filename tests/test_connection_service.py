@@ -187,6 +187,11 @@ def test_app_services_compose_domain_services_over_one_connection():
     assert services.dashboard.commands is services.commands
     assert services.files.commands is services.commands
     assert services.terminal.commands is services.commands
+    for service in (
+        services.kubernetes, services.docker, services.dashboard,
+        services.files, services.terminal,
+    ):
+        assert not hasattr(service, "ssh_client")
 
 
 def test_webapp_provider_tracks_the_current_shared_session():
