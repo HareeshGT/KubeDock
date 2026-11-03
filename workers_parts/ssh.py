@@ -22,7 +22,11 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from contextlib import contextmanager
 
-_SSH_POOL_MAX_CONNECTIONS = 3
+_SSH_POOL_MAX_CONNECTIONS = 5  # Includes the primary SSH transport.
+_SSH_POOL_MAX_SECONDARY_CONNECTIONS = _SSH_POOL_MAX_CONNECTIONS - 1
+_SSH_SCALE_UP_UTILIZATION = 0.70
+_SSH_SCALE_DOWN_IDLE_SECONDS = 60.0
+_SSH_POOL_MAINTENANCE_INTERVAL = 5.0
 _SSH_MAX_CHANNELS_PER_CONNECTION = 6
 _SSH_GUARD_ATTR = "_kdb_channel_guard"
 _SSH_POOL_ATTR = "_kdb_connection_pool"
@@ -70,16 +74,18 @@ class _SSHPoolSlot:
     def __init__(self, ssh):
         self.ssh = ssh
         self.sem = threading.BoundedSemaphore(_SSH_MAX_CHANNELS_PER_CONNECTION)
+        self.active_channels = 0
+        self.last_used_at = time.monotonic()
 
 
 class SSHConnectionPool:
-    """Lazily creates a small pool of secondary SSH connections.
+    """Lazily scales secondary SSH transports around one primary connection.
 
-    The original/main ``SSHClient`` remains the owner's primary connection
-    (SFTP + heartbeat). This pool is used only by short-lived exec/stream
-    channels. Each secondary connection is independently capped below a
-    typical sshd ``MaxSessions`` value, and every channel releases its slot
-    when closed.
+    The configured maximum counts the primary transport, so the default of
+    five means one primary plus at most four secondary transports. Secondary
+    transports multiplex up to six channels each. New transports are created
+    when every existing transport reaches the utilization threshold; idle
+    secondary transports are reaped after the configured grace period.
 
     Robustness guarantees:
       * a channel open is always bounded (``_CHANNEL_OPEN_TIMEOUT``); a
@@ -93,19 +99,38 @@ class SSHConnectionPool:
         pool lock is held, so one slow teardown can't stall every caller.
     """
 
-    def __init__(self, host, port, user, pem="", password="", max_connections=_SSH_POOL_MAX_CONNECTIONS):
+    def __init__(self, host, port, user, pem="", password="", max_connections=None,
+                 max_total_connections=_SSH_POOL_MAX_CONNECTIONS,
+                 scale_up_utilization=_SSH_SCALE_UP_UTILIZATION,
+                 idle_timeout_seconds=_SSH_SCALE_DOWN_IDLE_SECONDS,
+                 maintenance_interval=_SSH_POOL_MAINTENANCE_INTERVAL):
         self.host = host
         self.port = port
         self.user = user
         self.pem = pem or ""
         self.password = password or ""
-        self.max_connections = max(1, int(max_connections))
+        # max_connections is retained as a compatibility alias for the old
+        # secondary-pool limit. New callers should use max_total_connections,
+        # which includes the primary SSH transport.
+        if max_connections is not None:
+            self.max_connections = max(0, int(max_connections))
+        else:
+            self.max_connections = max(0, int(max_total_connections) - 1)
+        self.max_total_connections = self.max_connections + 1
+        self.scale_up_utilization = min(1.0, max(0.1, float(scale_up_utilization)))
+        self.idle_timeout_seconds = max(0.0, float(idle_timeout_seconds))
+        self.maintenance_interval = max(0.1, float(maintenance_interval))
         self._slots = []
         self._creating = False
         self._closed = False
         self._fail_until = 0.0
         self._fail_exc = None
         self._cond = threading.Condition(threading.RLock())
+        self._maintenance_stop = threading.Event()
+        self._maintenance_thread = threading.Thread(
+            target=self._maintenance_loop, name="kdb-ssh-pool-maintenance", daemon=True,
+        )
+        self._maintenance_thread.start()
 
     # ── connection creation ──────────────────────────────────
     def _connect_secondary(self, budget=None):
@@ -153,14 +178,15 @@ class SSHConnectionPool:
             pass
 
     # ── slot bookkeeping (call with self._cond held) ─────────
-    def _find_slot_with_capacity(self, dead):
-        """Return a live slot with a free channel (reserving it), else None.
+    def _find_slot_with_capacity(self, dead, below_scale_threshold=False):
+        """Reserve a channel on the least-loaded healthy slot.
 
-        Slots whose Paramiko transport is inactive are removed from the pool
-        and appended to ``dead`` so the caller can close them *after*
-        releasing the lock. A pooled connection can die while KubeDock is
-        idle; never hand out a channel from a stale transport.
+        Below the scale-up threshold we prefer existing capacity. Once every
+        slot reaches the threshold, _acquire_slot creates another transport
+        (until the configured cap); at the cap we use any remaining channel.
         """
+        candidates = []
+        threshold = max(1, int(_SSH_MAX_CHANNELS_PER_CONNECTION * self.scale_up_utilization + 0.999))
         for slot in list(self._slots):
             try:
                 transport = slot.ssh.get_transport()
@@ -174,7 +200,18 @@ class SSHConnectionPool:
                     pass
                 dead.append(slot)
                 continue
+            if below_scale_threshold and slot.active_channels >= threshold:
+                continue
+            if slot.active_channels < _SSH_MAX_CHANNELS_PER_CONNECTION:
+                candidates.append(slot)
+        # Sort by in-flight channels, then use a stable rotating tie-breaker
+        # so equally-loaded transports share work instead of always favouring
+        # the first connection in the pool.
+        candidates.sort(key=lambda item: (item.active_channels, self._slots.index(item)))
+        for slot in candidates:
             if slot.sem.acquire(False):
+                slot.active_channels += 1
+                slot.last_used_at = time.monotonic()
                 return slot
         return None
 
@@ -197,7 +234,10 @@ class SSHConnectionPool:
                     if self._closed:
                         raise RuntimeError("SSH connection pool is closed")
 
-                    slot = self._find_slot_with_capacity(dead)
+                    # First fill connections below the configured utilization
+                    # threshold. If all are busy enough, scale out before
+                    # exhausting their channel limits.
+                    slot = self._find_slot_with_capacity(dead, below_scale_threshold=True)
                     if slot is not None:
                         return slot
 
@@ -220,6 +260,14 @@ class SSHConnectionPool:
                     else:
                         create = False
 
+                    # At the connection cap (or while another thread is
+                    # creating the next transport), use the least-loaded
+                    # remaining channel rather than waiting unnecessarily.
+                    if not create and (len(self._slots) >= self.max_connections or self._creating):
+                        slot = self._find_slot_with_capacity(dead, below_scale_threshold=False)
+                        if slot is not None:
+                            return slot
+
                     if not create:
                         if remaining is not None and remaining <= 0:
                             raise RuntimeError("SSH is busy; no pooled session channel is currently available")
@@ -237,6 +285,7 @@ class SSHConnectionPool:
                     secondary = self._connect_secondary(budget=budget)
                     new_slot = _SSHPoolSlot(secondary)
                     new_slot.sem.acquire()  # reserve the first channel for this caller
+                    new_slot.active_channels = 1
                 except BaseException as exc:
                     with self._cond:
                         self._creating = False
@@ -277,10 +326,7 @@ class SSHConnectionPool:
                     raise paramiko.SSHException("Pooled SSH connection is no longer active")
                 channel = transport.open_session(timeout=_CHANNEL_OPEN_TIMEOUT)
             except Exception as exc:
-                try:
-                    slot.sem.release()
-                except Exception:
-                    pass
+                self._release_slot(slot)
                 # A server that *rejects* the channel (MaxSessions reached)
                 # is healthy — keep the connection. Anything else (timeout,
                 # EOF, socket error, dead transport) means this connection
@@ -298,6 +344,19 @@ class SSHConnectionPool:
             return slot.ssh, channel
         raise RuntimeError("SSH pooled session could not be opened")  # pragma: no cover
 
+    def _release_slot(self, slot):
+        if slot is None:
+            return
+        with self._cond:
+            if slot.active_channels > 0:
+                slot.active_channels -= 1
+            slot.last_used_at = time.monotonic()
+            try:
+                slot.sem.release()
+            except ValueError:
+                pass
+            self._cond.notify_all()
+
     def release_channel(self, channel):
         slot = getattr(channel, "_kdb_pool_slot", None)
         if slot is None:
@@ -310,26 +369,84 @@ class SSHConnectionPool:
             delattr(channel, "_kdb_pool_owner")
         except Exception:
             pass
-        try:
-            slot.sem.release()
-        except Exception:
-            pass
+        self._release_slot(slot)
+
+    def _reap_idle_connections(self, now=None):
+        """Close idle secondary transports; the primary transport is retained."""
+        now = time.monotonic() if now is None else float(now)
         with self._cond:
+            if self._closed:
+                return 0
+            idle = [slot for slot in self._slots
+                    if slot.active_channels == 0
+                    and now - slot.last_used_at >= self.idle_timeout_seconds]
+            for slot in idle:
+                self._slots.remove(slot)
+            if idle:
+                self._cond.notify_all()
+        for slot in idle:
+            self._close_quietly(slot.ssh)
+        return len(idle)
+
+    def _maintenance_loop(self):
+        while not self._maintenance_stop.wait(self.maintenance_interval):
+            try:
+                self._reap_idle_connections()
+            except Exception:
+                # Maintenance is best-effort and must never kill command work.
+                pass
+
+    def configure(self, *, max_total_connections=None, scale_up_utilization=None,
+                  idle_timeout_seconds=None):
+        """Update safe runtime pool limits without retaining new credentials."""
+        with self._cond:
+            if max_total_connections is not None:
+                total = max(1, int(max_total_connections))
+                self.max_connections = total - 1
+                self.max_total_connections = total
+            if scale_up_utilization is not None:
+                self.scale_up_utilization = min(1.0, max(0.1, float(scale_up_utilization)))
+            if idle_timeout_seconds is not None:
+                self.idle_timeout_seconds = max(0.0, float(idle_timeout_seconds))
             self._cond.notify_all()
+
+    def snapshot(self):
+        """Return credential-free pool capacity and utilization metrics."""
+        with self._cond:
+            return {
+                "total_connections": 1 + len(self._slots),
+                "max_connections": self.max_total_connections,
+                "secondary_connections": len(self._slots),
+                "active_channels": sum(slot.active_channels for slot in self._slots),
+                "channel_capacity": len(self._slots) * _SSH_MAX_CHANNELS_PER_CONNECTION,
+                "channels_per_connection": _SSH_MAX_CHANNELS_PER_CONNECTION,
+                "scale_up_utilization": self.scale_up_utilization,
+                "idle_timeout_seconds": self.idle_timeout_seconds,
+                "closed": self._closed,
+            }
 
     def close(self):
         with self._cond:
+            if self._closed:
+                return
             self._closed = True
             slots = list(self._slots)
             self._slots = []
             self._cond.notify_all()
+        self._maintenance_stop.set()
         for slot in slots:
             self._close_quietly(slot.ssh)
+        if self._maintenance_thread is not threading.current_thread():
+            self._maintenance_thread.join(timeout=1.0)
 
 
-def attach_ssh_connection_pool(ssh, host, port, user, pem="", password=""):
-    """Attach a lazy secondary-connection pool to an existing SSH client."""
-    pool = SSHConnectionPool(host, port, user, pem=pem, password=password)
+def attach_ssh_connection_pool(ssh, host, port, user, pem="", password="",
+                               max_total_connections=_SSH_POOL_MAX_CONNECTIONS):
+    """Attach a lazy, autoscaling secondary pool to an existing SSH client."""
+    pool = SSHConnectionPool(
+        host, port, user, pem=pem, password=password,
+        max_total_connections=max_total_connections,
+    )
     setattr(ssh, _SSH_POOL_ATTR, pool)
     return pool
 
