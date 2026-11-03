@@ -47,6 +47,9 @@ fi
 
 class DashboardRefreshMixin:
   def _contextual_command(self, command: str) -> str:
+      service = getattr(self, "dashboard_service", None)
+      if service is not None:
+        return service.contextual_command(command, self._kube_context)
       ctx = (self._kube_context or "").strip()
       if not ctx:
         return command
@@ -60,9 +63,10 @@ class DashboardRefreshMixin:
   
   
   def _contextual_k8s_command(self) -> str:
-      """Bind every kubectl invocation in the dashboard snapshot to the
-      selected context. The `=value` form is deliberate: context names are
-      allowed to begin with '-' and must never be parsed as a new flag."""
+      """Bind every kubectl invocation in the dashboard snapshot to the selected context."""
+      service = getattr(self, "dashboard_service", None)
+      if service is not None:
+        return service.contextual_command(_K8S_CMD, self._kube_context)
       ctx = (self._kube_context or "").strip()
       if not ctx:
         return _K8S_CMD
