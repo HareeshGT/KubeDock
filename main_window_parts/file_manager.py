@@ -581,6 +581,7 @@ class FileManagerMixin:
           user=self._conn_user, pem=self._conn_pem,
           password=self._conn_password,
           sudo_user=self._sudo_user,
+          service=self._file_service(),
         )
         if not ok:
           errors.append(os.path.basename(local))
@@ -610,6 +611,7 @@ class FileManagerMixin:
         user=self._conn_user, pem=self._conn_pem,
         password=self._conn_password,
         sudo_user=self._sudo_user,
+        service=self._file_service(),
       )
       self.status.showMessage("Saved to {}".format(save))
 
