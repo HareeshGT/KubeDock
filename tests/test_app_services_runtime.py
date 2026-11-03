@@ -14,6 +14,9 @@ def test_app_services_share_one_connection_and_command_runtime():
     assert runtime.terminal.commands is runtime.commands
     assert runtime.ai.commands is runtime.commands
     assert runtime.webapp.connection is runtime.connection
+    assert runtime.settings.database is runtime.database
+    assert runtime.lifecycle.status("database").state == ServiceState.STOPPED
+    assert runtime.lifecycle.status("settings").state == ServiceState.STOPPED
 
     assert runtime.commands.registered_worker_count() == 0
     assert runtime.commands.active_worker_count() == 0
