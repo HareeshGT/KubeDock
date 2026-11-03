@@ -27,6 +27,10 @@ QApplication
 `AppServices` is created once by the main window. Every feature service
 receives the same `ConnectionService` and, where relevant, the same
 `CommandService`. No feature service establishes a separate SSH connection.
+The shared command service also keeps a process-local registry of service-owned
+workers. On application shutdown it requests cancellation/stopping across
+those workers, closes the shared connection to release blocked network I/O,
+and waits for worker threads for a bounded interval before teardown completes.
 
 ## Shared connection and command lifecycle
 
