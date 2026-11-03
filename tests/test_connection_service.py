@@ -1147,6 +1147,10 @@ def test_feature_modules_do_not_create_primary_network_sessions():
 
     root = Path(__file__).resolve().parents[1]
     feature_modules = [
+        *[
+            str(path.relative_to(root))
+            for path in (root / "services").glob("*.py")
+        ],
         "main_window.py",
         "main_window_parts/connection.py",
         "main_window_parts/terminal.py",
