@@ -23,7 +23,7 @@ class FileManagerService:
         from workers import DirectoryListWorker, track_worker
 
         worker = DirectoryListWorker(filesystem, path)
-        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.connection.bind_worker(worker, snapshot)
         self.commands.register_worker(worker)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
@@ -39,7 +39,7 @@ class FileManagerService:
             filesystem, ssh, path,
             sudo_user=sudo_user, max_bytes=max_bytes,
         )
-        worker._session_guard = lambda generation=snapshot.generation: self.connection.is_current(generation)
+        self.connection.bind_worker(worker, snapshot)
         return self.commands.register_worker(worker)
 
     def register_worker(self, worker):
