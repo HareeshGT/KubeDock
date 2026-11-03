@@ -59,6 +59,7 @@ class ConnectionService:
         self._snapshot = ConnectionSnapshot()
         self._listeners = {}
         self._next_listener = 1
+        self._bound_workers = {}
         self._pool_closer = pool_closer or self._close_ssh_pool
 
     @staticmethod
@@ -88,14 +89,60 @@ class ConnectionService:
             return self._snapshot
 
     def bind_worker(self, worker, snapshot: Optional[ConnectionSnapshot] = None):
-        """Bind an asynchronous worker to one immutable session generation."""
+        """Bind an asynchronous worker to one immutable session generation.
+
+        Workers are also invalidated immediately when that session is replaced
+        or disconnected, so a blocking socket read cannot outlive a host switch.
+        """
         captured = snapshot or self.snapshot
         worker.connection_generation = captured.generation
         worker.connection_session_id = captured.session_id
         worker._session_guard = (
             lambda generation=captured.generation: self.is_current(generation)
         )
+        with self._lock:
+            current = (
+                self._snapshot.is_active
+                and self._snapshot.generation == captured.generation
+            )
+            if current:
+                self._bound_workers.setdefault(captured.generation, []).append(worker)
+        try:
+            worker.finished.connect(
+                lambda w=worker, g=captured.generation: self._forget_bound_worker(g, w)
+            )
+        except Exception:
+            pass
+        if not current:
+            self._request_worker_stop(worker)
         return worker
+
+    def _forget_bound_worker(self, generation, worker):
+        with self._lock:
+            workers = self._bound_workers.get(generation, [])
+            if worker in workers:
+                workers.remove(worker)
+            if not workers:
+                self._bound_workers.pop(generation, None)
+
+    @staticmethod
+    def _request_worker_stop(worker):
+        for method_name in ("cancel", "request_stop", "stop"):
+            method = getattr(worker, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    _LOG.debug("Unable to stop stale connection worker", exc_info=True)
+                return
+        try:
+            worker.requestInterruption()
+        except Exception:
+            pass
+
+    def _take_bound_workers(self, generation):
+        with self._lock:
+            return self._bound_workers.pop(generation, [])
 
     def subscribe(self, listener: Callable[[ConnectionSnapshot], None]) -> int:
         """Subscribe to state changes; returns a token for unsubscribe."""
@@ -144,7 +191,8 @@ class ConnectionService:
 
         with self._lock:
             old_ssh, old_filesystem = self._ssh, self._filesystem
-            generation = self._snapshot.generation + 1
+            old_generation = self._snapshot.generation
+            generation = old_generation + 1
             snapshot = ConnectionSnapshot(
                 state="connected",
                 protocol=protocol,
@@ -160,6 +208,11 @@ class ConnectionService:
             self._filesystem = filesystem
             self._snapshot = snapshot
             listeners = tuple(self._listeners.values())
+
+        # Stop workers bound to the old session before tearing down its resources.
+        stale_workers = self._take_bound_workers(old_generation)
+        for worker in stale_workers:
+            self._request_worker_stop(worker)
 
         # Do not close an object deliberately reused as the new resource.
         # Teardown runs outside the state lock.
@@ -323,6 +376,12 @@ class ConnectionService:
                 }
             )
             self._snapshot = snapshot
+            stale_workers = (
+                self._bound_workers.pop(current.generation, [])
+                if state == "lost" else []
+            )
+        for worker in stale_workers:
+            self._request_worker_stop(worker)
         self._publish(snapshot)
         return snapshot
 
@@ -337,14 +396,17 @@ class ConnectionService:
                 state="disconnected",
                 generation=current.generation + 1,
             )
+            stale_workers = self._bound_workers.pop(current.generation, [])
             self._ssh = None
             self._filesystem = None
             self._snapshot = snapshot
             listeners = tuple(self._listeners.values())
 
         # Publish first so consumers stop scheduling work against resources
-        # that are being closed.
+        # that are being closed, and stop bound workers before socket teardown.
         self._notify(listeners, snapshot)
+        for worker in stale_workers:
+            self._request_worker_stop(worker)
         if ssh is not None:
             self._close_pool_quietly(ssh)
         self._close_quietly(filesystem)
