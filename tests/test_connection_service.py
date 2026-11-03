@@ -1194,3 +1194,24 @@ def test_connection_service_cancels_bound_workers_when_transport_is_lost():
     assert lost.state == "lost"
     assert worker.cancelled
     assert not worker._session_guard()
+
+
+
+def test_file_service_stream_reader_is_bound_and_registered():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    snapshot = connection.attach_ssh(
+        FakeResource(), FakeFilesystem(), host="editor.example",
+    )
+
+    worker = services.files.create_stream_reader(
+        "/etc/app/config.yaml", max_bytes=1024,
+    )
+
+    assert worker.connection_generation == snapshot.generation
+    assert worker.connection_session_id == snapshot.session_id
+    assert worker in services.commands._workers
+
+    connection.attach_ssh(FakeResource(), FakeFilesystem(), host="replacement.example")
+
+    assert worker._cancelled
