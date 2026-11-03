@@ -463,13 +463,19 @@ class KubernetesResourcesMixin:
     # Same trailing-quote defensiveness as _populate_namespaces.
     containers = out.strip().strip("'").split()
     if len(containers) <= 1:
-      ExecDialog(self, self.ssh, ns, pod, containers[0] if containers else None,
-            context=self._current_context, service=self.kubernetes_service).exec_()
+      ExecDialog(
+        self, self.ssh if self.kubernetes_service is None else None,
+        ns, pod, containers[0] if containers else None,
+        context=self._current_context, service=self.kubernetes_service,
+      ).exec_()
       return
     dlg = ContainerPickerDialog(self, pod, containers)
     if dlg.exec_() == QDialog.Accepted:
-      ExecDialog(self, self.ssh, ns, pod, dlg.selected_container(),
-            context=self._current_context, service=self.kubernetes_service).exec_()
+      ExecDialog(
+        self, self.ssh if self.kubernetes_service is None else None,
+        ns, pod, dlg.selected_container(),
+        context=self._current_context, service=self.kubernetes_service,
+      ).exec_()
 
 
   def _pod_delete(self):
