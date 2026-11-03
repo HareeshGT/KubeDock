@@ -446,3 +446,15 @@ def test_file_execution_stream_worker_is_bound_to_shared_connection_generation()
 
     connection.attach_ssh(FakeResource(), host="replacement.example")
     assert not worker._session_is_current()
+
+def test_kubernetes_log_stream_worker_is_bound_to_shared_connection_generation():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    original = connection.attach_ssh(FakeResource(), host="cluster-jump.example")
+
+    worker = services.kubernetes.create_log_stream_worker("kubectl logs -f api-0")
+    assert worker.connection_generation == original.generation
+    assert worker._session_is_current()
+
+    connection.attach_ssh(FakeResource(), host="replacement.example")
+    assert not worker._session_is_current()
