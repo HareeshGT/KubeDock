@@ -741,3 +741,139 @@ def test_media_start_worker_stops_server_if_session_changes_during_start():
 
     assert server.stop_calls == 1
     assert errors and "connection changed" in errors[0].lower()
+
+
+
+def test_ftp_upload_stream_uses_a_dedicated_data_connection_and_records_bytes():
+    import threading
+    from ftp_fs import FTPFS
+
+    class FakeDataConnection:
+        def __init__(self):
+            self.payload = bytearray()
+            self.closed = False
+            self.timeout = None
+
+        def settimeout(self, value):
+            self.timeout = value
+
+        def sendall(self, data):
+            self.payload.extend(data)
+
+        def close(self):
+            self.closed = True
+
+    class FakeFTPConnection:
+        def __init__(self):
+            self.data = FakeDataConnection()
+            self.commands = []
+            self.voidresp_calls = 0
+            self.quit_calls = 0
+            self.close_calls = 0
+
+        def voidcmd(self, command):
+            self.commands.append(command)
+
+        def transfercmd(self, command):
+            self.commands.append(command)
+            return self.data
+
+        def voidresp(self):
+            self.voidresp_calls += 1
+
+        def quit(self):
+            self.quit_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    fs = FTPFS.__new__(FTPFS)
+    fs._ftp = FakeFTPConnection()  # shared browsing control connection
+    fs._new_connection = lambda: transfer_ftp
+    fs._stats_lock = threading.Lock()
+    fs.uploaded_bytes = 0
+    fs.upload_count = 0
+    fs.downloaded_bytes = 0
+    fs.download_count = 0
+    fs.last_operation = None
+    fs.last_operation_at = None
+    transfer_ftp = FakeFTPConnection()
+
+    writer = fs.open_upload_stream("/remote/file.bin")
+    writer.write(b"hello")
+    writer.write(b" world")
+    writer.close()
+
+    assert transfer_ftp.commands == ["TYPE I", "STOR /remote/file.bin"]
+    assert bytes(transfer_ftp.data.payload) == b"hello world"
+    assert transfer_ftp.data.timeout == 60
+    assert transfer_ftp.data.closed
+    assert transfer_ftp.voidresp_calls == 1
+    assert transfer_ftp.quit_calls == 1
+    assert fs.uploaded_bytes == 11
+    assert fs.upload_count == 1
+    assert fs._ftp.close_calls == 0  # browsing session is untouched
+
+
+def test_ftp_upload_stream_abort_does_not_finalize_or_count_partial_transfer():
+    import threading
+    from ftp_fs import FTPFS
+
+    class FakeDataConnection:
+        def __init__(self):
+            self.payload = bytearray()
+            self.closed = False
+
+        def settimeout(self, _value):
+            pass
+
+        def sendall(self, data):
+            self.payload.extend(data)
+
+        def close(self):
+            self.closed = True
+
+    class FakeFTPConnection:
+        def __init__(self):
+            self.data = FakeDataConnection()
+            self.voidresp_calls = 0
+            self.quit_calls = 0
+            self.close_calls = 0
+
+        def voidcmd(self, _command):
+            pass
+
+        def transfercmd(self, _command):
+            return self.data
+
+        def voidresp(self):
+            self.voidresp_calls += 1
+
+        def quit(self):
+            self.quit_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    fs = FTPFS.__new__(FTPFS)
+    fs._ftp = FakeFTPConnection()
+    transfer_ftp = FakeFTPConnection()
+    fs._new_connection = lambda: transfer_ftp
+    fs._stats_lock = threading.Lock()
+    fs.uploaded_bytes = 0
+    fs.upload_count = 0
+    fs.downloaded_bytes = 0
+    fs.download_count = 0
+    fs.last_operation = None
+    fs.last_operation_at = None
+
+    writer = fs.open_upload_stream("/remote/partial.bin")
+    writer.write(b"partial")
+    writer.abort()
+
+    assert transfer_ftp.data.closed
+    assert transfer_ftp.voidresp_calls == 0
+    assert transfer_ftp.quit_calls == 0
+    assert transfer_ftp.close_calls == 1
+    assert fs.uploaded_bytes == 0
+    assert fs.upload_count == 0
