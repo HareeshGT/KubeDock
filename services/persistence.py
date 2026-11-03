@@ -26,11 +26,13 @@ class DatabaseService:
 
     def get_setting(self, key, default=None):
         activate_lifecycle(self)
-        return self.database.get_setting(key, default)
+        import db
+        return db.get_setting(key, default)
 
     def get_all_settings(self):
         activate_lifecycle(self)
-        return self.database.get_all_settings()
+        import db
+        return db.get_all_settings()
 
     def set_setting(self, key, value):
         activate_lifecycle(self)
@@ -56,13 +58,11 @@ class SettingsService:
 
     def load(self):
         activate_lifecycle(self)
-        import db
-        return db.get_all_settings()
+        return self.database.get_all_settings()
 
     def get(self, key, default=None):
         activate_lifecycle(self)
-        import db
-        return db.get_setting(key, default)
+        return self.database.get_setting(key, default)
 
     def save(self, **values):
         activate_lifecycle(self)
