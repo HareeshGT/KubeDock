@@ -17,6 +17,18 @@ from PyQt5.QtWidgets import (
     QComboBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
+
+class _VoiceDiscoveryWorker(QThread):
+    """Enumerate offline voices away from Qt's UI thread."""
+
+    voices_ready = pyqtSignal(object)
+
+    def run(self):
+        try:
+            self.voices_ready.emit(list_voices())
+        except Exception:
+            self.voices_ready.emit([])
+
 from .ui import _QT_MULTIMEDIA_AVAILABLE, QMediaContent
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QGraphicsBlurEffect
@@ -39,14 +51,43 @@ class K8sAIOpsVoiceMixin:
             self._stop_neural_voice(clear_queue=True)
 
     def _populate_voice_combo(self):
+        """Show a usable default immediately; discover optional voices in background."""
         self.voice_combo.blockSignals(True)
         self.voice_combo.clear()
         self.voice_combo.addItem("System Default", "")
-        for voice in list_voices():
-            self.voice_combo.addItem(voice["name"], voice["id"])
+        self.voice_combo.setCurrentIndex(0)
+        self.voice_combo.blockSignals(False)
+
+        if not _TTS_AVAILABLE:
+            return
+
+        current_worker = getattr(self, "_voice_discovery_worker", None)
+        if current_worker is not None and current_worker.isRunning():
+            return
+
+        worker = _VoiceDiscoveryWorker(self)
+        self._voice_discovery_worker = worker
+        worker.voices_ready.connect(self._on_voice_discovery_finished)
+        worker.start()
+
+    def _on_voice_discovery_finished(self, voices):
+        """Apply discovered voices on the UI thread without losing the saved choice."""
+        if not hasattr(self, "voice_combo") or self.voice_combo is None:
+            self._voice_discovery_worker = None
+            return
+
+        self.voice_combo.blockSignals(True)
+        self.voice_combo.clear()
+        self.voice_combo.addItem("System Default", "")
+        for voice in voices or []:
+            if isinstance(voice, dict) and voice.get("id"):
+                self.voice_combo.addItem(
+                    str(voice.get("name") or voice["id"]), str(voice["id"])
+                )
         idx = self.voice_combo.findData(self._voice_id)
         self.voice_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.voice_combo.blockSignals(False)
+        self._voice_discovery_worker = None
 
     def _on_voice_engine_changed(self, index: int):
         requested = str(self.voice_engine_combo.itemData(index) or "system").lower()
