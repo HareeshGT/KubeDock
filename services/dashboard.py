@@ -38,6 +38,47 @@ class DashboardService:
         )
 
 
+    def create_os_probe_worker(self, worker_pool, command):
+        """Create the one-time remote OS detection worker."""
+        return self.create_worker(
+            worker_pool, command, timeout=10, raw=True,
+            operation_key="dashboard:os-probe",
+        )
+
+    def create_windows_collection_worker(self, worker_pool, command):
+        """Create the Windows host telemetry worker for a snapshot cycle."""
+        return self.create_worker(
+            worker_pool, command, timeout=25, raw=True,
+            operation_key="dashboard:windows-host",
+        )
+
+    def create_process_snapshot_worker(self, worker_pool, command):
+        """Create the bounded process-list snapshot worker."""
+        return self.create_worker(
+            worker_pool, command, timeout=8,
+            operation_key="dashboard:process-snapshot",
+        )
+
+    def create_posix_collection_workers(
+        self, worker_pool, *, host_command, kubernetes_command,
+        pod_placement_command,
+    ):
+        """Build the three independent workers for one POSIX dashboard cycle."""
+        return {
+            "host": self.create_worker(
+                worker_pool, host_command,
+                operation_key="dashboard:host-metrics",
+            ),
+            "kubernetes": self.create_worker(
+                worker_pool, kubernetes_command,
+                operation_key="dashboard:kubernetes-metrics",
+            ),
+            "pod_placement": self.create_worker(
+                worker_pool, pod_placement_command, timeout=15,
+                operation_key="dashboard:pod-placement",
+            ),
+        }
+
     @staticmethod
     def _size_fmt(value):
         number = float(value)
