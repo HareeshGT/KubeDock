@@ -426,10 +426,14 @@ class FileManagerMixin:
           sudo_user=self._sudo_user,
         )
         return
+      service = self._file_service()
       FileEditorDialog.open_remote(
-        self, self._filesystem(), self._file_ssh(), remote,
+        self,
+        self._filesystem() if service is None else None,
+        self._file_ssh() if service is None else None,
+        remote,
         sudo_user=self._sudo_user,
-        service=self._file_service(),
+        service=service,
       )
 
     def _edit_selected(self):
