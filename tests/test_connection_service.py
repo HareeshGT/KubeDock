@@ -662,9 +662,9 @@ def test_dashboard_service_pins_each_kubectl_line_to_selected_context():
         " echo done"
     )
     assert services.dashboard.contextual_command(command, "") == command
-    explicit = "kubectl --context=staging get pods\\nkubectl get nodes"
+    explicit = "kubectl --context=staging get pods\nkubectl get nodes"
     assert services.dashboard.contextual_command(explicit, "prod") == (
-        "kubectl --context=staging get pods\\n"
+        "kubectl --context=staging get pods\n"
         "kubectl --context=prod get nodes"
     )
 
