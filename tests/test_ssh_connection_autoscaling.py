@@ -137,11 +137,11 @@ def test_active_secondary_connection_is_not_reaped(monkeypatch):
 def test_pool_configuration_can_lower_runtime_limit(monkeypatch):
     pool, _created = make_pool(monkeypatch)
     try:
-        pool.configure(max_total_connections=2)
-        assert pool.snapshot()["max_connections"] == 2
+        pool.configure(max_total_connections=3)
+        assert pool.snapshot()["max_connections"] == 3
         slots = reserve(pool, 12)
-        assert pool.snapshot()["total_connections"] == 2
-        assert pool.snapshot()["secondary_connections"] == 1
+        assert pool.snapshot()["total_connections"] == 3
+        assert pool.snapshot()["secondary_connections"] == 2
         release_all(pool, slots)
     finally:
         pool.close()
