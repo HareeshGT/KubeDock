@@ -10,9 +10,9 @@ class Signal:
     def connect(self, callback):
         self.callbacks.append(callback)
 
-    def emit(self):
+    def emit(self, *args):
         for callback in tuple(self.callbacks):
-            callback()
+            callback(*args)
 
 
 class FakeWorker:
