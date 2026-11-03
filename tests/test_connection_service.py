@@ -1292,3 +1292,13 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
 
     settings = (root / "main_window_parts" / "theme_security.py").read_text(encoding="utf-8")
     assert 'ai_service=getattr(getattr(self, "services", None), "ai", None)' in settings
+
+    docker_dialogs = (root / "docker_dialogs.py").read_text(encoding="utf-8")
+    assert "self.ssh = ssh if service is None else None" in docker_dialogs
+    exec_dialog = (root / "dialogs_parts" / "exec_dialog.py").read_text(encoding="utf-8")
+    assert "self.ssh = ssh if service is None else None" in exec_dialog
+
+    docker_tab = (root / "docker_tab.py").read_text(encoding="utf-8")
+    assert "self.ssh if self.docker_service is None else None" in docker_tab
+    resources = (root / "kubernetes_tab_parts" / "resources.py").read_text(encoding="utf-8")
+    assert "self.ssh if self.kubernetes_service is None else None" in resources
