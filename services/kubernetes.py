@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 
 
@@ -25,16 +26,9 @@ class KubernetesService:
         if not command or not str(context or "").strip():
             return command
         stripped = command.lstrip()
-        if not stripped.startswith("kubectl") or (
-            len(stripped) > len("kubectl") and not stripped[len("kubectl")].isspace()
-        ):
+        if not re.match(r"^kubectl(?:\\s|$)", stripped):
             return command
-        if stripped == "kubectl" or "--context" in stripped.split():
-            # The second check handles the standalone --context token;
-            # the regex below handles --context=value.
-            if "--context" in stripped.split() or "--context=" in stripped:
-                return command
-        if "--context=" in stripped:
+        if re.search(r"(?:^|\\s)--context(?:=|\\s)", stripped):
             return command
         prefix_len = len(command) - len(stripped)
         return (
