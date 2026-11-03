@@ -91,7 +91,9 @@ def test_worker_result_updates_service_diagnostics():
     assert status.last_success_at is not None
     assert status.last_refresh_at is not None
     assert status.last_duration_seconds is not None
+    assert service.worker_counts_by_service() == {"docker": 1}
     assert status.last_error is None
+    assert service.worker_counts_by_service() == {"monitoring": 1}
 
 
 def test_worker_error_updates_service_diagnostics():
