@@ -116,3 +116,18 @@ def test_pause_and_resume_preserve_running_lifecycle_state():
     resumed = manager.resume("monitoring")
     assert resumed.state == ServiceState.RUNNING
     assert resumed.paused is False
+
+
+
+def test_bound_service_becomes_running_on_first_use():
+    from services.lifecycle import activate_lifecycle
+
+    manager = ServiceLifecycleManager()
+    service = object()
+    manager.register("feature", service)
+    service._lifecycle_manager = manager
+    service._lifecycle_name = "feature"
+
+    activate_lifecycle(service)
+
+    assert manager.status("feature").state == ServiceState.RUNNING
