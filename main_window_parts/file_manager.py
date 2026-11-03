@@ -362,13 +362,14 @@ class FileManagerMixin:
         save, _ = QFileDialog.getSaveFileName(self, "Save File", name)
         if save:
           remote = self.current_path.rstrip("/") + "/" + name
+          service = self._file_service()
           FileTransferDialog.download(
-            self, self._filesystem(), remote, save,
+            self, self._filesystem() if service is None else None, remote, save,
             host=self._conn_host, port=self._conn_port,
             user=self._conn_user, pem=self._conn_pem,
             password=self._conn_password,
             sudo_user=self._sudo_user,
-            service=self._file_service(),
+            service=service,
           )
           self.status.showMessage("Downloaded {}".format(name))
 
@@ -592,13 +593,14 @@ class FileManagerMixin:
       errors = []
       for local in paths:
         remote = self.current_path.rstrip("/") + "/" + os.path.basename(local)
+        service = self._file_service()
         ok = FileTransferDialog.upload(
-          self, self._filesystem(), local, remote,
+          self, self._filesystem() if service is None else None, local, remote,
           host=self._conn_host, port=self._conn_port,
           user=self._conn_user, pem=self._conn_pem,
           password=self._conn_password,
           sudo_user=self._sudo_user,
-          service=self._file_service(),
+          service=service,
         )
         if not ok:
           errors.append(os.path.basename(local))
@@ -622,13 +624,15 @@ class FileManagerMixin:
       save, _ = QFileDialog.getSaveFileName(self, "Save As", default_path)
       if not save:
         return
+      service = self._file_service()
       FileTransferDialog.download(
-        self, self._filesystem(), self._current_remote(meta), save,
+        self, self._filesystem() if service is None else None,
+        self._current_remote(meta), save,
         host=self._conn_host, port=self._conn_port,
         user=self._conn_user, pem=self._conn_pem,
         password=self._conn_password,
         sudo_user=self._sudo_user,
-        service=self._file_service(),
+        service=service,
       )
       self.status.showMessage("Saved to {}".format(save))
 
