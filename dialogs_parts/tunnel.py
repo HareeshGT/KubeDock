@@ -879,9 +879,13 @@ class ManageTunnelServicesDialog(QDialog):
     # Fix: resolve '~' to the actual remote $HOME first, then quote the
     # already-expanded absolute path.
     if self._service is not None:
-      worker = self._service.create_tunnel_save_worker(
-        None, self.csv_path, csv_text,
-      )
+      try:
+        worker = self._service.create_tunnel_save_worker(
+          None, self.csv_path, csv_text,
+        )
+      except Exception as exc:
+        QMessageBox.critical(self, "Save failed", str(exc))
+        return
     else:
       csv_path = self.csv_path
       if csv_path.startswith("~"):
