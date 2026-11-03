@@ -33,7 +33,7 @@ class AppServices:
         self.dashboard = DashboardService(self.connection, self.commands)
         self.files = FileManagerService(self.connection, self.commands)
         self.terminal = TerminalService(self.connection, self.commands)
-        self.ai = AIService()
+        self.ai = AIService(self.commands)
         self.webapp = WebAppService(self.connection, self.commands)
         self._lock = threading.Lock()
         self._stopped = False
