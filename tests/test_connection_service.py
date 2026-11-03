@@ -606,3 +606,19 @@ def test_connection_handshake_workers_close_partial_resources_when_cancelled():
     ftp_worker.cancel()
     assert ftp_worker._cancelled.is_set()
     assert filesystem.close_calls == 1
+
+
+
+def test_connection_service_binds_workers_to_an_immutable_session_snapshot():
+    from types import SimpleNamespace
+
+    connection = ConnectionService()
+    first = connection.attach_ssh(FakeResource(), host="first.example")
+    worker = SimpleNamespace()
+    assert connection.bind_worker(worker, first) is worker
+    assert worker.connection_generation == first.generation
+    assert worker.connection_session_id == first.session_id
+    assert worker._session_guard()
+
+    connection.attach_ssh(FakeResource(), host="second.example")
+    assert not worker._session_guard()
