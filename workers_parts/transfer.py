@@ -351,6 +351,7 @@ class _TransferWorker(QThread):
                 total, _supports_rest = self._sftp.stream_probe(self._remote)
             except Exception:
                 total = 0
+            self._ensure_session_current()
             reader = self._sftp.open_stream(self._remote)
             self._handle = reader
             done = 0
@@ -442,6 +443,7 @@ class _TransferWorker(QThread):
     def _upload(self):
         if hasattr(self._sftp, "_ftp"):
             total = os.path.getsize(self._local)
+            self._ensure_session_current()
             writer = self._sftp.open_upload_stream(self._remote)
             self._handle = writer
             done = 0
