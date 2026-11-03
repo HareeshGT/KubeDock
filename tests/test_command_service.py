@@ -22,16 +22,24 @@ class FakeWorker:
         self.result = Signal()
         self.error = Signal()
         self.running = running
+        self.finished_state = False
         self.stop_requested = False
 
     def isRunning(self):
         return self.running
+
+    def isFinished(self):
+        return self.finished_state
+
+    def deleteLater(self):
+        self.deleted = True
 
     def cancel(self):
         self.stop_requested = True
 
     def finish(self):
         self.running = False
+        self.finished_state = True
         self.finished.emit()
 
 
@@ -112,3 +120,14 @@ def test_worker_error_updates_service_diagnostics():
     assert status.last_error == "docker daemon unavailable"
     assert status.last_duration_seconds is not None
     assert service.worker_counts_by_service() == {"docker": 1}
+
+
+
+def test_unstarted_worker_reserves_operation_key():
+    service = CommandService(FakeConnection())
+    first = FakeWorker(running=False)
+    duplicate = FakeWorker(running=False)
+
+    assert service.register_worker(first, operation_key="docker:list:containers") is first
+    assert service.register_worker(duplicate, operation_key="docker:list:containers") is first
+    assert service.registered_worker_count() == 1
