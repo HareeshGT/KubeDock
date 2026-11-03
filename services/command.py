@@ -23,9 +23,10 @@ class CommandService:
         self._workers_lock = threading.RLock()
         self._shutting_down = False
         self._operation_workers = {}
+        self._worker_started_at = {}
 
-    def register_worker(self, worker, *, operation_key=None):
-        """Keep service-created workers alive and include them in app shutdown."""
+    def register_worker(self, worker, *, operation_key=None, diagnostic_key=None):
+        """Keep workers alive, de-duplicate operations, and collect diagnostics."""
         with self._workers_lock:
             if operation_key is not None:
                 existing = self._operation_workers.get(str(operation_key))
@@ -46,6 +47,33 @@ class CommandService:
                 worker.finished.connect(
                     lambda key=str(operation_key), w=worker: self._forget_operation(key, w)
                 )
+            metric_key = diagnostic_key or operation_key
+            if metric_key is not None:
+                self._worker_started_at[id(worker)] = time.monotonic()
+                started_signal = getattr(worker, "started", None)
+                if started_signal is not None:
+                    started_signal.connect(
+                        lambda w=worker: self._mark_worker_started(w)
+                    )
+                result_signal = getattr(worker, "result", None)
+                if result_signal is not None:
+                    result_signal.connect(
+                        lambda *args, w=worker, key=str(metric_key): self._record_worker_result(w, key, args)
+                    )
+                else:
+                    done_signal = getattr(worker, "done", None)
+                    if done_signal is not None:
+                        done_signal.connect(
+                            lambda *args, w=worker, key=str(metric_key): self._record_worker_result(w, key, args)
+                        )
+                error_signal = getattr(worker, "error", None)
+                if error_signal is not None:
+                    error_signal.connect(
+                        lambda error, w=worker, key=str(metric_key): self._record_worker_error(w, key, error)
+                    )
+                worker.finished.connect(
+                    lambda w=worker: self._worker_started_at.pop(id(w), None)
+                )
             shutting_down = self._shutting_down
         if shutting_down:
             self._request_worker_stop(worker)
@@ -60,6 +88,48 @@ class CommandService:
         with self._workers_lock:
             if self._operation_workers.get(key) is worker:
                 self._operation_workers.pop(key, None)
+
+    def _mark_worker_started(self, worker):
+        with self._workers_lock:
+            self._worker_started_at[id(worker)] = time.monotonic()
+
+    def _record_worker_result(self, worker, operation_key, args):
+        exit_code = args[2] if len(args) >= 3 and isinstance(args[2], int) else 0
+        self._record_worker_metric(
+            worker, operation_key, success=(exit_code == 0),
+            error=("Remote command exited with status {}".format(exit_code)
+                   if exit_code != 0 else None),
+        )
+
+    def _record_worker_error(self, worker, operation_key, error):
+        self._record_worker_metric(
+            worker, operation_key, success=False, error=str(error),
+        )
+
+    def _record_worker_metric(self, worker, operation_key, *, success, error=None):
+        manager = getattr(self, "_lifecycle_manager", None)
+        if manager is None:
+            return
+        prefix = str(operation_key).split(":")[-2] if str(operation_key).count(":") >= 2 else str(operation_key).split(":")[0]
+        service_name = {
+            "dashboard": "monitoring",
+            "docker": "docker",
+            "kubernetes": "kubernetes",
+            "terminal": "terminal",
+            "files": "files",
+            "ai": "ai",
+            "webapp": "webapp",
+        }.get(prefix, "commands")
+        with self._workers_lock:
+            started = self._worker_started_at.get(id(worker), time.monotonic())
+        duration = max(0.0, time.monotonic() - started)
+        try:
+            manager.record_operation(
+                service_name, duration_seconds=duration, success=success,
+                error=error, refresh=(prefix == "dashboard"),
+            )
+        except KeyError:
+            pass
 
     def active_worker_count(self):
         with self._workers_lock:
@@ -176,7 +246,10 @@ class CommandService:
         # A concurrent caller may have registered the same key after our
         # initial lookup. Always use the authoritative object returned by
         # register_worker so we never return or track an unowned duplicate.
-        worker = self.register_worker(worker, operation_key=operation_token)
+        worker = self.register_worker(
+            worker, operation_key=operation_token,
+            diagnostic_key=operation_key,
+        )
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
