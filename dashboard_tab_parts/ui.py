@@ -596,11 +596,20 @@ class DashboardUIMixin:
         self.page_title_lbl.setText("Connected Machine")
         self.page_sub_lbl.setText("Live host and Kubernetes infrastructure")
         self._app_connection_timer.stop()
+        if self._active and self.ssh:
+          self._resume_focused()
+          self._timer.start()
+          self._process_timer.start()
+        elif self._active and self.ftp:
+          self._refresh_ftp()
+          self._timer.start()
       else:
         self.page_title_lbl.setText("App Connections")
         self.page_sub_lbl.setText("Shared connections, SSH pool and feature activity")
+        self._timer.stop()
+        self._process_timer.stop()
         self._refresh_app_connections()
-        if self._active:
+        if self._active and (self.ssh or self.ftp):
           self._app_connection_timer.start()
       self._update_live_label()
 
@@ -922,7 +931,9 @@ class DashboardUIMixin:
       self.page_sub_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 11px;")
       for frame in (self.vm_card["frame"], self.k8s_summary_card["frame"],
               self.workloads_card["frame"], self.services_card["frame"],
-              self.events_card["frame"], self.k8s_card["frame"], self.process_card["frame"]):
+              self.events_card["frame"], self.k8s_card["frame"], self.process_card["frame"],
+              self.app_connection_card["frame"], self.ssh_pool_card["frame"],
+              self.service_activity_card["frame"]):
         frame.setStyleSheet(
           f"QFrame#dash_card {{ background: {T['BG_PANEL']}; "
           f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
@@ -941,6 +952,32 @@ class DashboardUIMixin:
         tile.setStyleSheet(
           f"QFrame#ftp_metric_tile {{ background: {T['BG_PANEL']}; "
           f"border: 1px solid {T['BORDER']}; border-radius: 10px; }}")
+      for tile in self.findChildren(QFrame, "app_connection_tile"):
+        tile.setStyleSheet(
+          f"QFrame#app_connection_tile {{ background: {T['BG_DARK']}; "
+          f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}")
+      for value, caption, _tile in (
+        list(self._app_connection_values.values()) + list(self._ssh_pool_values.values())
+      ):
+        value.setStyleSheet(
+          f"color: {_dashboard_text('primary')}; font-size: 16px; font-weight: 700;"
+        )
+        caption.setStyleSheet(
+          f"color: {_dashboard_text('muted')}; font-size: 10px; font-weight: 600;"
+        )
+      self.ssh_pool_policy_lbl.setStyleSheet(
+        f"color: {_dashboard_text('muted')}; font-size: 11px;"
+      )
+      for button, selected in (
+        (self.machine_view_btn, self.dashboard_pages.currentIndex() == 0),
+        (self.app_connections_view_btn, self.dashboard_pages.currentIndex() == 1),
+      ):
+        button.setStyleSheet(
+          f"QPushButton {{ padding: 7px 14px; border: 1px solid {T['BORDER']}; "
+          f"border-radius: 7px; color: {_dashboard_text('muted')}; background: {T['BG_PANEL']}; }}"
+          f"QPushButton:checked {{ color: {T['TEXT_PRIMARY']}; border-color: {T['ACCENT']}; "
+          f"background: {T['BG_HOVER']}; font-weight: 700; }}"
+        )
       refresh_theme_icons(self)
       self._update_live_label()
   
