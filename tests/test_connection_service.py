@@ -1363,7 +1363,7 @@ def test_kubernetes_service_loads_and_saves_tunnel_csv_through_command_service(m
         {"name": "api", "port": 8080, "container_port": 80, "namespace": "default"},
         {"name": "worker", "port": 9000, "container_port": 9000, "namespace": "apps"},
     ]
-    assert executed[0][0] == 'cat "$HOME"' + "'/.tunnel/services.csv' 2>/dev/null"
+    assert executed[0][0] == 'cat "$HOME"/.tunnel/services.csv 2>/dev/null'
     assert executed[0][1] == 10
 
     captured = {}
@@ -1378,7 +1378,7 @@ def test_kubernetes_service_loads_and_saves_tunnel_csv_through_command_service(m
 
     assert worker is not None
     assert captured["worker_pool"] is None
-    assert 'target="$HOME"' + "'/.tunnel/services.csv'" in captured["command"]
+    assert 'target="$HOME"/.tunnel/services.csv' in captured["command"]
     assert "base64 -d" in captured["command"]
     assert captured["kwargs"]["timeout"] == 20
     assert services.kubernetes._remote_path_expression("~someone/file") == "'~someone/file'"
