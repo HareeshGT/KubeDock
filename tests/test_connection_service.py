@@ -929,3 +929,29 @@ def test_ftp_download_worker_uses_a_dedicated_stream_not_the_shared_control_chan
     assert filesystem.stream_calls == 1
     assert filesystem.reader.closed
     assert destination.read_bytes() == b"first-second"
+
+
+
+def test_connection_service_cancels_bound_workers_on_reconnect_and_disconnect():
+    from PyQt5.QtCore import QThread
+
+    class BoundWorker(QThread):
+        def __init__(self):
+            super().__init__()
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    connection = ConnectionService()
+    first = connection.attach_ssh(FakeResource(), host="first.example")
+    first_worker = BoundWorker()
+    connection.bind_worker(first_worker, first)
+
+    second = connection.attach_ssh(FakeResource(), host="second.example")
+    assert first_worker.cancelled
+
+    second_worker = BoundWorker()
+    connection.bind_worker(second_worker, second)
+    connection.disconnect()
+    assert second_worker.cancelled
