@@ -321,6 +321,8 @@ class MediaPlayerDialog(QDialog):
     self._stream_server = MediaStreamServer(
       self._ssh, self._sftp, self._remote, sudo_user=self._sudo_user)
     self._start_worker = _StreamServerStartWorker(self._stream_server)
+    if self._service is not None:
+      self._service.register_worker(self._start_worker)
     self._start_worker.ready.connect(self._on_stream_ready)
     self._start_worker.error.connect(self._on_stream_error)
     self._start_worker.start()
