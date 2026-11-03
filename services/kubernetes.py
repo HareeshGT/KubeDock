@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .lifecycle import activate_lifecycle
+
 import re
 import shlex
 
@@ -89,6 +91,7 @@ class KubernetesService:
 
     def create_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
         """Run a prepared kubectl command without opening a feature connection."""
+        activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
         )
