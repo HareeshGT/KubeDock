@@ -1076,20 +1076,12 @@ def test_exec_stream_worker_is_owned_by_worker_layer_and_stop_closes_channel():
 
 
 
-def test_domain_services_and_shared_exec_worker_do_not_import_dialog_modules():
+def test_service_and_worker_layers_do_not_import_dialog_modules():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    modules = [
-        root / "services" / "kubernetes.py",
-        root / "services" / "docker.py",
-        root / "services" / "files.py",
-        root / "services" / "dashboard.py",
-        root / "services" / "terminal.py",
-        root / "services" / "ai.py",
-        root / "services" / "webapp.py",
-        root / "workers_parts" / "exec_stream.py",
-    ]
+    modules = list((root / "services").glob("*.py"))
+    modules += list((root / "workers_parts").glob("*.py"))
 
     for module in modules:
         source = module.read_text(encoding="utf-8")
