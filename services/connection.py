@@ -279,6 +279,7 @@ class ConnectionService:
     ) -> ConnectionSnapshot:
         """Adopt a connected SSH client and its app-facing filesystem."""
         activate_lifecycle(self)
+        self._configure_pool(ssh)
         snapshot = self._replace_session(
             protocol="ssh",
             ssh=ssh,
@@ -288,7 +289,6 @@ class ConnectionService:
             username=username,
             alias=alias,
         )
-        self._configure_pool(ssh)
         return snapshot
 
     def create_ssh_connect_worker(self, host, port, username, key_path="", password=""):
