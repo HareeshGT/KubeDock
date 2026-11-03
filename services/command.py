@@ -173,7 +173,10 @@ class CommandService:
             timeout=timeout, raw=raw,
         )
         self.connection.bind_worker(worker, snapshot)
-        self.register_worker(worker, operation_key=operation_token)
+        # A concurrent caller may have registered the same key after our
+        # initial lookup. Always use the authoritative object returned by
+        # register_worker so we never return or track an unowned duplicate.
+        worker = self.register_worker(worker, operation_key=operation_token)
         if worker_pool is not None:
             track_worker(worker_pool, worker)
         return worker
