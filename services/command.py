@@ -70,9 +70,14 @@ class CommandService:
                 continue
         return active
 
-    def active_operation_count(self):
+    def registered_worker_count(self):
         with self._workers_lock:
-            return len(self._operation_workers)
+            return len(self._workers)
+
+    def active_operation_count(self):
+        # Every running managed worker represents one in-flight operation;
+        # not all legacy call sites need a de-duplication key.
+        return self.active_worker_count()
 
     @staticmethod
     def _request_worker_stop(worker):
