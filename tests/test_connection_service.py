@@ -1090,3 +1090,43 @@ def test_domain_services_and_shared_exec_worker_do_not_import_dialog_modules():
         source = module.read_text(encoding="utf-8")
         assert "dialogs_parts" not in source, module
         assert "from dialogs " not in source, module
+
+
+
+def test_file_service_creates_generation_bound_media_start_worker(monkeypatch):
+    import workers
+
+    class FakeSignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class FakeMediaServer:
+        def __init__(self, ssh, filesystem, path, sudo_user=None):
+            self.args = (ssh, filesystem, path, sudo_user)
+
+    class FakeStartWorker:
+        def __init__(self, server):
+            self.server = server
+            self.finished = FakeSignal()
+
+    monkeypatch.setattr(workers, "MediaStreamServer", FakeMediaServer)
+    monkeypatch.setattr(workers, "_StreamServerStartWorker", FakeStartWorker)
+
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    ssh = FakeResource()
+    filesystem = FakeFilesystem()
+    snapshot = connection.attach_ssh(
+        ssh, filesystem, host="media.example",
+    )
+    services = AppServices(connection)
+
+    server, worker, worker_snapshot = services.files.create_media_stream_start_worker(
+        "/media/movie.mp4", sudo_user="media",
+    )
+
+    assert server.args == (ssh, filesystem, "/media/movie.mp4", "media")
+    assert worker.server is server
+    assert worker_snapshot == snapshot
+    assert worker.connection_generation == snapshot.generation
+    assert worker._session_guard()
+    assert worker in services.commands._workers
