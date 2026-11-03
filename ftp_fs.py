@@ -67,10 +67,10 @@ class _FTPStreamReader:
     def read(self, n):
         if self._closed:
             return b""
-        try:
-            return self._conn.recv(n)
-        except (OSError, socket.timeout):
-            return b""
+        # A timeout is not EOF: returning b"" here makes callers treat a
+        # stalled transfer as a successful, truncated file. Only an explicit
+        # close() should turn subsequent reads into EOF.
+        return self._conn.recv(n)
 
     def close(self):
         if self._closed:
