@@ -1273,3 +1273,21 @@ def test_ai_service_creates_and_tracks_model_test_worker(monkeypatch):
 
     assert worker.args == ("openai", "test-key", "gpt-test", parent)
     assert worker in services.commands._workers
+
+
+
+def test_main_window_injects_the_same_service_container_into_feature_tabs():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "main_window_parts" / "ui.py").read_text(encoding="utf-8")
+
+    for widget in ("k8s_tab", "dashboard_tab", "docker_tab"):
+        assert f"self.{widget}.set_services(self.services)" in source
+
+    lifecycle = (root / "main_window_parts" / "lifecycle.py").read_text(encoding="utf-8")
+    assert "self.services = AppServices()" in lifecycle
+    assert "self.services.shutdown" in lifecycle
+
+    settings = (root / "main_window_parts" / "theme_security.py").read_text(encoding="utf-8")
+    assert 'ai_service=getattr(getattr(self, "services", None), "ai", None)' in settings
