@@ -27,6 +27,13 @@ class AIService:
         import ai_assist
         return ai_assist.get_model(provider or ai_assist.get_provider())
 
+    def create_model_test_worker(self, provider, api_key, model, parent=None):
+        """Create a provider/model connectivity test and track it for shutdown."""
+        import ai_assist
+        return self._register(ai_assist.AIModelTestWorker(
+            provider, api_key, model, parent,
+        ))
+
     def create_command_explain_worker(self, command, exit_code, stderr, stdout):
         import ai_assist
         provider = ai_assist.get_provider()
