@@ -121,6 +121,7 @@ class SSHConnectionPool:
         self.idle_timeout_seconds = max(0.0, float(idle_timeout_seconds))
         self.maintenance_interval = max(0.1, float(maintenance_interval))
         self._slots = []
+        self._selection_cursor = 0
         self._creating = False
         self._closed = False
         self._fail_until = 0.0
@@ -207,11 +208,15 @@ class SSHConnectionPool:
         # Sort by in-flight channels, then use a stable rotating tie-breaker
         # so equally-loaded transports share work instead of always favouring
         # the first connection in the pool.
-        candidates.sort(key=lambda item: (item.active_channels, self._slots.index(item)))
+        candidates.sort(key=lambda item: (
+            item.active_channels,
+            (self._slots.index(item) - self._selection_cursor) % max(1, len(self._slots)),
+        ))
         for slot in candidates:
             if slot.sem.acquire(False):
                 slot.active_channels += 1
                 slot.last_used_at = time.monotonic()
+                self._selection_cursor = (self._slots.index(slot) + 1) % max(1, len(self._slots))
                 return slot
         return None
 
@@ -263,7 +268,7 @@ class SSHConnectionPool:
                     # At the connection cap (or while another thread is
                     # creating the next transport), use the least-loaded
                     # remaining channel rather than waiting unnecessarily.
-                    if not create and (len(self._slots) >= self.max_connections or self._creating):
+                    if not create and (len(self._slots) >= self.max_connections or self._creating or cooling):
                         slot = self._find_slot_with_capacity(dead, below_scale_threshold=False)
                         if slot is not None:
                             return slot
