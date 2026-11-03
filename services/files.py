@@ -85,12 +85,14 @@ class FileManagerService:
         return filesystem.stat(path)
 
     def mkdir(self, path):
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.mkdir(path)
 
     def write_bytes(self, path, data):
+        activate_lifecycle(self)
         """Write bytes through the active SSH/SFTP or FTP filesystem adapter."""
         filesystem = self.filesystem
         if filesystem is None:
@@ -105,6 +107,7 @@ class FileManagerService:
         return filesystem._sftp.putfo(io.BytesIO(payload), path)
 
     def create_empty_file(self, path):
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
@@ -114,6 +117,7 @@ class FileManagerService:
         handle.close()
 
     def delete(self, path, *, is_directory=False):
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
@@ -122,6 +126,7 @@ class FileManagerService:
         return filesystem.remove(path)
 
     def rename(self, old_path, new_path):
+        activate_lifecycle(self)
         filesystem = self.filesystem
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
