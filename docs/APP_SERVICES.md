@@ -76,8 +76,10 @@ Feature widgets receive the shared services from the main window. Their
 legacy `ssh` accessors now resolve through `ConnectionService`; the stored
 legacy value is only a compatibility fallback for standalone widget tests.
 Feature command workers are created through their domain service in the desktop app. Command, directory, and file-stream workers capture the session generation and discard stale results after a reconnect. The remote file manager obtains its filesystem adapter through `FileManagerService` for dialogs and transfer helpers, while common path and mutation operations are service methods.
-The embedded Web App is passed `WebAppService` and resolves its active SSH
-client and command executor from the same `AppServices` instance. It also
+The embedded Web App is passed `WebAppService` and routes command
+execution, short-lived SFTP channel creation, and interactive PTY channel
+creation through the shared service boundary. These channels use the active
+SSH transport; the Web App never creates a separate SSH client. The app also
 retains the Qt desktop bridge for UI-affecting actions, and command dispatch is
 bound to the same SSH client that was validated for that request.
 
