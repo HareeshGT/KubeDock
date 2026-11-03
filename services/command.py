@@ -103,7 +103,7 @@ class CommandService:
         for worker in workers:
             try:
                 if worker.isRunning():
-                    remaining_ms = max(0, int((deadline - __import__("time").monotonic()) * 1000))
+                    remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
                     if remaining_ms <= 0:
                         break
                     worker.wait(remaining_ms)
