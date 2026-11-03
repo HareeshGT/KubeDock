@@ -1303,6 +1303,12 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
     resources = (root / "kubernetes_tab_parts" / "resources.py").read_text(encoding="utf-8")
     assert "self.ssh if self.kubernetes_service is None else None" in resources
 
+    file_manager = (root / "main_window_parts" / "file_manager.py").read_text(encoding="utf-8")
+    assert "self._filesystem() if service is None else None" in file_manager
+    transfer_dialog = (root / "dialogs_parts" / "transfer.py").read_text(encoding="utf-8")
+    assert "service.capture_transfer_session()" in transfer_dialog
+    assert "self._service.bind_worker(worker, self._session_snapshot)" in transfer_dialog
+
 
 
 def test_file_service_captures_and_binds_transfer_session_workers():
