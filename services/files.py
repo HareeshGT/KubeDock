@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .lifecycle import activate_lifecycle
+
 
 class FileManagerService:
     def __init__(self, connection, commands):
@@ -18,6 +20,7 @@ class FileManagerService:
         return snapshot.is_active and snapshot.protocol == "ssh"
 
     def create_directory_worker(self, worker_pool, path):
+        activate_lifecycle(self)
         filesystem, snapshot = self.connection.get_filesystem_session()
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
@@ -31,6 +34,7 @@ class FileManagerService:
         return worker
 
     def create_stream_reader(self, path, *, sudo_user=None, max_bytes=None):
+        activate_lifecycle(self)
         filesystem, ssh, snapshot = self.connection.get_file_session()
         if filesystem is None:
             raise RuntimeError("Connect to a remote file system first")
@@ -63,6 +67,7 @@ class FileManagerService:
         return self.commands.register_worker(worker)
 
     def create_command_worker(self, worker_pool, command, *, sudo_user=None, timeout=None, raw=False):
+        activate_lifecycle(self)
         return self.commands.create_worker(
             worker_pool, command, sudo_user=sudo_user, timeout=timeout, raw=raw,
         )
@@ -122,6 +127,7 @@ class FileManagerService:
             raise RuntimeError("Connect to a remote file system first")
         return filesystem.rename(old_path, new_path)
     def create_media_stream_start_worker(self, path, *, sudo_user=None):
+        activate_lifecycle(self)
         """Create a media server and its generation-bound startup worker."""
         filesystem, ssh, snapshot = self.connection.get_file_session()
         if filesystem is None:
@@ -137,6 +143,7 @@ class FileManagerService:
         return server, worker, snapshot
 
     def create_exec_stream_worker(self, command):
+        activate_lifecycle(self)
         """Create a streaming remote-file execution worker on the active SSH session."""
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
