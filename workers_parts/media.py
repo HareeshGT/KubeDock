@@ -480,11 +480,10 @@ class _StreamServerStartWorker(QThread):
         self.finished.connect(self.deleteLater)
 
     def cancel(self):
+        # Do not call server.shutdown() while start() may still be creating
+        # its HTTP server thread: shutdown before serve_forever() starts can
+        # deadlock. run() stops the server immediately after start() returns.
         self._cancelled.set()
-        try:
-            self._server.stop()
-        except Exception:
-            pass
 
     def _session_is_current(self):
         guard = self._session_guard
