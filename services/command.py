@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Optional
+
+from .lifecycle import activate_lifecycle
 import threading
 import time
 
@@ -139,6 +141,7 @@ class CommandService:
         raw: bool = False,
         operation_key: str = None,
     ):
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
@@ -186,6 +189,7 @@ class CommandService:
         stderr pipe blocking stdout (or the reverse), and a timer closes a
         stalled channel at the requested deadline.
         """
+        activate_lifecycle(self)
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
             raise RuntimeError("Connect to an SSH host before running remote commands")
