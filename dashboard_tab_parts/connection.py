@@ -266,9 +266,14 @@ class DashboardConnectionMixin:
           self._timer.start()
           self._process_timer.start()
       elif active and self.ftp:
-        self._app_connection_timer.start() if app_view else self._app_connection_timer.stop()
-        self._refresh_ftp()
-        self._timer.start()
+        if app_view:
+          self._timer.stop()
+          self._app_connection_timer.start()
+          self._refresh_app_connections()
+        else:
+          self._app_connection_timer.stop()
+          self._refresh_ftp()
+          self._timer.start()
       else:
         self._app_connection_timer.stop()
         self._timer.stop()
