@@ -413,7 +413,7 @@ class _TransferWorker(QThread):
                 self._sftp._ssh, self._remote, self._local,
                 sudo_user=sudo_user, total=total,
                 on_progress=lambda d, t: self.progress.emit(d, t),
-                is_cancelled=lambda: self._cancelled,
+                is_cancelled=lambda: self._cancelled or not self._session_is_current(),
             )
         except ElevatedReadError as err:
             raise IOError(str(err))
