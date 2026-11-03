@@ -80,7 +80,15 @@ class CommandService:
                         done_signal.connect(
                             lambda *args, w=worker, key=str(metric_key): self._record_worker_result(w, key, args)
                         )
+                    else:
+                        success_signal = getattr(worker, "succeeded", None)
+                        if success_signal is not None:
+                            success_signal.connect(
+                                lambda *args, w=worker, key=str(metric_key): self._record_worker_result(w, key, args)
+                            )
                 error_signal = getattr(worker, "error", None)
+                if error_signal is None:
+                    error_signal = getattr(worker, "failed", None)
                 if error_signal is not None:
                     error_signal.connect(
                         lambda error, w=worker, key=str(metric_key): self._record_worker_error(w, key, error)
