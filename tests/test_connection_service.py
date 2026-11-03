@@ -434,3 +434,15 @@ def test_kubernetes_pod_exec_worker_is_bound_to_shared_connection_generation():
 
     connection.attach_ssh(FakeResource(), host="replacement.example")
     assert not worker._session_is_current()
+
+def test_file_execution_stream_worker_is_bound_to_shared_connection_generation():
+    connection = ConnectionService(pool_closer=lambda _ssh: None)
+    services = AppServices(connection)
+    original = connection.attach_ssh(FakeResource(), host="file-host.example")
+
+    worker = services.files.create_exec_stream_worker("python3 /tmp/job.py")
+    assert worker.connection_generation == original.generation
+    assert worker._session_is_current()
+
+    connection.attach_ssh(FakeResource(), host="replacement.example")
+    assert not worker._session_is_current()
