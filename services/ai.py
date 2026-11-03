@@ -33,6 +33,18 @@ class AIService:
         import ai_assist
         return ai_assist.get_model(provider or ai_assist.get_provider())
 
+    @staticmethod
+    def settings():
+        import ai_assist
+        return ai_assist.get_ai_settings()
+
+    @staticmethod
+    def task_provider_selection(task, fallback_provider, fallback_key, fallback_model):
+        import ai_assist
+        return ai_assist._task_provider_selection(
+            task, fallback_provider, fallback_key, fallback_model,
+        )
+
     def create_model_test_worker(self, provider, api_key, model, parent=None):
         """Create a provider/model connectivity test and track it for shutdown."""
         import ai_assist
