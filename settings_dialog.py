@@ -267,6 +267,20 @@ class CustomModelManagerDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
+    def _load_settings(self):
+        services = getattr(self.parent(), "services", None)
+        if services is not None:
+            return services.settings.load()
+        return load_settings()
+
+    def _save_settings(self, **values):
+        services = getattr(self.parent(), "services", None)
+        if services is not None:
+            if values:
+                return services.settings.save(**values)
+            return services.settings.save_current_theme()
+        return save_settings(**values)
+
     def __init__(self, parent=None, k8s_tab_titles=None, ai_service=None):
         super().__init__(parent)
         self._ai_service = ai_service
@@ -316,7 +330,7 @@ class SettingsDialog(QDialog):
                 font-size: 12px;
             }}
         """)
-        settings = load_settings()
+        settings = self._load_settings()
         self._k8s_titles = list(k8s_tab_titles or [])
         self._hidden = set(settings.get("k8s_hidden_tabs", []))
         self._lock = security.get_lock_settings()
@@ -423,7 +437,7 @@ class SettingsDialog(QDialog):
         intro.setObjectName("secondary_text")
         root.addWidget(intro, 0, 0, 1, 2)
 
-        perf = normalize_performance_settings(load_settings())
+        perf = normalize_performance_settings(self._load_settings())
         self._performance_values = {}
         self._applying_performance_profile = False
 
@@ -513,7 +527,7 @@ class SettingsDialog(QDialog):
         self.reduce_motion_chk = QCheckBox(
             "Reduce motion (disable animated page transitions)"
         )
-        self.reduce_motion_chk.setChecked(bool(load_settings().get("reduce_motion", False)))
+        self.reduce_motion_chk.setChecked(bool(self._load_settings().get("reduce_motion", False)))
         appearance_layout.addWidget(self.reduce_motion_chk)
         appearance_hint = QLabel(
             "Useful when you prefer less movement while switching between pages."
@@ -610,7 +624,7 @@ class SettingsDialog(QDialog):
         intro.setObjectName("secondary_text")
         root.addWidget(intro, 0, 0, 1, 2)
 
-        connection = normalize_connection_preferences(load_settings())
+        connection = normalize_connection_preferences(self._load_settings())
         ssh_group = QGroupBox("SSH defaults")
         ssh_form = QFormLayout(ssh_group)
         ssh_form.setContentsMargins(12, 18, 12, 12)
@@ -920,7 +934,7 @@ class SettingsDialog(QDialog):
         self.ai_response_detail_combo.addItem("Concise", "concise")
         self.ai_response_detail_combo.addItem("Balanced", "balanced")
         self.ai_response_detail_combo.addItem("Detailed", "detailed")
-        current_detail = str(load_settings().get("ai_response_detail", "balanced") or "balanced")
+        current_detail = str(self._load_settings().get("ai_response_detail", "balanced") or "balanced")
         detail_index = self.ai_response_detail_combo.findData(current_detail)
         self.ai_response_detail_combo.setCurrentIndex(detail_index if detail_index >= 0 else 1)
         self.ai_response_detail_combo.setMaximumWidth(220)
@@ -1400,7 +1414,7 @@ class SettingsDialog(QDialog):
             "pause_dashboard_when_inactive": self.pause_dashboard_chk.isChecked(),
             **{key: widget.value() for key, widget in self._performance_values.items()},
         }
-        save_settings(
+        self._save_settings(
             performance_settings=performance,
             connection_preferences={
                 "ssh_connect_timeout_seconds": self.ssh_timeout_spin.value(),
@@ -1432,7 +1446,7 @@ class SettingsDialog(QDialog):
             usage_telemetry_enabled=self.usage_telemetry_chk.isChecked(),
             cloud_ai_enabled=not self.local_only_ai_chk.isChecked(),
         )
-        save_settings(
+        self._save_settings(
             webapp_enabled=self.webapp_enable_btn.isChecked(),
             webapp_username="",
             webapp_password="",
