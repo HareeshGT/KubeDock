@@ -1311,6 +1311,12 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
     assert "service.capture_transfer_session()" in transfer_dialog
     assert "self._service.bind_worker(worker, self._session_snapshot)" in transfer_dialog
 
+    tunnel_tab = (root / "kubernetes_tab_parts" / "tunnels.py").read_text(encoding="utf-8")
+    assert "service=self.kubernetes_service" in tunnel_tab
+    tunnel_dialog = (root / "dialogs_parts" / "tunnel.py").read_text(encoding="utf-8")
+    assert "self._service.create_worker(self._workers, cmd)" in tunnel_dialog
+    assert "self._service.create_tunnel_save_worker(" in tunnel_dialog
+
 
 
 def test_file_service_captures_and_binds_transfer_session_workers():
