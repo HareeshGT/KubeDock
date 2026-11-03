@@ -120,11 +120,17 @@ class DockerLogDialog(QDialog):
     self.status_lbl.setText("● live")
     self.status_lbl.setStyleSheet(f"color: {T['SUCCESS']};")
 
-    worker = (
-      self._service.create_log_stream_worker(cmd)
-      if self._service is not None
-      else _ExecStreamWorker(self.ssh, cmd)
-    )
+    try:
+      worker = (
+        self._service.create_log_stream_worker(cmd)
+        if self._service is not None
+        else _ExecStreamWorker(self.ssh, cmd)
+      )
+    except Exception as exc:
+      self.status_lbl.setText("● error")
+      self.status_lbl.setStyleSheet(f"color: {T['DANGER']};")
+      self._on_stream_line(f"\\n[stream error] {exc}\\n")
+      return
     worker.line.connect(self._on_stream_line)
     worker.error.connect(self._on_stream_error)
     worker.finished.connect(self._on_stream_finished)
