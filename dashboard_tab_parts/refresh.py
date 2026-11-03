@@ -87,7 +87,7 @@ class DashboardRefreshMixin:
         return
       self._process_busy = True
       generation = self._process_generation
-      worker = (self.dashboard_service.create_worker(None, _PROCESS_CMD, timeout=8, operation_key="dashboard:process-snapshot") if self.dashboard_service is not None else CommandWorker(self.ssh, _PROCESS_CMD, timeout=8))
+      worker = (self.dashboard_service.create_process_snapshot_worker(None, _PROCESS_CMD) if self.dashboard_service is not None else CommandWorker(self.ssh, _PROCESS_CMD, timeout=8))
       worker.done.connect(
         lambda out, g=generation: self._on_process_snapshot(out)
         if g == self._process_generation else None
@@ -192,7 +192,7 @@ class DashboardRefreshMixin:
   def _probe_remote_os(self, generation: int):
       """Detect Windows once per SSH connection (result cached in
       self._remote_os, reset by set_ssh) and then continue the cycle."""
-      worker = (self.dashboard_service.create_worker(None, _winm.WINDOWS_PROBE_CMD, timeout=10, raw=True, operation_key="dashboard:os-probe") if self.dashboard_service is not None else CommandWorker(self.ssh, _winm.WINDOWS_PROBE_CMD, timeout=10, raw=True))
+      worker = (self.dashboard_service.create_os_probe_worker(None, _winm.WINDOWS_PROBE_CMD) if self.dashboard_service is not None else CommandWorker(self.ssh, _winm.WINDOWS_PROBE_CMD, timeout=10, raw=True))
 
       def _done(out, _err, _code, g=generation):
         if g != self._snapshot_generation:
@@ -217,7 +217,8 @@ class DashboardRefreshMixin:
 
 
   def _start_windows_collection(self, generation: int):
-      worker = (self.dashboard_service.create_worker(None, _winm.build_windows_host_command(), timeout=25, raw=True, operation_key="dashboard:windows-host") if self.dashboard_service is not None else CommandWorker(self.ssh, _winm.build_windows_host_command(), timeout=25, raw=True))
+      windows_command = _winm.build_windows_host_command()
+      worker = (self.dashboard_service.create_windows_collection_worker(None, windows_command) if self.dashboard_service is not None else CommandWorker(self.ssh, windows_command, timeout=25, raw=True))
       worker.done.connect(lambda out, g=generation: self._on_windows_host_stats(out) if g == self._snapshot_generation else None)
       worker.error.connect(lambda err, g=generation: self._on_host_error(err) if g == self._snapshot_generation else None)
       track_worker(self._workers, worker)
@@ -247,31 +248,36 @@ class DashboardRefreshMixin:
 
 
   def _start_posix_collection(self, generation: int):
-      host_worker = (self.dashboard_service.create_worker(None, _HOST_CMD, operation_key="dashboard:host-metrics") if self.dashboard_service is not None else CommandWorker(self.ssh, _HOST_CMD))
+      if self.dashboard_service is not None:
+        workers = self.dashboard_service.create_posix_collection_workers(
+          None,
+          host_command=_HOST_CMD,
+          kubernetes_command=self._contextual_k8s_command(),
+          pod_placement_command=self._contextual_command(_PODMAP_CMD),
+        )
+        host_worker = workers["host"]
+        k8s_worker = workers["kubernetes"]
+        podmap_worker = workers["pod_placement"]
+      else:
+        host_worker = CommandWorker(self.ssh, _HOST_CMD)
+        k8s_command = self._contextual_k8s_command()
+        k8s_worker = CommandWorker(self.ssh, k8s_command)
+        podmap_worker = CommandWorker(
+          self.ssh, self._contextual_command(_PODMAP_CMD), timeout=15
+        )
+
       host_worker.done.connect(lambda out, g=generation: self._on_host_stats(out) if g == self._snapshot_generation else None)
       host_worker.error.connect(lambda err, g=generation: self._on_host_error(err) if g == self._snapshot_generation else None)
       track_worker(self._workers, host_worker)
       host_worker.start()
-  
-      k8s_worker = (self.dashboard_service.create_worker(None, self._contextual_k8s_command(), operation_key="dashboard:kubernetes-metrics") if self.dashboard_service is not None else CommandWorker(self.ssh, self._contextual_k8s_command()))
+
       k8s_worker.done.connect(lambda out, g=generation: self._on_k8s_stats(out) if g == self._snapshot_generation else None)
       k8s_worker.error.connect(lambda err, g=generation: self._on_k8s_error(err) if g == self._snapshot_generation else None)
       track_worker(self._workers, k8s_worker)
       k8s_worker.start()
-  
-      # Run pod placement independently. The main Kubernetes snapshot can take
-      # several seconds because it also collects workloads, services, events,
-      # metrics, and detailed pod state. Node pod counts must not wait on that.
-      podmap_worker = (
-        self.dashboard_service.create_worker(
-          None, self._contextual_command(_PODMAP_CMD), timeout=15,
-          operation_key="dashboard:pod-placement",
-        )
-        if self.dashboard_service is not None
-        else CommandWorker(
-          self.ssh, self._contextual_command(_PODMAP_CMD), timeout=15
-        )
-      )
+
+      # Node placement runs independently because the main Kubernetes
+      # snapshot also gathers workloads, services, events, and pod metrics.
       podmap_worker.done.connect(
         lambda out, g=generation: self._on_podmap_stats(out)
         if g == self._snapshot_generation else None
@@ -282,8 +288,8 @@ class DashboardRefreshMixin:
       )
       track_worker(self._workers, podmap_worker)
       podmap_worker.start()
-  
-  
+
+
   def _worker_finished(self, worker_name: str):
       """Finish one side of the current cycle and atomically publish both."""
       if worker_name == "host":
