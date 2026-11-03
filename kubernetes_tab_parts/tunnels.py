@@ -47,8 +47,10 @@ class KubernetesTunnelsMixin:
       )
       return
     dlg = ManageTunnelServicesDialog(
-      self.ssh, self._tunnel_services, self._tunnel_csv_path,
+      self.ssh if self.kubernetes_service is None else None,
+      self._tunnel_services, self._tunnel_csv_path,
       namespaces=self._namespaces, parent=self,
+      service=self.kubernetes_service,
     )
     dlg.services_saved.connect(lambda _: self._load_tunnel_csv())
     dlg.exec_()
@@ -88,9 +90,10 @@ class KubernetesTunnelsMixin:
       return
 
     # Load services from the connected VM
-    self._tunnel_services = load_tunnel_services(
-      self.ssh,
-      self._tunnel_csv_path
+    self._tunnel_services = (
+      self.kubernetes_service.load_tunnel_services(self._tunnel_csv_path)
+      if self.kubernetes_service is not None
+      else load_tunnel_services(self.ssh, self._tunnel_csv_path)
     )
 
     if not self._tunnel_services:
