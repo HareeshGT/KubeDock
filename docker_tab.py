@@ -507,10 +507,11 @@ class DockerTab(QWidget):
       self.refresh_all()
 
   # ── running remote commands ────────────────────────────────
-  def _worker(self, cmd, timeout=None):
+  def _worker(self, cmd, timeout=None, operation_key=None):
     w = (
       self.docker_service.create_worker(
-        None, cmd, sudo_user=self._sudo_user, timeout=timeout
+        None, cmd, sudo_user=self._sudo_user, timeout=timeout,
+        operation_key=operation_key,
       )
       if self.docker_service is not None
       else CommandWorker(self.ssh, cmd, sudo_user=self._sudo_user, timeout=timeout)
@@ -523,7 +524,9 @@ class DockerTab(QWidget):
       return
     self._inflight.add(kind)
     self._apply_filter(kind)
-    w = self._worker(du.list_command(kind))
+    command = (self.docker_service.list_command(kind)
+               if self.docker_service is not None else du.list_command(kind))
+    w = self._worker(command, operation_key="docker:list:{}".format(kind))
     w.result.connect(lambda out, err, code, k=kind: self._on_listed(k, out, err, code))
     w.error.connect(lambda msg, k=kind: self._on_list_error(k, msg))
     w.start()
@@ -554,7 +557,9 @@ class DockerTab(QWidget):
     if self.ssh is None or self._stats_inflight:
       return
     self._stats_inflight = True
-    worker = self._worker(du.stats_command(), timeout=30)
+    command = (self.docker_service.stats_command()
+               if self.docker_service is not None else du.stats_command())
+    worker = self._worker(command, timeout=30, operation_key="docker:container-stats")
     generation = self._connection_generation
     worker.result.connect(lambda out, err, code, g=generation: self._on_container_stats(out, err, code, g))
     worker.error.connect(lambda message, g=generation: self._on_container_stats_error(message, g))
@@ -607,7 +612,9 @@ class DockerTab(QWidget):
       return
     self._details_inflight.add(kind)
     generation = self._connection_generation
-    worker = self._worker(du.details_command(kind), timeout=30)
+    command = (self.docker_service.details_command(kind)
+               if self.docker_service is not None else du.details_command(kind))
+    worker = self._worker(command, timeout=30, operation_key="docker:details:{}".format(kind))
     worker.result.connect(
       lambda out, err, code, k=kind, g=generation: self._on_resource_details(k, out, err, code, g))
     worker.error.connect(
@@ -911,7 +918,8 @@ class DockerTab(QWidget):
     if not name:
       return
     try:
-      cmd = du.container_action_command(action, name)
+      cmd = (self.docker_service.container_action_command(action, name)
+             if self.docker_service is not None else du.container_action_command(action, name))
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
@@ -945,7 +953,8 @@ class DockerTab(QWidget):
     if not ok or not text.strip():
       return
     try:
-      cmd = du.exec_command(name, text)
+      cmd = (self.docker_service.exec_command(name, text)
+             if self.docker_service is not None else du.exec_command(name, text))
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
@@ -956,7 +965,8 @@ class DockerTab(QWidget):
     if not ident or self.ssh is None:
       return
     try:
-      cmd = du.inspect_command(kind, ident)
+      cmd = (self.docker_service.inspect_command(kind, ident)
+             if self.docker_service is not None else du.inspect_command(kind, ident))
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
@@ -995,12 +1005,15 @@ class DockerTab(QWidget):
                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
       return
     try:
-      cmd = {
-        "containers": lambda: du.remove_container_command(ident, force=force),
-        "images": lambda: du.remove_image_command(ident),
-        "volumes": lambda: du.remove_volume_command(ident),
-        "networks": lambda: du.remove_network_command(ident),
-      }[kind]()
+      cmd = (
+        self.docker_service.remove_command(kind, ident, force=force)
+        if self.docker_service is not None else {
+          "containers": lambda: du.remove_container_command(ident, force=force),
+          "images": lambda: du.remove_image_command(ident),
+          "volumes": lambda: du.remove_volume_command(ident),
+          "networks": lambda: du.remove_network_command(ident),
+        }[kind]()
+      )
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
@@ -1012,7 +1025,8 @@ class DockerTab(QWidget):
     if not ok or not ref.strip():
       return
     try:
-      cmd = du.pull_command(ref)
+      cmd = (self.docker_service.pull_command(ref)
+             if self.docker_service is not None else du.pull_command(ref))
     except ValueError as e:
       QMessageBox.warning(self.window(), "Docker", str(e))
       return
