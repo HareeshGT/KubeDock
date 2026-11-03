@@ -67,8 +67,9 @@ class FileManagerMixin:
       return service.filesystem if service is not None else getattr(self, "sftp", None)
 
     def _file_ssh(self):
-      service = self._file_service()
-      return service.ssh_client if service is not None else getattr(self, "ssh", None)
+      # Raw clients are only exposed to legacy standalone dialog paths.
+      # The normal app path uses FileManagerService operations instead.
+      return getattr(self, "ssh", None) if self._file_service() is None else None
 
     def _normalize_remote(self, path):
       service = self._file_service()
@@ -452,17 +453,27 @@ class FileManagerMixin:
         return
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
+      service = self._file_service()
       MediaPlayerDialog.open_remote(
-        self, self._filesystem(), self._file_ssh(), remote, meta["kind"], sudo_user=self._sudo_user,
-        service=self._file_service(),
+        self,
+        self._filesystem() if service is None else None,
+        self._file_ssh() if service is None else None,
+        remote, meta["kind"], sudo_user=self._sudo_user,
+        service=service,
       )
 
     def _exec_file(self, meta):
-      if not self._file_ssh():
+      service = self._file_service()
+      if (service is not None and not service.has_ssh) or (
+        service is None and not self._file_ssh()
+      ):
         return
       self._cancel_preview_worker()
       remote = self._current_remote(meta)
-      dlg = FileExecDialog(self, self._file_ssh(), remote, sudo_user=self._sudo_user, service=self._file_service())
+      dlg = FileExecDialog(
+        self, self._file_ssh() if service is None else None, remote,
+        sudo_user=self._sudo_user, service=service,
+      )
       dlg.exec_()
 
     def _run_selected(self):
