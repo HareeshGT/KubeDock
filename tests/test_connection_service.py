@@ -1287,7 +1287,7 @@ def test_main_window_injects_the_same_service_container_into_feature_tabs():
 
     lifecycle = (root / "main_window_parts" / "lifecycle.py").read_text(encoding="utf-8")
     assert "self.services = AppServices()" in lifecycle
-    assert "self.services.shutdown" in lifecycle
+    assert "_cleanup(services.shutdown)" in lifecycle
 
     settings = (root / "main_window_parts" / "theme_security.py").read_text(encoding="utf-8")
     assert 'ai_service=getattr(getattr(self, "services", None), "ai", None)' in settings
