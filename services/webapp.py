@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .lifecycle import activate_lifecycle
+
 
 class WebAppService:
     """Expose only the active session providers required by the web backend.
@@ -22,6 +24,7 @@ class WebAppService:
         return self.connection.get_filesystem()
 
     def open_sftp(self):
+        activate_lifecycle(self)
         """Open a short-lived SFTP channel on the active shared SSH session."""
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
@@ -36,6 +39,7 @@ class WebAppService:
         return sftp
 
     def open_terminal_channel(self, *, term="xterm-256color", width=120, height=32):
+        activate_lifecycle(self)
         """Open an interactive PTY on the active session, never a new SSH client."""
         ssh, snapshot = self.connection.get_ssh_session()
         if ssh is None:
@@ -50,6 +54,7 @@ class WebAppService:
         return channel
 
     def execute(self, command, *, timeout=30, input_data=None, expected_ssh=None):
+        activate_lifecycle(self)
         return self.commands.execute(
             command, timeout=timeout, input_data=input_data,
             expected_ssh=expected_ssh,
