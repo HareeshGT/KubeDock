@@ -13,8 +13,9 @@ class FileManagerService:
         return self.connection.get_filesystem()
 
     @property
-    def ssh_client(self):
-        return self.connection.get_ssh_client()
+    def has_ssh(self):
+        snapshot = self.connection.snapshot
+        return snapshot.is_active and snapshot.protocol == "ssh"
 
     def create_directory_worker(self, worker_pool, path):
         filesystem, snapshot = self.connection.get_filesystem_session()
