@@ -230,7 +230,6 @@ class ConnectionService:
         return snapshot
 
     def attach_ssh(
-        activate_lifecycle(self)
         self,
         ssh,
         filesystem=None,
@@ -241,6 +240,7 @@ class ConnectionService:
         alias: str = "",
     ) -> ConnectionSnapshot:
         """Adopt a connected SSH client and its app-facing filesystem."""
+        activate_lifecycle(self)
         return self._replace_session(
             protocol="ssh",
             ssh=ssh,
@@ -279,7 +279,6 @@ class ConnectionService:
         return worker
 
     def attach_file_connection(
-        activate_lifecycle(self)
         self,
         filesystem,
         *,
@@ -290,6 +289,7 @@ class ConnectionService:
         alias: str = "",
     ) -> ConnectionSnapshot:
         """Adopt an FTP or FTPS filesystem session (without SSH access)."""
+        activate_lifecycle(self)
         normalized = str(protocol or "").lower()
         if normalized not in {"ftp", "ftps"}:
             raise ValueError("protocol must be 'ftp' or 'ftps'")
