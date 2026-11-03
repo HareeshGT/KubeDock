@@ -1375,4 +1375,4 @@ def test_kubernetes_service_loads_and_saves_tunnel_csv_through_command_service(m
     assert 'target="$HOME"' + "'/.tunnel/services.csv'" in captured["command"]
     assert "base64 -d" in captured["command"]
     assert captured["kwargs"]["timeout"] == 20
-    assert KubernetesService._remote_path_expression("~someone/file") == "'~someone/file'"
+    assert services.kubernetes._remote_path_expression("~someone/file") == "'~someone/file'"
