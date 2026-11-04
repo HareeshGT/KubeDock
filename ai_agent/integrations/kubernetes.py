@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 import unicodedata
+import json
 
 from ai_assist import _redact_sensitive_text
 from ..models import ToolSpec
@@ -44,7 +45,8 @@ def _run(kubernetes_service, command, timeout=20):
     """Execute a bounded read command and redact its returned output."""
     code, output, error = kubernetes_service.commands.execute(command, timeout=timeout)
     if code != 0:
-        text = error or output or "kubectl exited with status " + str(code)
+        detail = error or output or "kubectl exited with status " + str(code)
+        raise RuntimeError(_redact_sensitive_text(str(detail))[:2000])
     elif str(output or "").strip():
         text = output
     elif str(error or "").strip():
@@ -73,6 +75,32 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         """List a bounded set of deployments in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
         return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide | head -n 100", 20)
+
+
+    def get_configmap_key(args):
+        """Read exactly one key from one named ConfigMap; return no unrelated data."""
+        namespace = _validate_namespace(args["namespace"])
+        name = _validate_name(args["configmap"], "ConfigMap")
+        key = str(args["key"] or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,253}", key):
+            raise ValueError("A valid ConfigMap data key is required.")
+        raw = _run(kubernetes_service,
+                   _base(selected_context, namespace) + " get configmap/" + shlex.quote(name) + " -o json", 20)
+        try:
+            obj = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Kubernetes returned an invalid ConfigMap JSON response.") from exc
+        data = obj.get("data") or {}
+        if key not in data:
+            return {"found": False, "resource": "ConfigMap", "name": name,
+                    "namespace": namespace, "key": key,
+                    "reason": "The ConfigMap exists, but the requested key is not present."}
+        value = data[key]
+        if not isinstance(value, str):
+            raise RuntimeError("The requested ConfigMap key did not contain a string value.")
+        return {"found": True, "resource": "ConfigMap", "name": name,
+                "namespace": namespace, "key": key,
+                "value": _redact_sensitive_text(value)[:4000]}
 
     def list_nodes(_args):
         """List a bounded set of cluster nodes."""
@@ -113,6 +141,16 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 63}},
          "required": ["namespace"], "additionalProperties": False},
         list_deployments,
+    ))
+    registry.register(ToolSpec(
+        "k8s_get_configmap_key",
+        "Read exactly one key from the exact named ConfigMap in one namespace. Returns only the requested key and value. Never substitute another resource. Read-only.",
+        {"type": "object", "properties": {
+            "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
+            "configmap": {"type": "string", "minLength": 1, "maxLength": 253},
+            "key": {"type": "string", "minLength": 1, "maxLength": 253}},
+         "required": ["namespace", "configmap", "key"], "additionalProperties": False},
+        get_configmap_key,
     ))
     registry.register(ToolSpec(
         "k8s_list_nodes", "List cluster nodes. Read-only.",
