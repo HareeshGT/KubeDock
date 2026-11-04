@@ -502,9 +502,9 @@ class K8sAIOpsOperationsMixin:
             return
 
         settings = ai_service.settings() if ai_service is not None else ai_assist.get_ai_settings()
-        if provider != "ollama":
+        if provider not in ai_assist.LOCAL_PROVIDER_IDS:
             if not settings.get("cloud_ai_enabled", True):
-                self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
+                self._write_error("\nCloud AI is disabled. Select Embedded Local AI or Ollama in the Local / Private profile to analyze collected evidence.")
                 self._set_busy(False)
                 return
             consent = QMessageBox.question(
