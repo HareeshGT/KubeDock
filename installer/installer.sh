@@ -1115,6 +1115,7 @@ required = [
   ("PyQt5", "PyQt5"),
   ("paramiko", "paramiko"),
   ("PyInstaller", "PyInstaller"),
+  ("llama-cpp-python", "llama_cpp"),
 ]
 
 # Voice input and Monaco are optional; missing packages must not block typed
