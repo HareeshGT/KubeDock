@@ -16,7 +16,7 @@ class KubernetesToolTests(unittest.TestCase):
     def setUp(self):
         self.commands = FakeCommands()
         self.service = SimpleNamespace(commands=self.commands)
-        self.registry = register_kubernetes_read_tools(ToolRegistry(), self.service, context="dev-cluster")
+        self.registry = register_kubernetes_read_tools(ToolRegistry(), self.service, context="dev-cluster", include_logs=True)
 
     def test_registers_only_read_tools(self):
         self.assertEqual(set(self.registry.names()), {
@@ -60,6 +60,10 @@ class KubernetesToolTests(unittest.TestCase):
         result = self.registry.get("k8s_get_pod_logs").handler({"namespace": "dev", "pod": "api"})
         self.assertNotIn("abcdefghijklmnopqrstuvwxyz", result)
         self.assertIn("[REDACTED]", result)
+
+    def test_pod_logs_are_not_registered_without_opt_in(self):
+        registry = register_kubernetes_read_tools(ToolRegistry(), self.service, context="dev-cluster")
+        self.assertNotIn("k8s_get_pod_logs", registry.names())
 
     def test_namespace_must_be_a_dns_label(self):
         with self.assertRaises(ValueError):
