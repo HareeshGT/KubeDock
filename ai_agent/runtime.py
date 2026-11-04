@@ -11,15 +11,16 @@ from .registry import ToolRegistry
 _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
     r"\b(?:get|show|read|fetch|retrieve)\s+(?:the\s+)?"
     r"(?:value\s+of\s+)?(?:key\s+)?"
-    r"([A-Za-z0-9_.-]+)\s+from\s+([A-Za-z0-9_.-]+)\b",
+    r"([A-Za-z0-9_.-]+)\s+from\s+([A-Za-z0-9_.-]+)"
+    r"(?:\s+in\s+(?:namespace\s+)?([a-z0-9-]+))?\b",
     re.IGNORECASE,
 )
 
 
 def _configmap_lookup_requested(request: str):
-    """Identify a direct 'get value of KEY from CONFIGMAP' request."""
+    """Identify a direct key lookup and its explicitly named ConfigMap/namespace."""
     match = _CONFIGMAP_KEY_LOOKUP_RE.search(str(request or ""))
-    return (match.group(1), match.group(2)) if match else None
+    return (match.group(1), match.group(2), match.group(3)) if match else None
 
 
 class AgentRuntime:
@@ -106,7 +107,7 @@ class AgentRuntime:
                 answer = response.content.strip()
                 lookup = _configmap_lookup_requested(request)
                 if lookup:
-                    requested_key, requested_configmap = lookup
+                    requested_key, requested_configmap, requested_namespace = lookup
                     evidence = next((
                         item for item in reversed(results)
                         if item.name == "k8s_get_configmap_key" and item.status == "success"
@@ -121,8 +122,10 @@ class AgentRuntime:
                         try:
                             payload = json.loads(evidence.content)
                             if (payload.get("found") is True
+                                    and payload.get("resource") == "ConfigMap"
                                     and payload.get("key") == requested_key
-                                    and payload.get("name") == requested_configmap):
+                                    and payload.get("name") == requested_configmap
+                                    and (not requested_namespace or payload.get("namespace") == requested_namespace)):
                                 answer = (
                                     "Verified from ConfigMap " + str(payload["name"])
                                     + " in namespace " + str(payload["namespace"])
