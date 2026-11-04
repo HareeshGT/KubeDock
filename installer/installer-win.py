@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 import os
@@ -247,6 +248,39 @@ def get_branches():
     if not branches:
         raise RuntimeError("No Git branches were found in the repository.")
     return branches
+
+
+def parse_installer_args(argv=None):
+    """Parse an optional source branch from the Windows installer command line."""
+    parser = argparse.ArgumentParser(
+        description="Install KubeDock from a prebuilt release or a selected source branch."
+    )
+    parser.add_argument(
+        "branch",
+        nargs="?",
+        help="Git branch to build from source (also accepts --branch).",
+    )
+    parser.add_argument(
+        "--branch",
+        dest="branch_option",
+        help="Git branch to build from source.",
+    )
+    args = parser.parse_args(argv)
+    if args.branch and args.branch_option:
+        parser.error("provide the branch either positionally or with --branch, not both")
+    return args
+
+
+def resolve_source_branch(branch_arg, branches):
+    """Validate an explicitly requested branch or show the interactive selector."""
+    if branch_arg:
+        if branch_arg not in branches:
+            raise ValueError(
+                f"Branch '{branch_arg}' was not found in the KubeDock repository. "
+                "Use the exact name of a remote branch."
+            )
+        return branch_arg
+    return choose_branch(branches)
 
 
 def choose_branch(branches):
@@ -628,7 +662,11 @@ def install_prebuilt_release() -> Path:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def main():
+def main(argv=None):
+    args = parse_installer_args(argv)
+    requested_branch = args.branch_option or args.branch or os.environ.get("KUBEDECK_BRANCH") or os.environ.get("KUBEDOCK_BRANCH")
+    requested_branch = requested_branch.strip() if requested_branch else None
+
     UI.banner(f"Windows installer · {BUILD_ID}")
     UI.phase(1, 8, "Checking platform and permissions", "Confirming Windows support and Administrator access.")
 
@@ -639,6 +677,14 @@ def main():
     install_mode = os.environ.get("KUBEDOCK_INSTALL_MODE", "auto").strip().lower()
     if install_mode not in {"auto", "release", "source"}:
         raise RuntimeError("KUBEDOCK_INSTALL_MODE must be auto, release, or source.")
+    if requested_branch and install_mode == "release":
+        raise RuntimeError(
+            "A source branch cannot be combined with KUBEDOCK_INSTALL_MODE=release. "
+            "Use KUBEDOCK_INSTALL_MODE=source or omit the branch for a prebuilt install."
+        )
+    if requested_branch:
+        install_mode = "source"
+        UI.info(f"Explicit source branch requested: {requested_branch}")
 
     if install_mode != "source":
         try:
@@ -672,7 +718,7 @@ def main():
 
     UI.info("Connecting to GitHub to retrieve available branches...")
     branches = get_branches()
-    branch = choose_branch(branches)
+    branch = resolve_source_branch(requested_branch, branches)
     UI.success(f"Source branch selected: {branch}")
 
     root = Path(tempfile.mkdtemp(prefix="KubeDeckInstaller-"))
