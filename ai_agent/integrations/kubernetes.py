@@ -59,7 +59,7 @@ def _run(kubernetes_service, command, timeout=20, max_chars=12000, reject_trunca
     if len(safe_text) > max_chars:
         if reject_truncation:
             raise RuntimeError("Kubernetes returned more data than the safe exact-value limit; the value is unverified.")
-        return safe_text[:max_chars] + "\\n[TRUNCATED: additional output was omitted; do not infer missing data]"
+        return safe_text[:max_chars] + "\n[TRUNCATED: additional output was omitted; do not infer missing data]"
     return safe_text
 
 
