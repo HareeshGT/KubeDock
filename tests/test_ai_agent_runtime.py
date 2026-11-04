@@ -1,5 +1,6 @@
 """Unit tests for the provider-neutral AI agent runtime."""
 import unittest
+import json
 from ai_agent import AgentPolicy, AgentRuntime, AgentStatus, AssistantMessage, ToolCall, ToolRegistry, ToolSpec
 
 SCHEMA = {"type": "object", "properties": {
@@ -31,7 +32,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result.status, AgentStatus.COMPLETED)
         self.assertIn("Running", result.answer)
         self.assertEqual(len(self.executed), 1)
-        self.assertTrue(any(m.get("role") == "tool" for m in result.messages))
+        tool_message = next(m for m in result.messages if m.get("role") == "tool")
+        envelope = json.loads(tool_message["content"])
+        self.assertEqual(envelope["status"], "success")
+        self.assertIn("Running", envelope["content"])
 
     def test_mutation_is_not_run_without_approval(self):
         adapter = FakeAdapter([AssistantMessage(tool_calls=[ToolCall("c1", "restart_workload", {"name": "api"})])])
@@ -65,8 +69,9 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result.status, AgentStatus.COMPLETED)
         self.assertEqual(result.tool_results[0].status, "invalid_arguments")
         self.assertEqual(self.executed, [])
-        feedback = next(m["content"] for m in result.messages if m.get("role") == "tool")
-        self.assertIn("JSON object", feedback)
+        feedback = json.loads(next(m["content"] for m in result.messages if m.get("role") == "tool"))
+        self.assertEqual(feedback["status"], "invalid_arguments")
+        self.assertIn("JSON object", feedback["content"])
 
 
     def test_mapping_response_missing_arguments_is_invalid(self):
@@ -117,7 +122,28 @@ class AgentRuntimeTests(unittest.TestCase):
                                AssistantMessage(content="Done.")])
         result = AgentRuntime(self.registry, AgentPolicy(max_result_chars=20)).run("Read", adapter)
         tool_message = next(m for m in result.messages if m.get("role") == "tool")
-        self.assertLessEqual(len(tool_message["content"]), 20)
+        envelope = json.loads(tool_message["content"])
+        self.assertLessEqual(len(envelope["content"]), 20)
+        self.assertEqual(envelope["status"], "success")
+
+
+    def test_tool_execution_failure_is_explicitly_marked_in_model_context(self):
+        self.registry.register(ToolSpec(
+            "missing_resource", "Read an exact resource.",
+            {"type": "object", "properties": {}, "additionalProperties": False},
+            lambda args: (_ for _ in ()).throw(RuntimeError("NotFound: configmap missing")),
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "missing_resource", {})]),
+            AssistantMessage(content="The requested resource could not be verified."),
+        ])
+        result = AgentRuntime(self.registry).run("Read the ConfigMap", adapter)
+        self.assertEqual(result.tool_results[0].status, "error")
+        tool_message = next(m for m in adapter.calls[1][0] if m.get("role") == "tool")
+        envelope = json.loads(tool_message["content"])
+        self.assertEqual(envelope["status"], "error")
+        self.assertIn("NotFound", envelope["content"])
+
 
     def test_empty_request_is_rejected(self):
         self.assertEqual(AgentRuntime(self.registry).run(" ", FakeAdapter([])).status, AgentStatus.ERROR)
