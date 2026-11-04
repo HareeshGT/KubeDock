@@ -8,6 +8,34 @@ from k8s_metrics import (
 )
 
 
+NODE_JSON_MARKER = "__KD_NODE_JSON__"
+NODE_TOP_MARKER = "__KD_NODE_TOP__"
+
+
+def build_node_inventory_command(context_flag=""):
+    """Fetch node readiness/capacity and live usage in one bounded request."""
+    base = " ".join(part for part in ("kubectl", context_flag) if part)
+    timeout = "--request-timeout=15s"
+    return "\n".join((
+        f"echo {NODE_JSON_MARKER}",
+        f"{base} get nodes {timeout} -o json 2>&1",
+        f"echo {NODE_TOP_MARKER}",
+        f"{base} top nodes --no-headers {timeout} 2>&1",
+    ))
+
+
+def split_node_inventory_output(output):
+    sections = {"json": [], "top": []}
+    current = "json"
+    markers = {NODE_JSON_MARKER: "json", NODE_TOP_MARKER: "top"}
+    for line in (output or "").splitlines():
+        marker = line.strip()
+        if marker in markers:
+            current = markers[marker]
+        else:
+            sections[current].append(line)
+    return "\n".join(sections["json"]), "\n".join(sections["top"])
+
 class NodeSnapshot(NamedTuple):
     name: str
     status: str
