@@ -249,9 +249,9 @@ class K8sAIOpsOperationsMixin:
                 "No namespace is selected. If a tool requires a namespace, ask the user to specify one instead of guessing."
             )
             agent_request = (
-                "Selected Kubernetes context: " + str(kube_context) + "\\n"
-                + "Selected namespace: " + (str(namespace) if namespace else "none") + "\\n"
-                + namespace_guidance + "\\nUser request: " + str(request)
+                "Selected Kubernetes context: " + str(kube_context) + "\n"
+                + "Selected namespace: " + (str(namespace) if namespace else "none") + "\n"
+                + namespace_guidance + "\nUser request: " + str(request)
             )
             worker = ai_service.create_agent_worker(
                 runtime, adapter, agent_request,
