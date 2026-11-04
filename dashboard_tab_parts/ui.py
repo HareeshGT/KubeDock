@@ -1,5 +1,5 @@
 from dashboard_tab import *
-from PyQt5.QtWidgets import QStackedWidget
+from PyQt5.QtWidgets import QStackedWidget, QHeaderView
 from dashboard_tab import (
   _dashboard_text, _pct_color, _NodeGridContainer,
 )
