@@ -38,6 +38,10 @@ _MUTATING_REQUEST_RE = re.compile(
     r"\b(delete|remove|restart|scale|patch|apply|edit|update|create|deploy|rollback|roll back|kill|terminate|drain|cordon|uncordon|resize)\b",
     re.IGNORECASE,
 )
+_LOG_CONSENT_INTENT_RE = re.compile(
+    r"\b(why|diagnos\w*|investigat\w*|crash\w*|error\w*|fail\w*|oom\w*|memory|cpu|logs?|root cause|not ready|pending)\b",
+    re.IGNORECASE,
+)
 
 
 def _mutation_verification_outcome(action: dict, output: str, error: str, exit_code: int):
@@ -242,7 +246,24 @@ class K8sAIOpsOperationsMixin:
         self._set_busy(True)
         self._speak("Checking the cluster.")
         try:
-            runtime, adapter = ai_service.create_agent(context=kube_context)
+            settings = ai_service.settings()
+            quick_profile = (settings.get("task_profiles") or {}).get("quick") or {}
+            selected_provider = quick_profile.get("provider") or settings.get("provider") or "anthropic"
+            include_logs = selected_provider == "ollama"
+            if selected_provider != "ollama" and _LOG_CONSENT_INTENT_RE.search(request):
+                choice = QMessageBox.question(
+                    self,
+                    "Allow pod log collection?",
+                    "To investigate this issue, the agent can collect a bounded pod-log sample. "
+                    "Logs will be redacted on a best-effort basis before being sent to the configured hosted AI provider. "
+                    "Without consent, the agent can still inspect pod lists, deployments, nodes, and events, but cannot read pod logs.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                include_logs = choice == QMessageBox.Yes
+            runtime, adapter = ai_service.create_agent(
+                context=kube_context, include_logs=include_logs,
+            )
             namespace_guidance = (
                 "Use the selected namespace by default unless the user specifies another one."
                 if namespace else
