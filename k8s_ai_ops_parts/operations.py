@@ -243,8 +243,18 @@ class K8sAIOpsOperationsMixin:
         self._speak("Checking the cluster.")
         try:
             runtime, adapter = ai_service.create_agent(context=kube_context)
+            namespace_guidance = (
+                "Use the selected namespace by default unless the user specifies another one."
+                if namespace else
+                "No namespace is selected. If a tool requires a namespace, ask the user to specify one instead of guessing."
+            )
+            agent_request = (
+                "Selected Kubernetes context: " + str(kube_context) + "\\n"
+                + "Selected namespace: " + (str(namespace) if namespace else "none") + "\\n"
+                + namespace_guidance + "\\nUser request: " + str(request)
+            )
             worker = ai_service.create_agent_worker(
-                runtime, adapter, request,
+                runtime, adapter, agent_request,
                 conversation=getattr(self, "_voice_conversation", []),
             )
         except Exception as exc:
