@@ -1,6 +1,9 @@
 import unittest
 
-from k8s_visuals import resource_status_tone, summarize_pod_statuses
+from k8s_visuals import (
+    resource_status_tone, summarize_pod_statuses, tone_color_key,
+    utilization_tone,
+)
 
 
 class KubernetesVisualStateTests(unittest.TestCase):
@@ -39,6 +42,22 @@ class KubernetesVisualStateTests(unittest.TestCase):
             "healthy": 1, "warning": 2, "critical": 1, "unknown": 1,
         })
         self.assertEqual(sum(summary.values()), len(pods))
+
+    def test_semantic_tones_map_to_shared_theme_tokens(self):
+        self.assertEqual(tone_color_key("healthy"), "SUCCESS")
+        self.assertEqual(tone_color_key("warning"), "WARNING")
+        self.assertEqual(tone_color_key("critical"), "DANGER")
+        self.assertEqual(tone_color_key("unknown"), "TEXT_MUTED")
+        self.assertEqual(tone_color_key("future-tone"), "TEXT_MUTED")
+
+    def test_utilization_thresholds_are_shared_and_inclusive(self):
+        self.assertEqual(utilization_tone(None), "unknown")
+        self.assertEqual(utilization_tone("n/a"), "unknown")
+        self.assertEqual(utilization_tone(59.9), "healthy")
+        self.assertEqual(utilization_tone(60), "warning")
+        self.assertEqual(utilization_tone(79.9), "warning")
+        self.assertEqual(utilization_tone(80), "critical")
+        self.assertEqual(utilization_tone(150), "critical")
 
 
 if __name__ == "__main__":
