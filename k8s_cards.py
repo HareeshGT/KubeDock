@@ -20,7 +20,7 @@ from themes import T
 from ui_kit import pill_qss, chip_qss, RADIUS_CARD
 from utils import monospace_font
 from k8s_metrics import color_key, indicator_text, unavailable_reading
-from k8s_visuals import resource_status_tone
+from k8s_visuals import resource_status_tone, tone_color_key
 
 
 def _hex_to_rgb(h: str) -> str:
@@ -30,12 +30,7 @@ def _hex_to_rgb(h: str) -> str:
 
 def _status_color_key(status: str, restarts=0) -> str:
   """Map Kubernetes phases/reasons to the active theme's semantic colors."""
-  return {
-    "healthy": "SUCCESS",
-    "warning": "WARNING",
-    "critical": "DANGER",
-    "unknown": "TEXT_MUTED",
-  }[resource_status_tone(status, restarts)]
+  return tone_color_key(resource_status_tone(status, restarts))
 
 
 def _pill(text: str, color_key: str, min_text: str = "") -> QLabel:
