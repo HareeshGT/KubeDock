@@ -1,5 +1,5 @@
 from .common import *
-from k8s_visuals import summarize_pod_statuses
+from k8s_visuals import summarize_pod_statuses, tone_color_key, utilization_tone
 from k8s_node_metrics import build_node_inventory_command, split_node_inventory_output, parse_node_inventory
 import logging
 from k8s_metrics import (
@@ -187,10 +187,8 @@ class KubernetesResourcesMixin:
 
     counts = {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}
     tone_colors = {
-      "healthy": T["SUCCESS"],
-      "warning": T["WARNING"],
-      "critical": T["DANGER"],
-      "unknown": T["TEXT_MUTED"],
+      tone: T[tone_color_key(tone)]
+      for tone in ("healthy", "warning", "critical", "unknown")
     }
     for node in snapshots:
       counts[node.tone] += 1
@@ -214,15 +212,11 @@ class KubernetesResourcesMixin:
         if percent is None:
           bar.setValue(0)
           bar.setFormat(f"{kind}: N/A")
-          bar_color = T["TEXT_MUTED"]
+          bar_color = T[tone_color_key(utilization_tone(None))]
         else:
           bar.setValue(min(100, percent))
           bar.setFormat(f"{usage} / {capacity} · {percent}%")
-          bar_color = (
-            T["DANGER"] if percent >= 80
-            else T["WARNING"] if percent >= 60
-            else T["SUCCESS"]
-          )
+          bar_color = T[tone_color_key(utilization_tone(percent))]
         bar.setStyleSheet(
           f"QProgressBar {{ color: {T['TEXT_PRIMARY']}; background: {T['BG_ITEM']}; "
           f"border: 1px solid {T['BORDER']}; border-radius: 5px; "
