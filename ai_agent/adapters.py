@@ -13,6 +13,7 @@ from .models import AssistantMessage, ToolCall
 class PromptToolAdapter:
     """Translate normalized conversation/tool schemas into a provider text request."""
     def __init__(self, provider, api_key, model, call_provider, timeout_seconds=90):
+        """Initialize provider credentials and the callable provider boundary."""
         self.provider = str(provider or "")
         self.api_key = str(api_key or "")
         self.model = str(model or "")
@@ -21,6 +22,7 @@ class PromptToolAdapter:
 
     @staticmethod
     def _messages_text(messages):
+        """Serialize normalized conversation messages for the prompt contract."""
         lines = []
         for item in messages:
             role = str(item.get("role") or "user").upper()
@@ -35,6 +37,7 @@ class PromptToolAdapter:
         return "\n\n".join(lines)
 
     def complete(self, *, messages, tools):
+        """Request one assistant turn and normalize any JSON tool calls."""
         tool_contract = json.dumps(list(tools or []), ensure_ascii=False, separators=(",", ":"), default=str)
         prompt = (
             "You are operating inside KubeDock's bounded AI agent runtime.\n"
