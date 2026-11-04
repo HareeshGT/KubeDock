@@ -243,6 +243,11 @@ class PodCardWidget(_CardBase):
       top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING", "Ready 9/9"))
 
     status = meta.get("status", "") or "Unknown"
+    self.setAccessibleName(f"Pod {meta.get('name', '')}")
+    self.setAccessibleDescription(
+      f"Status {status}; ready {ready or 'not reported'}; "
+      f"restarts {meta.get('restarts', '0')}"
+    )
     status_badge = _pill(status, _status_color_key(status, meta.get("restarts")), "Completed")
     status_badge.setToolTip(f"Pod phase: {status}. Restart count: {meta.get('restarts', '0')}.")
     top.addWidget(status_badge)
