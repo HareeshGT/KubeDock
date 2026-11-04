@@ -130,7 +130,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertFalse(any(event.kind == "completed" for event in result.events))
 
     def test_whitespace_provider_response_is_not_marked_completed(self):
-        adapter = FakeAdapter([AssistantMessage(content="  \\n\\t ")])
+        adapter = FakeAdapter([AssistantMessage(content="  \t ")])
         result = AgentRuntime(self.registry).run("Check api", adapter)
         self.assertEqual(result.status, AgentStatus.ERROR)
         self.assertFalse(any(event.kind == "completed" for event in result.events))
