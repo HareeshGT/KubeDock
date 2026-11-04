@@ -49,10 +49,23 @@ class AIService:
             task, fallback_provider, fallback_key, fallback_model,
         )
 
-    def create_agent_runtime(self, registry=None, policy=None):
-        """Create the shared bounded agent engine; tools remain app-owned."""
-        from ai_agent import AgentPolicy, AgentRuntime, ToolRegistry
-        return AgentRuntime(registry or ToolRegistry(), policy or AgentPolicy())
+    def create_agent_registry(self, context=""):
+        """Build an explicit registry of tools backed by existing shared services."""
+        from ai_agent import ToolRegistry
+        from ai_agent.integrations.kubernetes import register_kubernetes_read_tools
+        if self.commands is None:
+            raise RuntimeError("The shared command service is unavailable.")
+        from .kubernetes import KubernetesService
+        kubernetes = KubernetesService(self.commands.connection, self.commands)
+        registry = ToolRegistry()
+        register_kubernetes_read_tools(registry, kubernetes, context=context)
+        return registry
+
+    def create_agent_runtime(self, registry=None, policy=None, context=""):
+        """Create the bounded agent engine with explicitly registered capabilities."""
+        from ai_agent import AgentPolicy, AgentRuntime
+        registry = registry if registry is not None else self.create_agent_registry(context=context)
+        return AgentRuntime(registry, policy or AgentPolicy())
 
     def create_agent_adapter(self, provider=None, api_key=None, model=None, timeout_seconds=90):
         """Create a structured tool-call adapter using KubeDock's existing provider boundary.
@@ -78,9 +91,9 @@ class AIService:
             ai_assist._call_provider, timeout_seconds=timeout_seconds,
         )
 
-    def create_agent(self, registry=None, policy=None, provider=None, api_key=None, model=None):
-        """Return a ready runtime and adapter while leaving tool registration explicit."""
-        runtime = self.create_agent_runtime(registry, policy)
+    def create_agent(self, registry=None, policy=None, provider=None, api_key=None, model=None, context=""):
+        """Return a ready agent with bounded read-only Kubernetes tools by default."""
+        runtime = self.create_agent_runtime(registry, policy, context=context)
         adapter = self.create_agent_adapter(provider, api_key, model)
         return runtime, adapter
 
