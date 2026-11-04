@@ -948,5 +948,5 @@ def _ratio_ok(ready: str) -> bool:
     return False
 
 
-def _status_accent(status: str) -> str:
-  return T.get(_status_color_key(status), T["TEXT_MUTED"])
+def _status_accent(status: str, restarts=0) -> str:
+  return T.get(_status_color_key(status, restarts), T["TEXT_MUTED"])
