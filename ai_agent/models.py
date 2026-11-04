@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """Describe one application-owned tool and its permission requirements."""
     name: str
     description: str
     parameters: Mapping[str, Any]
@@ -19,18 +20,21 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class ToolCall:
+    """Represent one normalized model request to invoke a registered tool."""
     id: str
     name: str
     arguments: Mapping[str, Any]
 
 @dataclass(frozen=True)
 class AssistantMessage:
+    """Represent one assistant response containing text and optional tool calls."""
     content: str = ""
     tool_calls: List[ToolCall] = field(default_factory=list)
     finish_reason: str = ""
 
 @dataclass(frozen=True)
 class ToolResult:
+    """Record the status and bounded textual result of a tool invocation."""
     tool_call_id: str
     name: str
     status: str
@@ -38,6 +42,7 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class AgentEvent:
+    """Describe a user-visible event in the agent execution timeline."""
     kind: str
     message: str
     tool_name: str = ""
@@ -46,6 +51,7 @@ class AgentEvent:
 
 @dataclass(frozen=True)
 class AgentPolicy:
+    """Set resource, authorization, and tool-allowlist limits for one run."""
     max_iterations: int = 6
     max_tool_calls: int = 12
     max_result_chars: int = 12000
@@ -62,6 +68,7 @@ class AgentPolicy:
             raise ValueError("max_run_seconds must be positive.")
 
 class AgentStatus:
+    """Stable status values returned by the agent runtime."""
     COMPLETED = "completed"
     NEEDS_APPROVAL = "needs_approval"
     LIMIT_REACHED = "limit_reached"
@@ -69,6 +76,7 @@ class AgentStatus:
 
 @dataclass
 class AgentResult:
+    """Collect the final status, response, tool results, and conversation state."""
     status: str
     answer: str = ""
     events: List[AgentEvent] = field(default_factory=list)
