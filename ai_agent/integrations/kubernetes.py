@@ -12,6 +12,7 @@ _CONTEXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 
 
 def _validate_namespace(value):
+    """Validate and return a Kubernetes DNS-label namespace."""
     value = str(value or "").strip()
     if not _NAMESPACE_RE.fullmatch(value) or len(value) > 63:
         raise ValueError("A valid Kubernetes namespace is required.")
@@ -19,6 +20,7 @@ def _validate_namespace(value):
 
 
 def _validate_name(value, label="resource"):
+    """Validate and return a Kubernetes resource name."""
     value = str(value or "").strip()
     if not _NAME_RE.fullmatch(value) or len(value) > 253:
         raise ValueError("A valid Kubernetes " + label + " name is required.")
@@ -26,6 +28,7 @@ def _validate_name(value, label="resource"):
 
 
 def _base(context, namespace=None):
+    """Build a safely quoted kubectl prefix for a validated context/namespace."""
     context = str(context or "").strip()
     if context and not _CONTEXT_RE.fullmatch(context):
         raise ValueError("The selected Kubernetes context contains unsupported characters.")
@@ -38,6 +41,7 @@ def _base(context, namespace=None):
 
 
 def _run(kubernetes_service, command, timeout=20):
+    """Execute a bounded read command and redact its returned output."""
     code, output, error = kubernetes_service.commands.execute(command, timeout=timeout)
     if code != 0:
         text = error or output or "kubectl exited with status " + str(code)
@@ -61,17 +65,21 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
     _base(selected_context)  # validate once before closing over this context
 
     def list_pods(args):
+        """List a bounded set of pods in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
         return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide | head -n 100", 20)
 
     def list_deployments(args):
+        """List a bounded set of deployments in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
         return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide | head -n 100", 20)
 
     def list_nodes(_args):
+        """List a bounded set of cluster nodes."""
         return _run(kubernetes_service, _base(selected_context) + " get nodes -o wide | head -n 100", 20)
 
     def get_events(args):
+        """Return a bounded, recent event sample for one namespace."""
         namespace = _validate_namespace(args["namespace"])
         limit = int(args.get("limit", 30))
         if not 1 <= limit <= 50:
@@ -85,6 +93,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         return _run(kubernetes_service, command, 20)
 
     def get_pod_logs(args):
+        """Return a byte- and line-bounded pod log tail after redaction."""
         namespace = _validate_namespace(args["namespace"])
         pod = _validate_name(args["pod"], "pod")
         tail = int(args.get("tail", 50))
