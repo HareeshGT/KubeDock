@@ -43,16 +43,18 @@ log tail. They execute through KubeDock's existing shared command/connection
 service. Namespace, context, pod name, and limits are validated before a
 command is built; log output is redacted before it returns to the model.
 
-Existing Ops Mind and Kubernetes operations remain unchanged and continue to
-use their existing validation, confirmation, RBAC, and verification paths.
-No mutation tool is registered. Explicit mutation requests remain on the
-existing Ops Mind path and retain its confirmation, protected-namespace, RBAC,
-and verification checks. Read-only Ops Mind requests now use the multi-step
-agent and show a compact tool timeline. Hosted-provider diagnostic requests
-ask before enabling the pod-log tool; declining leaves metadata, node, and
-event tools available but does not expose logs to the agent. Local Ollama can
-use the bounded log tool without sending logs to a hosted provider. Docker,
-SSH host inspection, and monitoring tools remain follow-up integrations.
+Existing Ops Mind workflows remain in place for mutations and read operations
+that require capabilities not yet exposed to the agent. Mutation requests,
+resource describe requests, ConfigMap/Secret key reads, and investigations
+continue through the established interpreter and its existing confirmation,
+protected-namespace, RBAC, evidence-consent, and verification paths. Supported
+read-only inventory and diagnostic requests use the multi-step agent and show
+a compact tool timeline. Hosted-provider diagnostic requests ask before
+enabling the bounded pod-log tool. If that agent-specific consent is declined,
+the request falls back to the established Ops Mind interpreter, which applies
+its own evidence-sharing consent before collecting investigation logs. Local
+Ollama can use the bounded log tool without sending logs to a hosted provider.
+Docker, SSH host inspection, and monitoring tools remain follow-up integrations.
 
 ## Test
 
