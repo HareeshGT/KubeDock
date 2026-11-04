@@ -899,7 +899,8 @@ class SettingsDialog(QDialog):
         model_actions.addStretch(1)
         provider_grid.addLayout(model_actions, 2, 1)
 
-        provider_grid.addWidget(QLabel("API key"), 3, 0)
+        self.api_key_label = QLabel("API key")
+        provider_grid.addWidget(self.api_key_label, 3, 0)
         key_row = QHBoxLayout()
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.Password)
@@ -922,7 +923,7 @@ class SettingsDialog(QDialog):
         routing_layout.setVerticalSpacing(10)
         profile_help = QLabel(
             "Assign separate models for quick explanations, deeper diagnoses, voice, and "
-            "private local inference. Ollama uses only http://127.0.0.1:11434 and needs no API key."
+            "private local inference. Embedded Local AI runs directly in KubeDock with Python and needs no API key or Ollama."
         )
         profile_help.setWordWrap(True)
         profile_help.setObjectName("secondary_text")
@@ -948,7 +949,7 @@ class SettingsDialog(QDialog):
             ("quick", "Quick explanations"),
             ("deep_diagnosis", "Deep diagnoses"),
             ("voice", "Voice / conversation"),
-            ("local_private", "Local / Private (Ollama loopback)"),
+            ("local_private", "Local / Private (on-device)"),
         )
         for index, (profile_id, label) in enumerate(profiles):
             profile_card = QFrame()
@@ -968,16 +969,14 @@ class SettingsDialog(QDialog):
             profile_settings = ai_settings.get("task_profiles", {}).get(profile_id, {})
             provider_combo = QComboBox()
             provider_choices = (
-                [("ollama", ai_assist.PROVIDERS["ollama"])]
+                [(pid, ai_assist.PROVIDERS[pid]) for pid in ("embedded", "ollama")]
                 if profile_id == "local_private"
                 else list(ai_assist.PROVIDERS.items())
             )
             for provider_id, provider_info in provider_choices:
                 provider_combo.addItem(provider_info["label"], provider_id)
-            if profile_id == "local_private":
-                provider_combo.setEnabled(False)
             selected = profile_settings.get(
-                "provider", "ollama" if profile_id == "local_private" else ai_settings["provider"]
+                "provider", "embedded" if profile_id == "local_private" else ai_settings["provider"]
             )
             provider_index = provider_combo.findData(selected)
             provider_combo.setCurrentIndex(provider_index if provider_index >= 0 else 0)
@@ -1023,7 +1022,7 @@ class SettingsDialog(QDialog):
         self.local_only_ai_chk.setChecked(not bool(ai_settings.get("cloud_ai_enabled", True)))
         self.local_only_ai_chk.setToolTip(
             "Blocks hosted text-model calls and Google/OpenAI cloud speech services. "
-            "Typed Ops Mind requests and local Ollama inference remain available."
+            "Typed Ops Mind requests and Embedded Local AI remain available."
         )
         behaviour_layout.addWidget(self.local_only_ai_chk)
         self.ai_intelligence_tools_btn = QPushButton("Open AI Intelligence Workspace…")
@@ -1148,6 +1147,13 @@ class SettingsDialog(QDialog):
         self._refresh_model_combo()
         self.api_key_edit.setText(self._ai_keys.get(pid, ""))
         self.api_key_edit.setPlaceholderText(info["key_placeholder"])
+        needs_key = pid not in ai_assist.LOCAL_PROVIDER_IDS
+        self.api_key_label.setVisible(needs_key)
+        self.api_key_edit.setVisible(needs_key)
+        self.show_key_btn.setVisible(needs_key)
+        self.model_combo.setEnabled(pid != "embedded")
+        self.add_model_btn.setEnabled(pid != "embedded")
+        self.manage_models_btn.setEnabled(pid != "embedded")
 
     def _add_custom_model(self):
         pid = self.provider_combo.currentData()
@@ -1192,7 +1198,7 @@ class SettingsDialog(QDialog):
         pid = self.provider_combo.currentData()
         api_key = self.api_key_edit.text().strip()
         model_id = self._selected_model_id()
-        if not api_key and pid != "ollama":
+        if not api_key and pid not in ai_assist.LOCAL_PROVIDER_IDS:
             QMessageBox.information(
                 self, "API key required",
                 f"Add a {ai_assist.PROVIDERS[pid]['label']} API key before testing the model.",
