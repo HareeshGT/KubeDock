@@ -7,6 +7,34 @@ be tested independently of the desktop runtime.
 from collections import Counter
 
 
+TONE_COLOR_KEYS = {
+    "healthy": "SUCCESS",
+    "warning": "WARNING",
+    "critical": "DANGER",
+    "unknown": "TEXT_MUTED",
+}
+
+
+def tone_color_key(tone):
+    """Return the shared theme-token name for a semantic health tone."""
+    return TONE_COLOR_KEYS.get(tone, TONE_COLOR_KEYS["unknown"])
+
+
+def utilization_tone(percent):
+    """Classify utilization consistently; unavailable readings remain unknown."""
+    if percent is None:
+        return "unknown"
+    try:
+        value = float(percent)
+    except (TypeError, ValueError):
+        return "unknown"
+    if value >= 80:
+        return "critical"
+    if value >= 60:
+        return "warning"
+    return "healthy"
+
+
 def resource_status_tone(status, restarts=0):
     """Return a semantic tone for a Kubernetes resource status.
 
