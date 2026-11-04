@@ -1,10 +1,26 @@
 """Bounded multi-step agent loop with explicit tool authorization."""
 from __future__ import annotations
 import json
+import re
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
 from .models import AgentEvent, AgentPolicy, AgentResult, AgentStatus, AssistantMessage, ToolCall, ToolResult
 from .registry import ToolRegistry
+
+
+_CONFIGMAP_KEY_LOOKUP_RE = re.compile(
+    r"\\b(?:get|show|read|fetch|retrieve)\\s+(?:the\\s+)?"
+    r"(?:value\\s+of\\s+)?(?:key\\s+)?"
+    r"([A-Za-z0-9_.-]+)\\s+from\\s+([A-Za-z0-9_.-]+)\\b",
+    re.IGNORECASE,
+)
+
+
+def _configmap_lookup_requested(request: str):
+    """Identify a direct 'get value of KEY from CONFIGMAP' request."""
+    match = _CONFIGMAP_KEY_LOOKUP_RE.search(str(request or ""))
+    return (match.group(1), match.group(2)) if match else None
+
 
 class AgentRuntime:
     """Run normalized provider responses against application-owned tool capabilities."""
@@ -88,6 +104,40 @@ class AgentRuntime:
                 return AgentResult(AgentStatus.ERROR, events=events, tool_results=results, messages=messages, error=str(exc)[:1000])
             if not response.tool_calls:
                 answer = response.content.strip()
+                lookup = _configmap_lookup_requested(request)
+                if lookup:
+                    requested_key, requested_configmap = lookup
+                    evidence = next((
+                        item for item in reversed(results)
+                        if item.name == "k8s_get_configmap_key" and item.status == "success"
+                    ), None)
+                    if evidence is None:
+                        answer = (
+                            "I couldn't verify the requested value from the exact ConfigMap. "
+                            "No value has been inferred from pod names, deployment names, or conventions. "
+                            "Please confirm the ConfigMap name, namespace, and key, or clarify if the source is a Secret."
+                        )
+                    else:
+                        try:
+                            payload = json.loads(evidence.content)
+                            if (payload.get("found") is True
+                                    and payload.get("key") == requested_key
+                                    and payload.get("name") == requested_configmap):
+                                answer = (
+                                    "Verified from ConfigMap " + str(payload["name"])
+                                    + " in namespace " + str(payload["namespace"])
+                                    + ": " + str(payload["key"]) + "=" + str(payload["value"])
+                                )
+                            else:
+                                answer = (
+                                    "The exact ConfigMap lookup did not return the requested key and object. "
+                                    "The value is unverified; I will not guess or substitute another resource."
+                                )
+                        except (TypeError, ValueError, KeyError):
+                            answer = (
+                                "The ConfigMap tool returned an invalid evidence payload. "
+                                "The value is unverified; I will not guess."
+                            )
                 if not answer:
                     emit("error", "Provider returned an empty response.")
                     return AgentResult(
