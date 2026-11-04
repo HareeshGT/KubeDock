@@ -110,6 +110,15 @@ class KubernetesUiMixin:
     self.health_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
     cb.addWidget(self.health_lbl)
 
+    self.request_status_lbl = QLabel("Ready")
+    self.request_status_lbl.setObjectName("k8s_request_status")
+    self.request_status_lbl.setAccessibleName("Kubernetes request status")
+    self.request_status_lbl.setToolTip("No Kubernetes request is currently running")
+    self.request_status_lbl.setStyleSheet(
+      f"color: {T['TEXT_MUTED']}; font-size: 11px; padding: 0 6px;"
+    )
+    cb.addWidget(self.request_status_lbl)
+
     # Compact navigation context: current context → namespace → resource.
     self.navigation_path_lbl = QLabel("Context: —  ›  Namespace: —  ›  Pods")
     self.navigation_path_lbl.setObjectName("k8s_navigation_path")
@@ -141,6 +150,8 @@ class KubernetesUiMixin:
     self.progress = QProgressBar()
     self.progress.setFixedHeight(3)
     self.progress.setRange(0, 0)
+    self.progress.setAccessibleName("Kubernetes request in progress")
+    self.progress.setToolTip("A Kubernetes request is running")
     self.progress.hide()
     root.addWidget(self.progress)
 
