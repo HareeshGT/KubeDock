@@ -68,7 +68,13 @@ def download_model(spec: ModelSpec, cache_dir: Path | None = None, *, progress=N
     """Download, enforce byte bounds, verify digest, then atomically publish inside KubeDock."""
     spec.validate()
     cache_dir = Path(cache_dir) if cache_dir is not None else bundled_model_directory()
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise EmbeddedModelError(
+            "KubeDock cannot write to its installed model directory. "
+            "Rerun the installer with permission to update the application bundle."
+        ) from exc
     destination = cache_dir / spec.filename
     if verify_model(destination, spec):
         return destination
