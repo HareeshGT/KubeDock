@@ -204,6 +204,85 @@ if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release
   exit 1
 fi
 
+
+# Optional model download is explicitly user-approved; never prompt in CI/pipes.
+offer_embedded_model_download() {
+  local choice="${KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL:-}" model_name="SmolLM2-360M-Instruct-Q4_K_M.gguf"
+  local model_url="https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/ab928a97ee49f3a015f35194879f68211291d6ca/SmolLM2-360M-Instruct-Q4_K_M.gguf"
+  local expected="2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+  if [[ "$choice" != "1" && "$choice" != "0" && "$choice" != "yes" && "$choice" != "no" ]]; then
+    if [[ "$UI_INTERACTIVE" == "1" && -r /dev/tty ]]; then
+      printf '\nDownload the optional Embedded AI model now (~271 MB)? [y/N]: ' > /dev/tty
+      IFS= read -r choice < /dev/tty || choice=""
+    else
+      ui_info "Skipping optional Embedded AI model download in non-interactive mode. Set KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to opt in."
+      return 0
+    fi
+  fi
+  choice="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
+  case "$choice" in
+    1|yes|y|true) ;;
+    *) ui_info "Embedded AI model download skipped."; return 0 ;;
+  esac
+
+  local model_dir=""
+  case "$OS" in
+    Darwin) model_dir="$HOME/Library/Application Support/KubeDock/models" ;;
+    Linux) model_dir="${XDG_DATA_HOME:-$HOME/.local/share}/kubedock/models" ;;
+    MINGW*|MSYS*|CYGWIN*)
+      if ! command -v powershell.exe >/dev/null 2>&1; then
+        ui_warn "PowerShell is unavailable; skipped Embedded AI model download."
+        return 0
+      fi
+      KUBEDOCK_MODEL_URL="$model_url" KUBEDOCK_MODEL_SHA256="$expected" KUBEDOCK_MODEL_NAME="$model_name" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
+        $ErrorActionPreference = "Stop"
+        $dir = Join-Path $env:LOCALAPPDATA "KubeDock\models"
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $dest = Join-Path $dir $env:KUBEDOCK_MODEL_NAME
+        $tmp = "$dest.part"
+        try {
+          Invoke-WebRequest -Uri $env:KUBEDOCK_MODEL_URL -OutFile $tmp
+          if ((Get-Item $tmp).Length -gt 524288000) { throw "Model exceeds 500 MiB." }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tmp).Hash.ToLowerInvariant()
+          if ($hash -ne $env:KUBEDOCK_MODEL_SHA256) { throw "Model SHA-256 verification failed." }
+          Move-Item -Force $tmp $dest
+          Write-Output "Verified Embedded AI model saved to $dest"
+        } finally { Remove-Item -Force -ErrorAction SilentlyContinue $tmp }
+      ' || ui_warn "Embedded AI model download failed; KubeDock is still installed."
+      return 0
+      ;;
+    *) ui_info "Model download is not configured for this platform."; return 0 ;;
+  esac
+
+  mkdir -p "$model_dir" || { ui_warn "Could not create model cache directory."; return 0; }
+  local destination="$model_dir/$model_name" temporary="$model_dir/$model_name.part" actual_size actual_hash
+  if [[ -f "$destination" ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then actual_hash="$(sha256sum "$destination" | awk '{print $1}')"
+    else actual_hash="$(shasum -a 256 "$destination" | awk '{print $1}')"; fi
+    actual_hash="$(printf '%s' "$actual_hash" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$actual_hash" == "$expected" ]]; then ui_success "Embedded AI model already verified."; return 0; fi
+    rm -f "$destination"
+  fi
+  ui_info "Downloading Embedded AI model (maximum 500 MiB)..."
+  if ! curl -fL --retry 2 --connect-timeout 15 --max-time 900 --max-filesize 524288000 "$model_url" -o "$temporary"; then
+    rm -f "$temporary"; ui_warn "Embedded AI model download failed; KubeDock is still installed."; return 0
+  fi
+  actual_size="$(wc -c < "$temporary" | tr -d ' ')"
+  if [[ "$actual_size" -le 0 || "$actual_size" -gt 524288000 ]]; then
+    rm -f "$temporary"; ui_warn "Downloaded model size is invalid; file rejected."; return 0
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then actual_hash="$(sha256sum "$temporary" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then actual_hash="$(shasum -a 256 "$temporary" | awk '{print $1}')"
+  else rm -f "$temporary"; ui_warn "No SHA-256 tool found; model rejected."; return 0; fi
+  actual_hash="$(printf '%s' "$actual_hash" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual_hash" != "$expected" ]]; then
+    rm -f "$temporary"; ui_warn "Model SHA-256 verification failed; file rejected."; return 0
+  fi
+  mv "$temporary" "$destination"
+  ui_success "Verified Embedded AI model saved to: $destination"
+  ui_info "The model is downloaded and verified. Embedded Local Model provider wiring is still in progress."
+}
+
 install_prebuilt_bundle() {
   ui_phase 1 5 "Checking platform" "Selecting a compatible prebuilt KubeDock release."
   local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
@@ -443,6 +522,7 @@ EOF
   fi
   ui_info "Optional Qwen3-TTS is not included in the fast bundle. Use source mode for a custom runtime."
   rm -rf "$tmp"
+  offer_embedded_model_download
   ui_complete "KubeDock installed from the verified prebuilt bundle"
   return 0
 }
@@ -1556,5 +1636,6 @@ else
   ui_info "Qwen3-TTS not bundled (set KUBEDOCK_ENABLE_QWEN_TTS=1 to opt in)"
 fi
 echo
+offer_embedded_model_download
 ui_complete "KubeDock installed successfully"
 echo
