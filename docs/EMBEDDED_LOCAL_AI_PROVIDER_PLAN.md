@@ -24,10 +24,10 @@ Add a bundled, CPU-capable local inference option to KubeDock without replacing 
 ## Runtime and model constraints
 
 - Bundle the inference engine with KubeDock installers for supported Windows, macOS, and Linux architectures. Users must not need to install Ollama, llama.cpp, Python packages, or another runtime separately.
-- Keep model weights as the only separately downloaded runtime asset; enforce a maximum artifact size of 500 MB.
+- Keep model weights as the only separately downloaded runtime asset; enforce a maximum artifact size of 500 MB. When selected during installation, install them directly into the KubeDock application bundle. A skipped model is installed by rerunning the installer; runtime self-updates must not write into protected app directories.
 - Prefer a CPU baseline. GPU acceleration may be an optional platform-specific optimization and must not be required.
 - Pin model artifact URL, license, expected byte size, and SHA-256 digest in reviewed application metadata. Reject oversized, truncated, mismatched, or unverified artifacts. Use a temporary file and atomic promotion after verification.
-- Keep the model cache in the platform-appropriate application data directory and provide a clear recovery path for interrupted downloads.
+- Store model weights inside the installed KubeDock application resources (`models/`; macOS: `Contents/Resources/models/`), never in a separate user-data/cache directory. Downloads are staged in a temporary directory, verified, and then copied into the app bundle by the installer. The app itself must not silently write to protected install locations.
 - Do not claim hardware support or performance until measured on representative platform builds.
 
 ## Architecture work
@@ -46,7 +46,7 @@ Add a bundled, CPU-capable local inference option to KubeDock without replacing 
 - Existing API providers, custom model IDs, and model selectors continue to work unchanged.
 - A user can select an API provider and its exact API model independently of the embedded local model choice.
 - A user can select the embedded provider and a supported local model without an API key.
-- The model is downloaded only when first needed; no app-startup download occurs.
+- The model is either included in the installer/app bundle or explicitly downloaded during installation; no app-startup download occurs.
 - No artifact larger than 500 MB is accepted, and no unverified model is loaded.
 - CPU-only inference works on each declared supported platform.
 - Local inference never triggers hosted requests, including when download or inference fails.
