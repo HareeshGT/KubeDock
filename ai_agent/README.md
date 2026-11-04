@@ -50,5 +50,5 @@ be bypassed.
 Run the focused tests with:
 
 ```bash
-python -m unittest tests.test_ai_agent_runtime tests.test_ai_agent_adapter
+python -m unittest discover -s tests -p 'test_ai_agent_*.py'
 ```
