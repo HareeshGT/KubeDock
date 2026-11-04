@@ -40,7 +40,7 @@ def _base(context, namespace=None):
     return command
 
 
-def _run(kubernetes_service, command, timeout=20):
+def _run(kubernetes_service, command, timeout=20, max_chars=12000, reject_truncation=False):
     """Execute a bounded read command and redact its returned output."""
     code, output, error = kubernetes_service.commands.execute(command, timeout=timeout)
     if code != 0:
@@ -55,7 +55,12 @@ def _run(kubernetes_service, command, timeout=20):
         raise RuntimeError(_redact_sensitive_text(str(error))[:2000])
     else:
         text = output
-    return _redact_sensitive_text(str(text))[:12000]
+    safe_text = _redact_sensitive_text(str(text))
+    if len(safe_text) > max_chars:
+        if reject_truncation:
+            raise RuntimeError("Kubernetes returned more data than the safe exact-value limit; the value is unverified.")
+        return safe_text[:max_chars] + "\\n[TRUNCATED: additional output was omitted; do not infer missing data]"
+    return safe_text
 
 
 def register_kubernetes_read_tools(registry, kubernetes_service, context="", include_logs=False):
@@ -88,7 +93,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
             kubernetes_service,
             _base(selected_context, namespace) + " get configmap/" + shlex.quote(name)
             + " -o jsonpath=" + jsonpath + " --allow-missing-template-keys=false",
-            20,
+            20, max_chars=4000, reject_truncation=True,
         )
         return {"found": True, "resource": "ConfigMap", "name": name,
                 "namespace": namespace, "key": key,
