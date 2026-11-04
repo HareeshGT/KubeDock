@@ -612,14 +612,6 @@ class KubernetesCoreMixin:
     if refresh_btn is not None:
       refresh_btn.setEnabled(False)
     self._set_request_status("working", f"Running Kubernetes request: {operation}")
-    worker = (
-      self.kubernetes_service.create_worker(
-        None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
-      )
-      if self.kubernetes_service is not None
-      else CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
-    )
-
     def release_progress():
       self._active_command_count = max(0, getattr(self, "_active_command_count", 1) - 1)
       if self._active_command_count == 0:
@@ -628,6 +620,26 @@ class KubernetesCoreMixin:
         if refresh_btn is not None:
           refresh_btn.setEnabled(True)
       return self._active_command_count
+
+    try:
+      worker = (
+        self.kubernetes_service.create_worker(
+          None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
+        )
+        if self.kubernetes_service is not None
+        else CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
+      )
+  
+      worker.done.connect(on_done)
+      worker.error.connect(handle_error)
+      track_worker(self._workers, worker)
+      worker.start()
+    except Exception as exc:
+      remaining = release_progress()
+      self._log(f"[error] Unable to start Kubernetes request: {exc}")
+      if remaining == 0:
+        self._set_request_status("error", f"Could not start {operation}: {exc}")
+      _LOG.exception("kubernetes_request_start_failed operation=%s", operation)
 
     def on_done(out):
       callback_started = time.monotonic()
@@ -673,10 +685,6 @@ class KubernetesCoreMixin:
           operation, total_ms,
         )
 
-    worker.done.connect(on_done)
-    worker.error.connect(handle_error)
-    track_worker(self._workers, worker)
-    worker.start()
 
 
   def _log(self, text: str):
