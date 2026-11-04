@@ -10,9 +10,21 @@ KubeDock exposes `AppServices.design_intelligence`, an optional HTTP client for 
 
 The client is disabled by default and does not make network calls until configured.
 
-## Configure the runtime
+## Run DIS locally or configure a deployment
 
-Set `KUBEDOCK_DIS_URL` in the environment where KubeDock starts, pointing at a reachable DIS API deployment, for example:
+For local development, start the DIS repository in its own terminal after installing its requirements:
+
+```bash
+cd DesignIntelligenceSystem
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+In KubeDock, open **AI Intelligence → Design Intelligence**, enter `http://127.0.0.1:8000`, provide a brief, and select **Run DIS design review**. The API call runs in a background worker so the UI remains responsive. The URL is stored in KubeDock settings.
+
+Alternatively, set `KUBEDOCK_DIS_URL` in the environment where KubeDock starts, pointing at a reachable DIS API deployment, for example:
 
 ```bash
 export KUBEDOCK_DIS_URL="https://your-dis-service.example.com"
