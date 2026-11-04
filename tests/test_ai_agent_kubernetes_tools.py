@@ -89,5 +89,16 @@ class KubernetesToolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             register_kubernetes_read_tools(ToolRegistry(), self.service, context="dev; rm -rf /")
 
+    def test_context_names_with_spaces_are_safely_quoted(self):
+        registry = register_kubernetes_read_tools(ToolRegistry(), self.service, context="team staging")
+        registry.get("k8s_list_nodes").handler({})
+        command, _ = self.commands.commands[-1]
+        self.assertIn("--context='team staging'", command)
+
+    def test_context_control_characters_are_rejected(self):
+        with self.assertRaises(ValueError):
+            register_kubernetes_read_tools(ToolRegistry(), self.service, context="team\nstaging")
+        self.assertEqual(self.commands.commands, [])
+
 if __name__ == "__main__":
     unittest.main()
