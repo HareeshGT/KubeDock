@@ -14,11 +14,13 @@ class AgentRuntime:
         "unless a tool result confirms it. Prefer read-only checks. Explain uncertainty and impact."
     )
     def __init__(self, registry: ToolRegistry, policy: Optional[AgentPolicy] = None):
+        """Bind an explicit tool registry to a bounded execution policy."""
         self.registry = registry
         self.policy = policy or AgentPolicy()
 
     @staticmethod
     def _normalize_response(response):
+        """Normalize provider output without silently repairing invalid arguments."""
         if isinstance(response, AssistantMessage):
             return response
         if not isinstance(response, Mapping):
@@ -37,6 +39,7 @@ class AgentRuntime:
         return AssistantMessage(str(response.get("content") or ""), calls, str(response.get("finish_reason") or ""))
 
     def run(self, user_message: str, adapter, *, conversation=None, approval_handler=None, event_handler=None) -> AgentResult:
+        """Execute a bounded multi-turn plan and return its answer and audit events."""
         request = str(user_message or "").strip()
         if not request:
             return AgentResult(status=AgentStatus.ERROR, error="Enter a request.")
