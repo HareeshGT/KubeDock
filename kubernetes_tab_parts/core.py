@@ -3,6 +3,8 @@ import logging
 from command_utils import command_operation_label
 from themes import load_settings, save_settings
 from app_preferences import normalize_performance_settings, k8s_connection_profile_key
+from k8s_navigation import build_navigation_path
+from k8s_feedback import command_output_has_error
 
 _LOG = logging.getLogger(__name__)
 
@@ -13,7 +15,7 @@ K8S_TAB_GROUPS = {
   "workloads": frozenset({"pods", "deployments", "statefulsets", "daemonsets", "hpa", "jobs & cronjobs"}),
   "networking": frozenset({"services", "ingress"}),
   "storage": frozenset({"storage", "config & secrets"}),
-  "observability": frozenset({"events"}),
+  "observability": frozenset({"nodes", "events"}),
   "tools": frozenset({"terminal", "tunnels"}),
   "ai": frozenset({"ops mind"}),
 }
@@ -130,6 +132,7 @@ class KubernetesCoreMixin:
       # — which can be a different cluster than the one shown here.
       self.context_changed.emit(chosen)
     self.context_combo.blockSignals(False)
+    self._update_navigation_context()
 
     if not self._current_context:
       self._cluster_available = False
@@ -155,6 +158,7 @@ class KubernetesCoreMixin:
     self._current_context = context
     self.context_changed.emit(context)
     self._current_ns = "default"
+    self._update_navigation_context()
     self._save_k8s_selection(save_namespace=False)
     self.ns_combo.blockSignals(True)
     self.ns_combo.clear()
@@ -257,6 +261,7 @@ class KubernetesCoreMixin:
     self.ns_combo.blockSignals(False)
     self._current_ns = self.ns_combo.currentText()
     self._save_k8s_selection(save_namespace=True)
+    self._update_navigation_context()
     if self._cluster_available:
       self._refresh_current_tab()
 
@@ -264,6 +269,7 @@ class KubernetesCoreMixin:
   def _on_ns_change(self, ns: str):
     self._current_ns = ns
     self._save_k8s_selection(save_namespace=True)
+    self._update_navigation_context()
     self._refresh_current_tab()
 
 
@@ -375,6 +381,12 @@ class KubernetesCoreMixin:
     self.deploy_list.clear()
     self.pod_count_lbl.setText("")
     self.pod_count_lbl.setStyleSheet("")
+    if hasattr(self, "pod_health_summary"):
+      self.pod_health_summary.hide()
+      for attr in ("pod_healthy_lbl", "pod_warning_lbl", "pod_critical_lbl", "pod_unknown_lbl"):
+        badge = getattr(self, attr, None)
+        if badge is not None:
+          badge.setText("0")
     self.deploy_count_lbl.setText("")
     self.deploy_count_lbl.setStyleSheet("")
     self.sts_list.clear()
@@ -403,6 +415,9 @@ class KubernetesCoreMixin:
     self.cfg_detail.clear()
     self.cfg_raw.clear()
     self.event_list.clear()
+    if hasattr(self, "node_tree"):
+      self.node_tree.clear()
+      self.node_count_lbl.setText("Node inventory not loaded")
     self.event_count_lbl.setText("")
     self.event_count_lbl.setStyleSheet("")
     self._events_raw = ""
@@ -415,6 +430,34 @@ class KubernetesCoreMixin:
       self._current_context = ""
     self.health_lbl.setText("● Cluster")
     self.health_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+    self._update_navigation_context()
+
+
+  def _on_subtab_changed(self, _=None):
+    self._update_navigation_context()
+    self._refresh_current_tab()
+
+
+  def _update_navigation_context(self):
+    label = getattr(self, "navigation_path_lbl", None)
+    if label is None:
+      return
+    index = self.sub_tabs.currentIndex() if hasattr(self, "sub_tabs") else 0
+    tab = self.sub_tabs.tabText(index).strip() if index >= 0 else "Resources"
+    namespace = self._current_ns or "Not selected"
+    resource = None
+    if index == 0 and hasattr(self, "pod_list"):
+      item = self.pod_list.currentItem()
+      if item is not None:
+        meta = item.data(Qt.UserRole) or {}
+        name = (meta.get("name") or "").strip()
+        if name:
+          namespace = meta.get("namespace") or namespace
+          resource = f"Pod: {name}"
+    path = build_navigation_path(self._current_context, namespace, tab, resource)
+    label.setText(path)
+    label.setToolTip(path)
+    label.setAccessibleDescription(path)
 
 
   def _refresh_current_tab(self, _=None):
@@ -437,7 +480,8 @@ class KubernetesCoreMixin:
     elif idx == 8: self._load_storage()
     elif idx == 9: self._load_config_resources()
     elif idx == 10: self._load_events()
-    elif idx == 11: self._refresh_tunnel_status()
+    elif idx == 11: self._load_nodes()
+    elif idx == 12: self._refresh_tunnel_status()
 
   # ── Pods ──────────────────────────────────────────────────
   # `kubectl get pods -o wide` renders the RESTARTS column as a plain
@@ -531,8 +575,31 @@ class KubernetesCoreMixin:
 
   # ── Terminal tab ──────────────────────────────────────────
 
+  def _set_request_status(self, state: str, detail: str = ""):
+    """Update the persistent, accessible feedback for Kubernetes requests."""
+    label = getattr(self, "request_status_lbl", None)
+    if label is None:
+      return
+    states = {
+      "working": ("Working…", "ACCENT2"),
+      "success": ("Completed", "SUCCESS"),
+      "error": ("Request failed", "DANGER"),
+      "ready": ("Ready", "TEXT_MUTED"),
+    }
+    text, color_key = states.get(state, states["ready"])
+    label.setText(text)
+    label.setStyleSheet(
+      f"color: {T[color_key]}; font-size: 11px; padding: 0 6px;"
+    )
+    description = detail.strip() or text
+    label.setToolTip(description)
+    label.setAccessibleDescription(description)
+    self.status_msg.emit(description[:80])
+
+
   def _run_cmd(self, cmd: str, callback, apply_context: bool = True, on_error=None, sudo_user=None):
     if not self.ssh:
+      self._set_request_status("error", "Connect to a Kubernetes host before running commands")
       return
     if apply_context:
       cmd = self._apply_context_to_command(cmd)
@@ -540,27 +607,41 @@ class KubernetesCoreMixin:
     started = time.monotonic()
     self._active_command_count = getattr(self, "_active_command_count", 0) + 1
     self.progress.show()
-    worker = (
-      self.kubernetes_service.create_worker(
-        None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
-      )
-      if self.kubernetes_service is not None
-      else CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
-    )
-
+    self.progress.setToolTip(f"Running Kubernetes request: {operation}")
+    refresh_btn = getattr(self, "refresh_btn", None)
+    if refresh_btn is not None:
+      refresh_btn.setEnabled(False)
+    self._set_request_status("working", f"Running Kubernetes request: {operation}")
     def release_progress():
       self._active_command_count = max(0, getattr(self, "_active_command_count", 1) - 1)
       if self._active_command_count == 0:
         self.progress.hide()
+        self.progress.setToolTip("No Kubernetes request is running")
+        if refresh_btn is not None:
+          refresh_btn.setEnabled(True)
+      return self._active_command_count
 
     def on_done(out):
       callback_started = time.monotonic()
+      callback_error = None
+      output_error = command_output_has_error(out)
       try:
         callback(out)
+      except Exception as exc:
+        callback_error = exc
+        _LOG.exception("kubernetes_response_handler_failed operation=%s", operation)
+        self._log(f"[error] Unable to process Kubernetes response: {exc}")
       finally:
         callback_ms = (time.monotonic() - callback_started) * 1000.0
         total_ms = (time.monotonic() - started) * 1000.0
-        release_progress()
+        remaining = release_progress()
+        if remaining == 0:
+          if callback_error is not None:
+            self._set_request_status("error", f"Could not process {operation}: {callback_error}")
+          elif output_error:
+            self._set_request_status("error", f"Kubernetes reported an error during {operation}")
+          else:
+            self._set_request_status("success", f"Kubernetes request completed: {operation}")
         _LOG.debug(
           "kubernetes_request_complete operation=%s request_and_dispatch_ms=%.1f callback_ms=%.1f",
           operation, total_ms, callback_ms,
@@ -576,16 +657,34 @@ class KubernetesCoreMixin:
           on_error(e)
       finally:
         total_ms = (time.monotonic() - started) * 1000.0
-        release_progress()
+        remaining = release_progress()
+        if remaining == 0:
+          self._set_request_status("error", f"Kubernetes request failed: {e}")
         _LOG.debug(
           "kubernetes_request_failed operation=%s elapsed_ms=%.1f",
           operation, total_ms,
         )
 
-    worker.done.connect(on_done)
-    worker.error.connect(handle_error)
-    track_worker(self._workers, worker)
-    worker.start()
+
+    try:
+      worker = (
+        self.kubernetes_service.create_worker(
+          None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
+        )
+        if self.kubernetes_service is not None
+        else CommandWorker(self.ssh, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None))
+      )
+  
+      worker.done.connect(on_done)
+      worker.error.connect(handle_error)
+      track_worker(self._workers, worker)
+      worker.start()
+    except Exception as exc:
+      remaining = release_progress()
+      self._log(f"[error] Unable to start Kubernetes request: {exc}")
+      if remaining == 0:
+        self._set_request_status("error", f"Could not start {operation}: {exc}")
+      _LOG.exception("kubernetes_request_start_failed operation=%s", operation)
 
 
   def _log(self, text: str):

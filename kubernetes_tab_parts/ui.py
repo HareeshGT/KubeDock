@@ -1,4 +1,5 @@
 from .common import *
+from ui_kit import pill_qss
 
 
 class KubernetesUiMixin:
@@ -108,6 +109,30 @@ class KubernetesUiMixin:
     self.health_lbl = QLabel("● Cluster")
     self.health_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
     cb.addWidget(self.health_lbl)
+
+    self.request_status_lbl = QLabel("Ready")
+    self.request_status_lbl.setObjectName("k8s_request_status")
+    self.request_status_lbl.setAccessibleName("Kubernetes request status")
+    self.request_status_lbl.setToolTip("No Kubernetes request is currently running")
+    self.request_status_lbl.setStyleSheet(
+      f"color: {T['TEXT_MUTED']}; font-size: 11px; padding: 0 6px;"
+    )
+    cb.addWidget(self.request_status_lbl)
+
+    # Compact navigation context: current context → namespace → resource.
+    self.navigation_path_lbl = QLabel("Context: —  ›  Namespace: —  ›  Pods")
+    self.navigation_path_lbl.setObjectName("k8s_navigation_path")
+    self.navigation_path_lbl.setMinimumWidth(150)
+    self.navigation_path_lbl.setMaximumWidth(460)
+    self.navigation_path_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    self.navigation_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    self.navigation_path_lbl.setStyleSheet(
+      f"color: {T['TEXT_DIM']}; font-size: 11px; padding-left: 8px; "
+      f"border-left: 1px solid {T['BORDER']};"
+    )
+    self.navigation_path_lbl.setAccessibleName("Kubernetes navigation path")
+    self.navigation_path_lbl.setToolTip("Current context, namespace and selected resource")
+    cb.addWidget(self.navigation_path_lbl)
     cb.addStretch()
 
     # self.kubectl_inp = QLineEdit()
@@ -125,6 +150,8 @@ class KubernetesUiMixin:
     self.progress = QProgressBar()
     self.progress.setFixedHeight(3)
     self.progress.setRange(0, 0)
+    self.progress.setAccessibleName("Kubernetes request in progress")
+    self.progress.setToolTip("A Kubernetes request is running")
     self.progress.hide()
     root.addWidget(self.progress)
 
@@ -163,7 +190,7 @@ class KubernetesUiMixin:
 
     self.sub_tabs = QTabWidget()
     self.sub_tabs.setTabPosition(QTabWidget.North)
-    self.sub_tabs.currentChanged.connect(self._refresh_current_tab)
+    self.sub_tabs.currentChanged.connect(self._on_subtab_changed)
     root.addWidget(self.sub_tabs)
 
     self._build_pods_tab()
@@ -177,6 +204,7 @@ class KubernetesUiMixin:
     self._build_storage_tab()
     self._build_config_tab()
     self._build_events_tab()
+    self._build_nodes_tab()
     self._build_tunnels_tab()
     self._build_terminal_tab()
     self._build_ai_ops_tab()
@@ -201,7 +229,30 @@ class KubernetesUiMixin:
     tb.addWidget(self.pod_filter)
 
     self.pod_count_lbl = QLabel("")
+    self.pod_count_lbl.setAccessibleName("Running pod count")
     tb.addWidget(self.pod_count_lbl)
+
+    # Compact live summary; state names supplement color for accessibility.
+    self.pod_health_summary = QWidget()
+    self.pod_health_summary.setObjectName("pod_health_summary")
+    summary_row = QHBoxLayout(self.pod_health_summary)
+    summary_row.setContentsMargins(0, 0, 0, 0)
+    summary_row.setSpacing(6)
+    for attr, label, key in (
+      ("pod_healthy_lbl", "0 healthy", "SUCCESS"),
+      ("pod_warning_lbl", "0 attention", "WARNING"),
+      ("pod_critical_lbl", "0 critical", "DANGER"),
+      ("pod_unknown_lbl", "0 unknown", "TEXT_MUTED"),
+    ):
+      badge = QLabel(label)
+      badge.setStyleSheet(pill_qss(T[key]))
+      badge.setAccessibleName(label)
+      badge.setToolTip(label)
+      setattr(self, attr, badge)
+      summary_row.addWidget(badge)
+    self.pod_health_summary.setAccessibleName("Pod health summary")
+    self.pod_health_summary.hide()
+    tb.addWidget(self.pod_health_summary)
     tb.addStretch()
 
     # Safe, frequent actions live inside one clustered pill; the
@@ -1156,6 +1207,56 @@ class KubernetesUiMixin:
     )
     lay.addWidget(self.event_list)
     add_icon_tab(self.sub_tabs, w, " Events")
+
+
+  def _build_nodes_tab(self):
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+
+    toolbar = QHBoxLayout()
+    toolbar.setContentsMargins(10, 6, 10, 6)
+    toolbar.setSpacing(8)
+    self.node_filter = QLineEdit()
+    self.node_filter.setPlaceholderText(" Filter nodes…")
+    self.node_filter.setMaximumWidth(220)
+    self.node_filter.textChanged.connect(self._filter_nodes)
+    toolbar.addWidget(self.node_filter)
+
+    self.node_count_lbl = QLabel("Node inventory not loaded")
+    self.node_count_lbl.setAccessibleName("Kubernetes node health summary")
+    toolbar.addWidget(self.node_count_lbl)
+    toolbar.addStretch()
+
+    self.node_refresh_btn = self._toolbar_btn(" Refresh", tooltip="Refresh node health and resource usage")
+    self.node_refresh_btn.clicked.connect(self._load_nodes)
+    toolbar.addWidget(self.node_refresh_btn)
+
+    toolbar_widget = QWidget()
+    toolbar_widget.setStyleSheet(f"background: {T['BG_PANEL']}; border-bottom: 1px solid {T['BORDER']};")
+    toolbar_widget.setLayout(toolbar)
+    lay.addWidget(toolbar_widget)
+
+    self.node_tree = QTreeWidget()
+    self.node_tree.setColumnCount(6)
+    self.node_tree.setHeaderLabels(["Node", "Health", "Role", "CPU usage", "Memory usage", "Kubelet"])
+    self.node_tree.setRootIsDecorated(False)
+    self.node_tree.setAlternatingRowColors(True)
+    self.node_tree.setUniformRowHeights(True)
+    self.node_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+    self.node_tree.setStyleSheet(
+      "QTreeWidget { background: transparent; border: none; padding: 8px; }"
+      f"QTreeWidget::item {{ padding: 7px 4px; border-bottom: 1px solid {T['BORDER']}; }}"
+    )
+    header = self.node_tree.header()
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(0, QHeaderView.Stretch)
+    for column in range(1, 6):
+      header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+    self.node_tree.setAccessibleName("Kubernetes nodes and resource utilization")
+    lay.addWidget(self.node_tree)
+    add_icon_tab(self.sub_tabs, w, " Nodes")
 
 
   def _build_terminal_tab(self):

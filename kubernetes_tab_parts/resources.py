@@ -1,4 +1,6 @@
 from .common import *
+from k8s_visuals import summarize_pod_statuses, tone_color_key, utilization_tone
+from k8s_node_metrics import build_node_inventory_command, split_node_inventory_output, parse_node_inventory
 import logging
 from k8s_metrics import (
   build_pod_metrics, build_pod_list_command, build_pod_metrics_command,
@@ -157,11 +159,106 @@ class KubernetesResourcesMixin:
         node_resources))
 
 
+  # ── Nodes and cluster resource utilization ─────────────────
+
+  def _load_nodes(self):
+    if not self.ssh:
+      return
+    self.node_count_lbl.setText("Loading node inventory…")
+    command = build_node_inventory_command(self._context_flag())
+    self._run_cmd(
+      command,
+      self._populate_nodes,
+      apply_context=False,
+    )
+
+
+  def _populate_nodes(self, output: str):
+    nodes_json, top_nodes = split_node_inventory_output(output)
+    snapshots = parse_node_inventory(nodes_json, top_nodes)
+    self.node_tree.clear()
+
+    if not snapshots:
+      self.node_count_lbl.setText("No node inventory returned")
+      self.node_count_lbl.setToolTip(
+        (output or "kubectl returned no node data")[:1200]
+      )
+      return
+
+    counts = {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}
+    tone_colors = {
+      tone: T[tone_color_key(tone)]
+      for tone in ("healthy", "warning", "critical", "unknown")
+    }
+    for node in snapshots:
+      counts[node.tone] += 1
+      item = QTreeWidgetItem([
+        node.name, node.status, node.roles, "", "", node.version,
+      ])
+      item.setToolTip(0, node.tooltip)
+      item.setToolTip(1, node.tooltip)
+      item.setForeground(1, QColor(tone_colors[node.tone]))
+      item.setData(0, Qt.UserRole, node)
+      self.node_tree.addTopLevelItem(item)
+
+      for column, usage, capacity, percent, kind in (
+        (3, node.cpu_usage, node.cpu_capacity, node.cpu_percent, "CPU"),
+        (4, node.memory_usage, node.memory_capacity, node.memory_percent, "Memory"),
+      ):
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setTextVisible(True)
+        bar.setMinimumWidth(190)
+        if percent is None:
+          bar.setValue(0)
+          bar.setFormat(f"{kind}: N/A")
+          bar_color = T[tone_color_key(utilization_tone(None))]
+        else:
+          bar.setValue(min(100, percent))
+          bar.setFormat(f"{usage} / {capacity} · {percent}%")
+          bar_color = T[tone_color_key(utilization_tone(percent))]
+        bar.setStyleSheet(
+          f"QProgressBar {{ color: {T['TEXT_PRIMARY']}; background: {T['BG_ITEM']}; "
+          f"border: 1px solid {T['BORDER']}; border-radius: 5px; "
+          "text-align: center; padding: 1px; }"
+          f"QProgressBar::chunk {{ background: {bar_color}; border-radius: 4px; }}"
+        )
+        bar.setAccessibleName(f"{node.name} {kind} utilization")
+        bar.setAccessibleDescription(node.tooltip)
+        bar.setToolTip(node.tooltip)
+        self.node_tree.setItemWidget(item, column, bar)
+
+    total = len(snapshots)
+    self.node_count_lbl.setText(
+      f"{total} nodes  ·  {counts['healthy']} ready  ·  "
+      f"{counts['warning']} attention  ·  {counts['critical']} not ready  ·  "
+      f"{counts['unknown']} unknown"
+    )
+    self.node_count_lbl.setToolTip(
+      "Readiness is derived from Kubernetes node conditions. "
+      "CPU and memory bars use node allocatable capacity when available; "
+      "missing metrics are shown as N/A."
+    )
+    self._filter_nodes(self.node_filter.text())
+
+
+  def _filter_nodes(self, text: str):
+    query = (text or "").strip().casefold()
+    for index in range(self.node_tree.topLevelItemCount()):
+      item = self.node_tree.topLevelItem(index)
+      node = item.data(0, Qt.UserRole)
+      searchable = " ".join((
+        node.name, node.status, node.roles, node.version,
+      )).casefold()
+      item.setHidden(query not in searchable)
+
+
   def _populate_pods(self, out: str):
     self.pod_list.clear()
     all_ns = (self._current_ns == "(all namespaces)")
     total  = 0
     running = 0
+    pod_statuses = []
     # Parse each section of the shared snapshot once. No kubectl calls are
     # performed within the card loop; all cards reuse the same mappings.
     (pods_text, _top_text, _limits_text,
@@ -212,6 +309,7 @@ class KubernetesResourcesMixin:
         self._pod_ai_card = card
         card.set_ai_busy(True)
       total += 1
+      pod_statuses.append(meta)
       if "running" in status.lower():
         running += 1
     if total == 0:
@@ -223,6 +321,21 @@ class KubernetesResourcesMixin:
     else:
       color_key = "WARNING"
     self._set_count_badge(self.pod_count_lbl, f"{running}/{total} running", color_key)
+    summary = summarize_pod_statuses(pod_statuses)
+    for attr, state, label in (
+      ("pod_healthy_lbl", "healthy", "healthy"),
+      ("pod_warning_lbl", "warning", "attention"),
+      ("pod_critical_lbl", "critical", "critical"),
+      ("pod_unknown_lbl", "unknown", "unknown"),
+    ):
+      badge = getattr(self, attr, None)
+      if badge is not None:
+        count = summary[state]
+        badge.setText(f"● {count} {label}")
+        badge.setAccessibleName(f"{count} {label} pods")
+        badge.setToolTip(f"{count} pods: {label}")
+    if hasattr(self, "pod_health_summary"):
+      self.pod_health_summary.setVisible(total > 0)
     # Refreshing rebuilds every row from scratch, which would otherwise
     # silently show everything again even though the filter box still
     # has text in it — reapply whatever's currently typed there.
@@ -268,6 +381,7 @@ class KubernetesResourcesMixin:
       w = self.pod_list.itemWidget(current)
       if w:
         w.set_selected(True)
+    self._update_navigation_context()
 
 
   def _pod_logs(self):
