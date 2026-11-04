@@ -138,6 +138,12 @@ class AgentRuntime:
                                 "The ConfigMap tool returned an invalid evidence payload. "
                                 "The value is unverified; I will not guess."
                             )
+                elif results and not any(item.status == "success" for item in results):
+                    answer = (
+                        "I couldn't verify the requested cluster information because none of the "
+                        "Kubernetes tool checks completed successfully. I won't infer or guess the result. "
+                        "Please check the selected context, namespace, permissions, and resource details."
+                    )
                 if not answer:
                     emit("error", "Provider returned an empty response.")
                     return AgentResult(
