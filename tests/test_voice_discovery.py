@@ -102,7 +102,7 @@ def test_voice_combo_shows_default_before_background_discovery(monkeypatch):
         def start(self):
             self.started = True
 
-    class DummyWidget:
+    class DummyWidget(voice.K8sAIOpsVoiceMixin):
         def __init__(self):
             self.voice_combo = FakeCombo()
             self._voice_id = ""
