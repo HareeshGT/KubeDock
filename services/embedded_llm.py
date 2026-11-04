@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import sys
+import threading
 import urllib.request
 
 MAX_MODEL_BYTES = 500 * 1024 * 1024
@@ -14,6 +15,10 @@ DOWNLOAD_TIMEOUT_SECONDS = 30
 
 MODEL_DIRECTORY_NAME = "models"
 DEFAULT_MODEL_FILENAME = "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+DEFAULT_MODEL_SHA256 = "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+_ENGINE_LOCK = threading.Lock()
+_ENGINE = None
+_ENGINE_PATH = None
 
 
 def bundled_model_directory() -> Path:
@@ -121,7 +126,9 @@ def download_model(spec: ModelSpec, cache_dir: Path | None = None, *, progress=N
 
 
 def generate(model_path: Path, prompt: str, *, max_tokens: int = 1024) -> str:
-    """Use the llama_cpp module bundled by the KubeDock application build."""
+    """Run GGUF inference in-process, loading the verified model once per app."""
+    global _ENGINE, _ENGINE_PATH
+    model_path = Path(model_path)
     try:
         from llama_cpp import Llama
     except ImportError as exc:
@@ -130,12 +137,31 @@ def generate(model_path: Path, prompt: str, *, max_tokens: int = 1024) -> str:
             "Reinstall a build that includes Embedded Local AI."
         ) from exc
     try:
-        engine = Llama(model_path=str(model_path), n_ctx=4096,
-                       n_threads=max(1, os.cpu_count() or 1), verbose=False)
-        result = engine.create_chat_completion(
-            messages=[{"role": "user", "content": str(prompt)}],
-            max_tokens=max(1, min(int(max_tokens), 2048)), temperature=0.2,
-        )
+        with _ENGINE_LOCK:
+            resolved_path = str(model_path.resolve())
+            if _ENGINE is None or _ENGINE_PATH != resolved_path:
+                if not model_path.is_file():
+                    raise EmbeddedModelError("The embedded model file is missing from KubeDock resources.")
+                if model_path.stat().st_size > MAX_MODEL_BYTES:
+                    raise EmbeddedModelError("The embedded model exceeds the 500 MiB safety limit.")
+                digest = hashlib.sha256()
+                with model_path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(CHUNK_BYTES), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != DEFAULT_MODEL_SHA256:
+                    raise EmbeddedModelError("The embedded model failed SHA-256 verification and will not be loaded.")
+                _ENGINE = Llama(
+                    model_path=resolved_path,
+                    n_ctx=4096,
+                    n_threads=max(1, os.cpu_count() or 1),
+                    verbose=False,
+                )
+                _ENGINE_PATH = resolved_path
+            result = _ENGINE.create_chat_completion(
+                messages=[{"role": "user", "content": str(prompt)}],
+                max_tokens=max(1, min(int(max_tokens), 2048)),
+                temperature=0.2,
+            )
         answer = result["choices"][0]["message"]["content"]
         if not isinstance(answer, str) or not answer.strip():
             raise EmbeddedModelError("The embedded model returned an empty response.")
