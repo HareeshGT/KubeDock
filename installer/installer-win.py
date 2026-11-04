@@ -113,7 +113,7 @@ def offer_embedded_model_download() -> None:
         os.replace(temporary, destination)
         UI.clear_progress()
         UI.success(f"Verified Embedded AI model saved to: {destination}")
-        UI.info("The model download is complete; the app must select Embedded Local Model to use it.")
+        UI.info("The model is downloaded and verified. Embedded Local Model provider wiring is still in progress.")
     except Exception as exc:
         UI.clear_progress()
         try:

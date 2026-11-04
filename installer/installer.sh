@@ -280,7 +280,7 @@ offer_embedded_model_download() {
   fi
   mv "$temporary" "$destination"
   ui_success "Verified Embedded AI model saved to: $destination"
-  ui_info "The model is downloaded; select Embedded Local Model in KubeDock to use it."
+  ui_info "The model is downloaded and verified. Embedded Local Model provider wiring is still in progress."
 }
 
 install_prebuilt_bundle() {
