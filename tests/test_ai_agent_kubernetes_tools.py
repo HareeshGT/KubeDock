@@ -102,7 +102,7 @@ class KubernetesToolTests(unittest.TestCase):
 
 
     def test_configmap_key_tool_reads_only_the_requested_key(self):
-        self.commands.output = '{"data":{"RECORDS_READY_FOR_PROCESSING_QUEUE_NAME":"queue-ready","OTHER":"not-returned"}}'
+        self.commands.output = "queue-ready"
         result = self.registry.get("k8s_get_configmap_key").handler({
             "namespace": "dev-cc", "configmap": "cow-env",
             "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
@@ -113,16 +113,18 @@ class KubernetesToolTests(unittest.TestCase):
             "value": "queue-ready",
         })
         command, _ = self.commands.commands[-1]
-        self.assertIn("get configmap/cow-env -o json", command)
+        self.assertIn("get configmap/cow-env", command)
+        self.assertIn("RECORDS_READY_FOR_PROCESSING_QUEUE_NAME", command)
+        self.assertNotIn("OTHER", command)
         self.assertNotIn("get pods", command)
 
-    def test_configmap_key_tool_reports_missing_key_without_guessing(self):
-        self.commands.output = '{"data":{"OTHER":"value"}}'
-        result = self.registry.get("k8s_get_configmap_key").handler({
-            "namespace": "dev-cc", "configmap": "cow-env", "key": "MISSING_KEY",
-        })
-        self.assertFalse(result["found"])
-        self.assertIn("not present", result["reason"])
+    def test_configmap_key_tool_treats_missing_key_as_unverified(self):
+        self.commands.code = 1
+        self.commands.error = 'error: error executing jsonpath: no entry for key "MISSING_KEY"'
+        with self.assertRaisesRegex(RuntimeError, "no entry for key"):
+            self.registry.get("k8s_get_configmap_key").handler({
+                "namespace": "dev-cc", "configmap": "cow-env", "key": "MISSING_KEY",
+            })
 
     def test_configmap_key_tool_rejects_invalid_key_before_remote_execution(self):
         with self.assertRaises(ValueError):
