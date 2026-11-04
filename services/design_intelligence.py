@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -23,6 +24,13 @@ class DesignIntelligenceService:
     def __init__(self, base_url: str | None = None, timeout_seconds: float = 8.0):
         configured = base_url if base_url is not None else os.getenv("KUBEDOCK_DIS_URL", "")
         self.base_url = configured.strip().rstrip("/")
+        if self.base_url:
+            parsed = urlsplit(self.base_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError("DIS URL must be an HTTP(S) base URL without credentials, query, or fragment.")
+            local_hosts = {"localhost", "127.0.0.1", "::1"}
+            if parsed.scheme != "https" and parsed.hostname not in local_hosts:
+                raise ValueError("Remote DIS endpoints must use HTTPS; HTTP is allowed only for localhost.")
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 60.0))
 
     @property
