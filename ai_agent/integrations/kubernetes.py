@@ -9,6 +9,7 @@ from ..models import ToolSpec
 
 _NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
 _NAMESPACE_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
+_CONTEXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+= -]{0,252}$")
 
 
 def _validate_namespace(value):
@@ -30,8 +31,13 @@ def _validate_name(value, label="resource"):
 def _base(context, namespace=None):
     """Build a safely quoted kubectl prefix for a validated context/namespace."""
     context = str(context or "")
-    if any(unicodedata.category(char) == "Cc" for char in context):
-        raise ValueError("The selected Kubernetes context contains control characters.")
+    if context and (
+        not _CONTEXT_RE.fullmatch(context)
+        or any(unicodedata.category(char) == "Cc" for char in context)
+    ):
+        raise ValueError(
+            "The selected Kubernetes context contains unsupported characters."
+        )
     command = "kubectl"
     if context:
         command += " --context=" + shlex.quote(context)
