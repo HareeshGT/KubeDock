@@ -1317,8 +1317,9 @@ PYI_ARGS=(
   --hidden-import=webapp
   --hidden-import=webapp.server
 
-  # AI provider support
+  # AI provider support and in-process GGUF inference
   --hidden-import=ai_assist
+  --collect-all=llama_cpp
 
   # Kubernetes Ops Mind
   --hidden-import=k8s_ai_ops
