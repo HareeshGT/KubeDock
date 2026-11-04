@@ -57,11 +57,11 @@ class KubernetesToolTests(unittest.TestCase):
             self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 500})
         self.assertEqual(self.commands.commands, [])
 
-    def test_success_with_empty_stdout_preserves_stderr(self):
+    def test_success_with_empty_stdout_and_stderr_is_unverified(self):
         self.commands.output = "  "
         self.commands.error = "Warning: unable to retrieve optional metadata"
-        result = self.registry.get("k8s_list_nodes").handler({})
-        self.assertIn("unable to retrieve optional metadata", result)
+        with self.assertRaisesRegex(RuntimeError, "unable to retrieve optional metadata"):
+            self.registry.get("k8s_list_nodes").handler({})
 
     def test_failed_command_prefers_stderr(self):
         self.commands.code = 1
