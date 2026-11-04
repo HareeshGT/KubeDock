@@ -97,6 +97,32 @@ class AIContextSecurityTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(answer, "Local response")
 
+    def test_new_install_defaults_to_embedded_but_saved_provider_is_preserved(self):
+        with patch("ai_assist.load_settings", return_value={"ai": {}}):
+            self.assertEqual(ai_assist.get_ai_settings()["provider"], "embedded")
+        with patch("ai_assist.load_settings", return_value={"ai": {
+            "provider": "gemini", "api_keys": {"gemini": "saved-key"},
+            "models": {"gemini": "gemini-saved-model"},
+        }}):
+            settings = ai_assist.get_ai_settings()
+        self.assertEqual(settings["provider"], "gemini")
+        self.assertEqual(settings["models"]["gemini"], "gemini-saved-model")
+
+    def test_embedded_provider_is_allowed_without_key_in_local_profile(self):
+        with patch("ai_assist.get_ai_settings", return_value={
+            "task_profiles": {"local_private": {
+                "provider": "embedded", "model_id": "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+            }},
+            "api_keys": {}, "models": {},
+        }):
+            provider, key, model, error = ai_assist._task_provider_selection(
+                "local_private", "embedded", "", "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+            )
+        self.assertEqual(provider, "embedded")
+        self.assertEqual(key, "")
+        self.assertEqual(model, "SmolLM2-360M-Instruct-Q4_K_M.gguf")
+        self.assertIsNone(error)
+
     def test_embedded_provider_runs_python_inference_without_api_key_or_network(self):
         with patch("ai_assist.get_ai_settings", return_value={"cloud_ai_enabled": False}), \
              patch("services.embedded_llm.generate", return_value="Local answer") as generate, \
