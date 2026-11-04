@@ -648,7 +648,8 @@ def get_ai_settings() -> dict:
     # New installs default to on-device inference; preserve saved provider choices.
     provider = stored.get("provider")
     if not provider:
-        provider = "anthropic" if legacy_key or any(api_keys.values()) else DEFAULT_PROVIDER
+        configured_provider = next((pid for pid, key in api_keys.items() if pid in PROVIDERS and key), None)
+        provider = "anthropic" if legacy_key else (configured_provider or DEFAULT_PROVIDER)
     if provider not in PROVIDERS:
         provider = DEFAULT_PROVIDER
 
