@@ -20,6 +20,7 @@ from themes import T
 from ui_kit import pill_qss, chip_qss, RADIUS_CARD
 from utils import monospace_font
 from k8s_metrics import color_key, indicator_text, unavailable_reading
+from k8s_visuals import resource_status_tone
 
 
 def _hex_to_rgb(h: str) -> str:
@@ -27,15 +28,14 @@ def _hex_to_rgb(h: str) -> str:
   return f"{int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)}"
 
 
-def _status_color_key(status: str) -> str:
-  s = (status or "").lower()
-  if "running" in s or "completed" in s:
-    return "SUCCESS"
-  if any(x in s for x in ("pending", "init", "creating", "terminating")):
-    return "WARNING"
-  if any(x in s for x in ("error", "crash", "fail", "evict", "unknown")):
-    return "DANGER"
-  return "TEXT_MUTED"
+def _status_color_key(status: str, restarts=0) -> str:
+  """Map Kubernetes phases/reasons to the active theme's semantic colors."""
+  return {
+    "healthy": "SUCCESS",
+    "warning": "WARNING",
+    "critical": "DANGER",
+    "unknown": "TEXT_MUTED",
+  }[resource_status_tone(status, restarts)]
 
 
 def _pill(text: str, color_key: str, min_text: str = "") -> QLabel:
@@ -46,6 +46,8 @@ def _pill(text: str, color_key: str, min_text: str = "") -> QLabel:
   color = T.get(color_key, T["TEXT_MUTED"])
   lbl = QLabel(text)
   lbl.setStyleSheet(pill_qss(color))
+  lbl.setAccessibleName(text)
+  lbl.setAccessibleDescription(f"Kubernetes resource status: {text}")
   if min_text:
     f = QFont(lbl.font())
     f.setPixelSize(11)
@@ -152,6 +154,8 @@ class _CardBase(QFrame):
     self._hovered = False
     self.setFixedHeight(self.CARD_HEIGHT)
     self.setCursor(Qt.PointingHandCursor)
+    self.setFocusPolicy(Qt.StrongFocus)
+    self.setAccessibleName("Kubernetes resource card")
     self._apply_style()
 
   def _apply_style(self):
@@ -168,6 +172,7 @@ class _CardBase(QFrame):
       f"QFrame#k8s_card {{ background: {bg}; border-radius: {RADIUS_CARD}px; "
       f"border-top: 1px solid {border}; border-right: 1px solid {border}; "
       f"border-bottom: 1px solid {border}; border-left: 3px solid {self._accent}; }}"
+      f"QFrame#k8s_card:focus {{ border: 2px solid {T['ACCENT']}; }}"
     )
 
   def set_selected(self, selected: bool):
@@ -238,7 +243,9 @@ class PodCardWidget(_CardBase):
       top.addWidget(_pill(f"Ready {ready}", "SUCCESS" if ready_ok else "WARNING", "Ready 9/9"))
 
     status = meta.get("status", "") or "Unknown"
-    top.addWidget(_pill(status, _status_color_key(status), "Completed"))
+    status_badge = _pill(status, _status_color_key(status, meta.get("restarts")), "Completed")
+    status_badge.setToolTip(f"Pod phase: {status}. Restart count: {meta.get('restarts', '0')}.")
+    top.addWidget(status_badge)
 
     self._ai_btn = None
     if _pod_in_trouble(status, meta.get("restarts")):
