@@ -109,6 +109,21 @@ class KubernetesUiMixin:
     self.health_lbl = QLabel("● Cluster")
     self.health_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
     cb.addWidget(self.health_lbl)
+
+    # Compact navigation context: current context → namespace → resource.
+    self.navigation_path_lbl = QLabel("Context: —  ›  Namespace: —  ›  Pods")
+    self.navigation_path_lbl.setObjectName("k8s_navigation_path")
+    self.navigation_path_lbl.setMinimumWidth(150)
+    self.navigation_path_lbl.setMaximumWidth(460)
+    self.navigation_path_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    self.navigation_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    self.navigation_path_lbl.setStyleSheet(
+      f"color: {T['TEXT_DIM']}; font-size: 11px; padding-left: 8px; "
+      f"border-left: 1px solid {T['BORDER']};"
+    )
+    self.navigation_path_lbl.setAccessibleName("Kubernetes navigation path")
+    self.navigation_path_lbl.setToolTip("Current context, namespace and selected resource")
+    cb.addWidget(self.navigation_path_lbl)
     cb.addStretch()
 
     # self.kubectl_inp = QLineEdit()
@@ -164,7 +179,7 @@ class KubernetesUiMixin:
 
     self.sub_tabs = QTabWidget()
     self.sub_tabs.setTabPosition(QTabWidget.North)
-    self.sub_tabs.currentChanged.connect(self._refresh_current_tab)
+    self.sub_tabs.currentChanged.connect(self._on_subtab_changed)
     root.addWidget(self.sub_tabs)
 
     self._build_pods_tab()
