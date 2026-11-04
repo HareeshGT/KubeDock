@@ -377,7 +377,7 @@ class KubernetesCoreMixin:
     self.pod_count_lbl.setStyleSheet("")
     if hasattr(self, "pod_health_summary"):
       self.pod_health_summary.hide()
-      for attr in ("pod_healthy_lbl", "pod_warning_lbl", "pod_critical_lbl"):
+      for attr in ("pod_healthy_lbl", "pod_warning_lbl", "pod_critical_lbl", "pod_unknown_lbl"):
         badge = getattr(self, attr, None)
         if badge is not None:
           badge.setText("0")
