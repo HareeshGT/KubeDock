@@ -71,6 +71,14 @@ class UIMixin:
       tb.setContentsMargins(8, 0, 12, 0)
       tb.setSpacing(3)
 
+      fm_tb_widget = QWidget()
+      fm_tb_widget.setObjectName("fileManagerToolbar")
+      fm_tb_widget.setFixedHeight(42)
+      fm_tb = QHBoxLayout(fm_tb_widget)
+      fm_tb.setContentsMargins(8, 0, 8, 0)
+      fm_tb.setSpacing(3)
+      self._fm_toolbar = fm_tb_widget
+
       def _tbtn(text, tooltip="", checkable=False, width=None):
         b = QPushButton()
         apply_text_icon(b, text)
