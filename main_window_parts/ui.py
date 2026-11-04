@@ -250,6 +250,7 @@ class UIMixin:
       right_layout.setContentsMargins(0, 0, 0, 0)
       right_layout.setSpacing(0)
       right_layout.addWidget(tb_widget)
+      right_layout.addWidget(fm_tb_widget)
       right_layout.addWidget(self.main_tabs, 1)
 
       root_widget = QWidget()
@@ -588,6 +589,7 @@ class UIMixin:
       self._sync_nav_rail()
 
       fm_mode = (idx == 0)
+      self._fm_toolbar.setVisible(fm_mode)
       for b in [self.act_back, self.act_forward, self.act_up, self.act_refresh]:
         b.setVisible(fm_mode)
       self.addr_bar.setVisible(fm_mode)
