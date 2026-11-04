@@ -1444,11 +1444,11 @@ class AIIntelligenceDialog(QDialog):
         task_profile = self.incident_profile_combo.currentData() or "deep_diagnosis"
         assignment = settings.get("task_profiles", {}).get(task_profile, {})
         provider = assignment.get("provider") or settings["provider"]
-        if provider != "ollama":
+        if provider not in ai_assist.LOCAL_PROVIDER_IDS:
             if not settings.get("cloud_ai_enabled", True):
                 QMessageBox.information(
                     self, "Cloud AI is blocked",
-                    "Local-only mode is enabled. Select Local / Private (Ollama) to analyze this evidence."
+                    "Local-only mode is enabled. Select Embedded Local AI or Ollama in the Local / Private profile to analyze this evidence."
                 )
                 return
             if not self.incident_cloud_consent_chk.isChecked():
