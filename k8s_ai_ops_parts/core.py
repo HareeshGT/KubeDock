@@ -865,6 +865,52 @@ _FOLLOWUP_FILLER = {"the", "one", "please", "alone", "only", "just", "again"} | 
 _SCOPE_WORDS = {"in", "from", "namespace", "ns", "all", "every", "everything", "and", "or", "both"}
 
 
+
+_SCALE_UNDO_REQUEST_RE = re.compile(
+  r"(?:please\s+)?(?:revert\s+(?:it|that|the\s+last\s+scale)|"
+  r"undo\s+(?:it|that|the\s+last\s+scale)|"
+  r"scale\s+it\s+back|restore\s+(?:the\s+)?(?:previous|prior)\s+replicas)[\s.!]*",
+  re.IGNORECASE,
+)
+
+
+def resolve_followup_scale_undo(request: str, history: list, kube_context: str = ""):
+  """Resolve an explicit scale undo against the latest successful scale in this cluster.
+
+  The target identity and previous replica count come only from persisted operation
+  history. No AI-generated resource name or namespace is accepted for this shortcut.
+  """
+  if not _SCALE_UNDO_REQUEST_RE.fullmatch(str(request or "").strip()):
+    return None
+
+  for row in reversed(history or []):
+    if not isinstance(row, dict) or row.get("status") != "success" or row.get("action") != "scale":
+      continue
+    if kube_context and row.get("context") and row.get("context") != kube_context:
+      continue
+    previous = row.get("previous_replicas")
+    resource = row.get("resource")
+    name = row.get("name")
+    namespace = row.get("namespace")
+    if previous is None or not resource or not name or not namespace:
+      return {"clarify": "I found the previous scale operation, but its original replica count or exact target was not recorded. Please specify the deployment and target replica count."}
+    try:
+      replicas = int(previous)
+      if str(previous).strip() != str(replicas) or not 0 <= replicas <= MAX_REPLICAS:
+        raise ValueError("invalid previous replica count")
+      action = validate_action({
+        "action": "scale", "resource": resource, "name": name,
+        "namespace": namespace, "mode": "absolute", "replicas": replicas,
+      })
+    except (TypeError, ValueError):
+      return {"clarify": "I found the previous scale operation, but its saved target is not valid. Please specify the deployment and target replica count."}
+    return {
+      "action": action,
+      "note": f"Reverting the last successful scale: {resource} {name} in namespace {namespace} will be restored to {replicas} replica(s).",
+    }
+  return {"clarify": "I couldn't find a successful scale operation in the current Kubernetes context to revert. Please specify the deployment and target replica count."}
+
+
 def resolve_followup_delete(request: str, history: list, kube_context: str = ""):
   """Handle "delete that pod" / "delete it" / "delete that sample-pod pod"
   deterministically from the previous lookup, without asking the AI.

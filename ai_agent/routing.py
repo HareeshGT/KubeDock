@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 _MUTATING_REQUEST_RE = re.compile(
-    r"\b(delete|remove|restart|scale|patch|apply|edit|update|create|deploy|rollback|roll back|kill|terminate|drain|cordon|uncordon|resize)\b",
+    r"\b(delete|remove|restart|scale|undo|revert|restore|patch|apply|edit|update|create|deploy|rollback|roll back|kill|terminate|drain|cordon|uncordon|resize)\b",
     re.IGNORECASE,
 )
 _LEGACY_READ_REQUEST_RE = re.compile(

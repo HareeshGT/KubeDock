@@ -1,7 +1,8 @@
 import unittest
 
 from ai_incident_workflow import validate_incident_target
-from k8s_ai_ops_parts.core import validate_action
+from k8s_ai_ops_parts.core import resolve_followup_scale_undo, validate_action
+from ai_agent.routing import should_use_legacy_interpreter
 from ops_mind_investigation import (
     _parse_prometheus_range,
     build_investigation_prompt,
@@ -163,6 +164,53 @@ class OpsMindInvestigationTests(unittest.TestCase):
         )
         self.assertIn("sustained_growth", prompt)
         self.assertIn("sample_count", prompt)
+
+
+    def test_revert_it_resolves_previous_replica_count_and_exact_target(self):
+        history = [{
+            "status": "success", "action": "scale", "resource": "deployment",
+            "name": "mockmgmtservice", "namespace": "dev-cc", "context": "cn-dev-aks-cn-1-admin",
+            "replicas": 3, "previous_replicas": 1,
+        }]
+        result = resolve_followup_scale_undo("revert it", history, "cn-dev-aks-cn-1-admin")
+        self.assertIn("action", result)
+        action = result["action"]
+        self.assertEqual(action["action"], "scale")
+        self.assertEqual(action["resource"], "deployment")
+        self.assertEqual(action["name"], "mockmgmtservice")
+        self.assertEqual(action["namespace"], "dev-cc")
+        self.assertEqual(action["mode"], "absolute")
+        self.assertEqual(action["replicas"], 1)
+
+    def test_scale_undo_ignores_history_from_another_cluster(self):
+        history = [{
+            "status": "success", "action": "scale", "resource": "deployment",
+            "name": "mockmgmtservice", "namespace": "dev-cc", "context": "other-cluster",
+            "replicas": 3, "previous_replicas": 1,
+        }]
+        result = resolve_followup_scale_undo("revert it", history, "cn-dev-aks-cn-1-admin")
+        self.assertIn("clarify", result)
+
+    def test_scale_undo_uses_latest_successful_scale_not_failed_attempt(self):
+        history = [
+            {"status": "success", "action": "scale", "resource": "deployment",
+             "name": "mockmgmtservice", "namespace": "dev-cc", "context": "dev",
+             "replicas": 3, "previous_replicas": 1},
+            {"status": "failed", "action": "scale", "resource": "deployment",
+             "name": "other-service", "namespace": "dev-cc", "context": "dev",
+             "replicas": 5, "previous_replicas": 2},
+        ]
+        result = resolve_followup_scale_undo("undo that", history, "dev")
+        self.assertEqual(result["action"]["name"], "mockmgmtservice")
+        self.assertEqual(result["action"]["replicas"], 1)
+
+    def test_scale_undo_without_history_requests_clarification(self):
+        result = resolve_followup_scale_undo("revert it", [], "dev")
+        self.assertIn("clarify", result)
+
+    def test_undo_and_revert_are_routed_away_from_read_only_agent(self):
+        self.assertTrue(should_use_legacy_interpreter("revert it"))
+        self.assertTrue(should_use_legacy_interpreter("undo that"))
 
 
 if __name__ == "__main__":

@@ -186,6 +186,21 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(True)
             self._execute_action(followup['action'])
             return
+        # Resolve explicit scale undo requests deterministically from the last
+        # successful operation. This must happen before agent routing because
+        # the investigation agent intentionally exposes read-only Kubernetes tools.
+        scale_undo = resolve_followup_scale_undo(request, self._history, followup_context) if followup_context else None
+        if scale_undo is not None:
+            self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
+            if scale_undo.get('clarify'):
+                self._write_info('\\n' + scale_undo['clarify'])
+                self._speak(scale_undo['clarify'])
+                self.request_input.setFocus()
+                return
+            self._write_info('\\n' + scale_undo['note'])
+            self._set_busy(True)
+            self._execute_action(scale_undo['action'])
+            return
         # Route supported read-only questions through the multi-step agent.
         # Mutations and reads needing describe/key/investigation capabilities
         # stay on the established interpreter and its safety/verification flow.
