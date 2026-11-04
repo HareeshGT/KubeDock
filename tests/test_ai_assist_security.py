@@ -101,6 +101,11 @@ class AIContextSecurityTests(unittest.TestCase):
         with patch("ai_assist.load_settings", return_value={"ai": {}}):
             self.assertEqual(ai_assist.get_ai_settings()["provider"], "embedded")
         with patch("ai_assist.load_settings", return_value={"ai": {
+            "api_keys": {"gemini": "saved-key"},
+            "models": {"gemini": "gemini-saved-model"},
+        }}):
+            self.assertEqual(ai_assist.get_ai_settings()["provider"], "gemini")
+        with patch("ai_assist.load_settings", return_value={"ai": {
             "provider": "gemini", "api_keys": {"gemini": "saved-key"},
             "models": {"gemini": "gemini-saved-model"},
         }}):
