@@ -1241,7 +1241,7 @@ class AIIntelligenceDialog(QDialog):
             task_profile = self.incident_profile_combo.currentData() or "deep_diagnosis"
             assignment = ai_settings.get("task_profiles", {}).get(task_profile, {})
             provider = assignment.get("provider") or ai_settings["provider"]
-            if provider not in ai_assist.LOCAL_PROVIDER_IDS:
+            if ai_assist.provider_requires_api_key(provider):
                 if not ai_settings.get("cloud_ai_enabled", True):
                     QMessageBox.information(
                         self, "Cloud AI is blocked",
@@ -1444,7 +1444,7 @@ class AIIntelligenceDialog(QDialog):
         task_profile = self.incident_profile_combo.currentData() or "deep_diagnosis"
         assignment = settings.get("task_profiles", {}).get(task_profile, {})
         provider = assignment.get("provider") or settings["provider"]
-        if provider not in ai_assist.LOCAL_PROVIDER_IDS:
+        if ai_assist.provider_requires_api_key(provider):
             if not settings.get("cloud_ai_enabled", True):
                 QMessageBox.information(
                     self, "Cloud AI is blocked",
@@ -1458,7 +1458,7 @@ class AIIntelligenceDialog(QDialog):
                 )
                 return
         api_key = ai_assist.get_api_key(provider)
-        if not api_key and provider not in ai_assist.LOCAL_PROVIDER_IDS:
+        if not api_key and ai_assist.provider_requires_api_key(provider):
             QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
             return
         model = assignment.get("model_id") or ai_assist.get_model(provider)
