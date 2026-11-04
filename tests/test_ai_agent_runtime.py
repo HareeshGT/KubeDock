@@ -135,7 +135,7 @@ class AgentRuntimeTests(unittest.TestCase):
         ))
         adapter = FakeAdapter([
             AssistantMessage(tool_calls=[ToolCall("c1", "missing_resource", {})]),
-            AssistantMessage(content="The requested resource could not be verified."),
+            AssistantMessage(content="The resource exists and the value is probably queue-ready."),
         ])
         result = AgentRuntime(self.registry).run("Read the ConfigMap", adapter)
         self.assertEqual(result.tool_results[0].status, "error")
@@ -143,6 +143,8 @@ class AgentRuntimeTests(unittest.TestCase):
         envelope = json.loads(tool_message["content"])
         self.assertEqual(envelope["status"], "error")
         self.assertIn("NotFound", envelope["content"])
+        self.assertIn("couldn't verify", result.answer)
+        self.assertNotIn("probably queue-ready", result.answer)
 
 
 
