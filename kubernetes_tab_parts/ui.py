@@ -215,6 +215,7 @@ class KubernetesUiMixin:
       ("pod_healthy_lbl", "0 healthy", "SUCCESS"),
       ("pod_warning_lbl", "0 attention", "WARNING"),
       ("pod_critical_lbl", "0 critical", "DANGER"),
+      ("pod_unknown_lbl", "0 unknown", "TEXT_MUTED"),
     ):
       badge = QLabel(label)
       badge.setStyleSheet(pill_qss(T[key]))
