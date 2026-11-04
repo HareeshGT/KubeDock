@@ -502,7 +502,8 @@ class K8sAIOpsUIMixin:
         """Enable Ops Mind only when the selected provider has an API key."""
         provider = ai_assist.get_provider()
         api_key = ai_assist.get_api_key(provider)
-        allowed = bool((api_key or '').strip())
+        requires_api_key = provider not in ai_assist.LOCAL_PROVIDER_IDS
+        allowed = not requires_api_key or bool((api_key or '').strip())
         self._ai_access_allowed = allowed
         if hasattr(self, '_ai_lock_overlay') and self._ai_lock_overlay is not None:
             if allowed:
