@@ -1458,7 +1458,7 @@ class AIIntelligenceDialog(QDialog):
                 )
                 return
         api_key = ai_assist.get_api_key(provider)
-        if not api_key and provider != "ollama":
+        if not api_key and provider not in ai_assist.LOCAL_PROVIDER_IDS:
             QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
             return
         model = assignment.get("model_id") or ai_assist.get_model(provider)
