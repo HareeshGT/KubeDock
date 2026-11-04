@@ -6,7 +6,8 @@ import shlex
 from ai_assist import _redact_sensitive_text
 from ..models import ToolSpec
 
-_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$", re.I)
+_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
+_NAMESPACE_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
 _CONTEXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 
 
@@ -51,14 +52,14 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context=""):
 
     def list_pods(args):
         namespace = _validate_namespace(args["namespace"])
-        return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide", 20)
+        return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide | head -n 100", 20)
 
     def list_deployments(args):
         namespace = _validate_namespace(args["namespace"])
-        return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide", 20)
+        return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide | head -n 100", 20)
 
     def list_nodes(_args):
-        return _run(kubernetes_service, _base(selected_context) + " get nodes -o wide", 20)
+        return _run(kubernetes_service, _base(selected_context) + " get nodes -o wide | head -n 100", 20)
 
     def get_events(args):
         namespace = _validate_namespace(args["namespace"])
@@ -79,7 +80,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context=""):
         tail = int(args.get("tail", 50))
         if not 1 <= tail <= 100:
             raise ValueError("Log tail must be between 1 and 100 lines.")
-        command = _base(selected_context, namespace) + " logs " + shlex.quote(pod) + " --all-containers=true --prefix=true --tail=" + str(tail)
+        command = _base(selected_context, namespace) + " logs " + shlex.quote(pod) + " --all-containers=true --prefix=true --tail=" + str(tail) + " --limit-bytes=65536"
         return _run(kubernetes_service, command, 25)
 
     registry.register(ToolSpec(
