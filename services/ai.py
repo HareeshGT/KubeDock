@@ -157,7 +157,7 @@ class AIService:
         self, provider, api_key, model, question, target, evidence,
         *, prometheus_url="", history_days=7, parent=None,
     ):
-        """Create the existing evidence-analysis worker for Ops Mind.""
+        """Create the existing evidence-analysis worker for Ops Mind."""
         from ops_mind_investigation import OpsMindInvestigationWorker
         return self._register(OpsMindInvestigationWorker(
             provider, api_key, model, question, target, evidence,
