@@ -13,7 +13,7 @@ K8S_TAB_GROUPS = {
   "workloads": frozenset({"pods", "deployments", "statefulsets", "daemonsets", "hpa", "jobs & cronjobs"}),
   "networking": frozenset({"services", "ingress"}),
   "storage": frozenset({"storage", "config & secrets"}),
-  "observability": frozenset({"events"}),
+  "observability": frozenset({"nodes", "events"}),
   "tools": frozenset({"terminal", "tunnels"}),
   "ai": frozenset({"ops mind"}),
 }
@@ -409,6 +409,9 @@ class KubernetesCoreMixin:
     self.cfg_detail.clear()
     self.cfg_raw.clear()
     self.event_list.clear()
+    if hasattr(self, "node_tree"):
+      self.node_tree.clear()
+      self.node_count_lbl.setText("Node inventory not loaded")
     self.event_count_lbl.setText("")
     self.event_count_lbl.setStyleSheet("")
     self._events_raw = ""
@@ -443,7 +446,8 @@ class KubernetesCoreMixin:
     elif idx == 8: self._load_storage()
     elif idx == 9: self._load_config_resources()
     elif idx == 10: self._load_events()
-    elif idx == 11: self._refresh_tunnel_status()
+    elif idx == 11: self._load_nodes()
+    elif idx == 12: self._refresh_tunnel_status()
 
   # ── Pods ──────────────────────────────────────────────────
   # `kubectl get pods -o wide` renders the RESTARTS column as a plain
