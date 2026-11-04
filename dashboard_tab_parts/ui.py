@@ -38,7 +38,6 @@ class DashboardUIMixin:
       title_col_widget.setMinimumWidth(0)
       title_col_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
       cb.addWidget(title_col_widget, 1)
-      cb.addStretch()
   
       self.updated_lbl = QLabel("")
       self.updated_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 12px;")
@@ -404,8 +403,11 @@ class DashboardUIMixin:
       # unevenly). Cards live in columns 1..NODE_GRID_COLS; column 0 and
       # the trailing column split any leftover width evenly between
       # them, which centres the row instead of pinning it to the left.
+      self._node_grid_cols = 2
       self.k8s_grid.setColumnStretch(0, 1)
-      self.k8s_grid.setColumnStretch(self.NODE_GRID_COLS + 1, 1)
+      self.k8s_grid.setColumnStretch(self._node_grid_cols + 1, 1)
+      self.k8s_grid_container.setMinimumWidth(0)
+      self.k8s_grid_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
       self.k8s_grid_container.resized.connect(self._rescale_node_cards)
       self.k8s_card["body"].addWidget(self.k8s_grid_container)
       self._content_layout.addWidget(self.k8s_card["frame"])
@@ -534,8 +536,15 @@ class DashboardUIMixin:
         caption_lbl = QLabel(caption)
         tile_layout.addWidget(value)
         tile_layout.addWidget(caption_lbl)
-        grid.addWidget(tile, index // 4, index % 4)
+        value.setMinimumWidth(0)
+        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        caption_lbl.setMinimumWidth(0)
+        tile.setMinimumWidth(0)
+        tile.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        grid.addWidget(tile, index // 2, index % 2)
         self._app_connection_values[key] = (value, caption_lbl, tile)
+      grid.setColumnStretch(0, 1)
+      grid.setColumnStretch(1, 1)
       self.app_connection_card["body"].addLayout(grid)
       self.app_connection_error = QLabel("")
       self.app_connection_error.setWordWrap(True)
@@ -564,8 +573,15 @@ class DashboardUIMixin:
         caption_lbl = QLabel(caption)
         tile_layout.addWidget(value)
         tile_layout.addWidget(caption_lbl)
-        pool_grid.addWidget(tile, index // 3, index % 3)
+        value.setMinimumWidth(0)
+        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        caption_lbl.setMinimumWidth(0)
+        tile.setMinimumWidth(0)
+        tile.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        pool_grid.addWidget(tile, index // 2, index % 2)
         self._ssh_pool_values[key] = (value, caption_lbl, tile)
+      pool_grid.setColumnStretch(0, 1)
+      pool_grid.setColumnStretch(1, 1)
       self.ssh_pool_card["body"].addLayout(pool_grid)
       self.ssh_pool_policy_lbl = QLabel(
         "Hybrid pooling · least-loaded channel assignment · scales out on demand · idle secondary connections close automatically"
@@ -581,6 +597,12 @@ class DashboardUIMixin:
         ["Application service", "Active operations", "Registered workers"]
       )
       self._style_tree(self.service_activity_tree)
+      self.service_activity_tree.setMinimumWidth(0)
+      self.service_activity_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+      self.service_activity_tree.header().setStretchLastSection(True)
+      self.service_activity_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+      self.service_activity_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+      self.service_activity_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
       self.service_activity_tree.setRootIsDecorated(False)
       self.service_activity_tree.setAlternatingRowColors(True)
       self.service_activity_tree.setMinimumHeight(240)
@@ -814,22 +836,22 @@ class DashboardUIMixin:
   
   
   def _current_card_side(self) -> int:
-      """Square side length that makes NODE_GRID_COLS cards, plus the
-      gaps between them, exactly fill the grid container's width —
-      clamped so cards never get uncomfortably tiny or huge."""
-      width = self.k8s_grid_container.width()
-      if width <= 0:
-        return self.NODE_CARD_MIN_SIDE
+      """Choose a card size that fits the responsive one/two-column grid."""
+      width = max(1, self.k8s_grid_container.width())
+      self._node_grid_cols = 2 if width >= (self.NODE_CARD_MIN_SIDE * 2 + self.k8s_grid.horizontalSpacing()) else 1
       spacing = self.k8s_grid.horizontalSpacing()
-      side = (width - spacing * (self.NODE_GRID_COLS - 1)) / self.NODE_GRID_COLS
-      return int(max(self.NODE_CARD_MIN_SIDE, min(self.NODE_CARD_MAX_SIDE, side)))
+      available = (width - spacing * (self._node_grid_cols - 1)) / self._node_grid_cols
+      return int(max(260, min(self.NODE_CARD_MAX_SIDE, available)))
   
   
   def _rescale_node_cards(self):
-      """Re-apply the current fill-width side length to every card in
-      the grid. Connected to the container's resized signal so the row
-      keeps filling the section as the window is resized."""
+      """Reflow node cards when the viewport changes, then resize them."""
+      previous_cols = getattr(self, "_node_grid_cols", 2)
       side = self._current_card_side()
+      if self._node_grid_cols != previous_cols:
+        self.k8s_grid.setColumnStretch(0, 1)
+        self.k8s_grid.setColumnStretch(self._node_grid_cols + 1, 1)
+        self._reflow_node_grid(list(self._node_cards))
       for card in self._node_cards.values():
         card.set_side(side)
   
@@ -841,7 +863,7 @@ class DashboardUIMixin:
       card.set_side(self._current_card_side())
       card.doubleClicked.connect(self._on_node_double_clicked)
       idx = len(self._node_cards)
-      row, col = divmod(idx, self.NODE_GRID_COLS)
+      row, col = divmod(idx, self._node_grid_cols)
       self.k8s_grid.addWidget(card, row, col + 1)
       self._node_cards[node_name] = card
       self._card_grid_pos[node_name] = (row, col)
@@ -892,7 +914,7 @@ class DashboardUIMixin:
         card = self._node_cards.get(name)
         if card is None:
           continue
-        row, col = divmod(idx, self.NODE_GRID_COLS)
+        row, col = divmod(idx, self._node_grid_cols)
         if self._card_grid_pos.get(name) == (row, col):
           continue # already sitting in the right cell — leave it alone
         self.k8s_grid.removeWidget(card)
