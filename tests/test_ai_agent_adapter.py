@@ -1,5 +1,6 @@
 """Tests for the provider-neutral prompt tool-call adapter."""
 import unittest
+import json
 from ai_agent.adapters import PromptToolAdapter
 
 class PromptToolAdapterTests(unittest.TestCase):
@@ -25,6 +26,29 @@ class PromptToolAdapterTests(unittest.TestCase):
         result = adapter.complete(messages=[], tools=[])
         self.assertEqual(result.tool_calls[0].id, "call_1")
         self.assertEqual(result.tool_calls[0].arguments, {"name": "api"})
+
+
+    def test_missing_or_invalid_arguments_remain_invalid(self):
+        for response in (
+            '{"tool_calls":[{"name":"inspect_pod"}]}',
+            '{"tool_calls":[{"name":"inspect_pod","arguments":""}]}',
+            '{"tool_calls":[{"name":"inspect_pod","arguments":"not-json"}]}',
+            '{"tool_calls":[{"name":"inspect_pod","arguments":"[]"}]}',
+            '{"tool_calls":[{"name":"inspect_pod","arguments":"null"}]}',
+        ):
+            with self.subTest(response=response):
+                adapter, _ = self._adapter(response)
+                result = adapter.complete(messages=[], tools=[])
+                self.assertIsNone(result.tool_calls[0].arguments)
+
+    def test_explicit_empty_object_is_valid_zero_argument_call(self):
+        for arguments in ('{}', {}):
+            response = json.dumps({
+                "tool_calls": [{"name": "list_nodes", "arguments": arguments}]
+            })
+            adapter, _ = self._adapter(response)
+            result = adapter.complete(messages=[], tools=[])
+            self.assertEqual(result.tool_calls[0].arguments, {})
 
     def test_plain_text_is_final_answer(self):
         adapter, _ = self._adapter("The cluster looks healthy.")
