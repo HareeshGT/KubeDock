@@ -126,6 +126,15 @@ class KubernetesToolTests(unittest.TestCase):
                 "namespace": "dev-cc", "configmap": "cow-env", "key": "MISSING_KEY",
             })
 
+
+    def test_configmap_key_tool_rejects_truncated_values(self):
+        self.commands.output = "x" * 4001
+        with self.assertRaisesRegex(RuntimeError, "value is unverified"):
+            self.registry.get("k8s_get_configmap_key").handler({
+                "namespace": "dev-cc", "configmap": "cow-env", "key": "QUEUE_NAME",
+            })
+
+
     def test_configmap_key_tool_rejects_invalid_key_before_remote_execution(self):
         with self.assertRaises(ValueError):
             self.registry.get("k8s_get_configmap_key").handler({
