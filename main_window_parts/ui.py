@@ -64,6 +64,8 @@ class UIMixin:
       # ── Toolbar (plain QWidget — avoids QToolBar proxy glitches) ──
       tb_widget = QWidget()
       tb_widget.setFixedHeight(44)
+      tb_widget.setMinimumWidth(0)
+      tb_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
       self._toolbar = tb_widget
       tb = QHBoxLayout(tb_widget)
       tb.setContentsMargins(8, 0, 12, 0)
@@ -179,38 +181,46 @@ class UIMixin:
       self.act_settings.clicked.connect(self._open_settings)
       tb.addWidget(self.act_settings)
 
-      tb.addStretch()
+      # Keep connection actions in a dedicated, non-shrinking right-hand group.
+      # The old single-row layout could let the file-manager controls and their
+      # size hints consume the final pixels, clipping the Switch User action.
+      right_actions = QWidget()
+      right_actions.setObjectName("mainToolbarActions")
+      right_actions.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+      right_layout = QHBoxLayout(right_actions)
+      right_layout.setContentsMargins(0, 0, 0, 0)
+      right_layout.setSpacing(4)
+      right_layout.addWidget(_sep())
 
-      # Must come *after* the stretch: placed before it, this separator stays
-      # glued to the left-hand group, so on the Kubernetes/Dashboard tabs
-      # (where the FM controls are hidden) it floats alone in empty space
-      # a thousand pixels from the buttons it is supposed to separate.
-      tb.addWidget(_sep()) # always-visible sep before connect buttons
-
-      self.act_connect  = _tbtn(" Connect",  "Connect to server", width=82)
-      self.act_disconnect = _tbtn(" Disconnect", "Disconnect", width=94)
+      self.act_connect = _tbtn(" Connect", "Connect to server", width=82)
+      self.act_connect.setAccessibleName("Connect to server")
       self.act_connect.clicked.connect(self._connect)
-      # clicked emits a bool (the button's checked state) — connecting
-      # directly to _disconnect(self, reason="Disconnected") lets that
-      # bool clobber the `reason` default, which later crashes
-      # self.status.showMessage(reason) with a TypeError (and, since
-      # it's raised inside a Qt-invoked slot, PyQt5 aborts the process
-      # instead of just printing a traceback). The lambda swallows the
-      # bool so _disconnect() always gets its intended default.
-      self.act_disconnect.clicked.connect(lambda: self._disconnect())
-      tb.addWidget(self.act_connect)
-      tb.addWidget(self.act_disconnect)
 
-      # Keep the far-right toolbar action compact so it cannot be clipped
-      # on narrower windows; the tooltip and accessible name retain its meaning.
+      self.act_disconnect = _tbtn(" Disconnect", "Disconnect", width=94)
+      self.act_disconnect.setAccessibleName("Disconnect from server")
+      # clicked emits a bool; swallow it so it cannot replace _disconnect's
+      # default reason argument.
+      self.act_disconnect.clicked.connect(lambda: self._disconnect())
+
       self.switch_user_btn = _icon_btn(
         "", "Switch User — change the terminal and file-operations user",
         icon_name="user-round-cog",
       )
-      self.switch_user_btn.setFixedSize(28, 28)
+      self.switch_user_btn.setFixedSize(34, 30)
       self.switch_user_btn.setAccessibleName("Switch User")
+      self.switch_user_btn.setAccessibleDescription(
+        "Change the terminal and file-operations user"
+      )
       self.switch_user_btn.clicked.connect(self._on_switch_user_btn)
-      tb.addWidget(self.switch_user_btn)
+
+      right_layout.addWidget(self.act_connect)
+      right_layout.addWidget(self.act_disconnect)
+      right_layout.addWidget(self.switch_user_btn)
+
+      # Stretch only the flexible left-hand area. The right-hand actions keep
+      # their full size and remain anchored to the toolbar's right edge.
+      tb.addStretch(1)
+      tb.addWidget(right_actions, 0, Qt.AlignRight | Qt.AlignVCenter)
 
       # Main tabs
       self.main_tabs = QTabWidget()
