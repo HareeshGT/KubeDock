@@ -387,6 +387,7 @@ class KubernetesResourcesMixin:
       w = self.pod_list.itemWidget(current)
       if w:
         w.set_selected(True)
+    self._update_navigation_context()
 
 
   def _pod_logs(self):
