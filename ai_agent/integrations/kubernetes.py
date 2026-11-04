@@ -105,7 +105,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         if not 1 <= limit <= 50:
             raise ValueError("Event limit must be between 1 and 50.")
         command = (
-            _base(selected_context, namespace)
+            "set -o pipefail; " + _base(selected_context, namespace)
             + " get events --sort-by=.lastTimestamp "
             + "-o custom-columns=TIME:.lastTimestamp,TYPE:.type,OBJECT:.involvedObject.name,REASON:.reason,MESSAGE:.message "
             + "--no-headers | tail -n " + str(limit)
