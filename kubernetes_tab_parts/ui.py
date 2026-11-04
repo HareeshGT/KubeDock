@@ -178,6 +178,7 @@ class KubernetesUiMixin:
     self._build_storage_tab()
     self._build_config_tab()
     self._build_events_tab()
+    self._build_nodes_tab()
     self._build_tunnels_tab()
     self._build_terminal_tab()
     self._build_ai_ops_tab()
@@ -1180,6 +1181,56 @@ class KubernetesUiMixin:
     )
     lay.addWidget(self.event_list)
     add_icon_tab(self.sub_tabs, w, " Events")
+
+
+  def _build_nodes_tab(self):
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+
+    toolbar = QHBoxLayout()
+    toolbar.setContentsMargins(10, 6, 10, 6)
+    toolbar.setSpacing(8)
+    self.node_filter = QLineEdit()
+    self.node_filter.setPlaceholderText(" Filter nodes…")
+    self.node_filter.setMaximumWidth(220)
+    self.node_filter.textChanged.connect(self._filter_nodes)
+    toolbar.addWidget(self.node_filter)
+
+    self.node_count_lbl = QLabel("Node inventory not loaded")
+    self.node_count_lbl.setAccessibleName("Kubernetes node health summary")
+    toolbar.addWidget(self.node_count_lbl)
+    toolbar.addStretch()
+
+    self.node_refresh_btn = self._toolbar_btn(" Refresh", tooltip="Refresh node health and resource usage")
+    self.node_refresh_btn.clicked.connect(self._load_nodes)
+    toolbar.addWidget(self.node_refresh_btn)
+
+    toolbar_widget = QWidget()
+    toolbar_widget.setStyleSheet(f"background: {T['BG_PANEL']}; border-bottom: 1px solid {T['BORDER']};")
+    toolbar_widget.setLayout(toolbar)
+    lay.addWidget(toolbar_widget)
+
+    self.node_tree = QTreeWidget()
+    self.node_tree.setColumnCount(6)
+    self.node_tree.setHeaderLabels(["Node", "Health", "Role", "CPU usage", "Memory usage", "Kubelet"])
+    self.node_tree.setRootIsDecorated(False)
+    self.node_tree.setAlternatingRowColors(True)
+    self.node_tree.setUniformRowHeights(True)
+    self.node_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+    self.node_tree.setStyleSheet(
+      "QTreeWidget { background: transparent; border: none; padding: 8px; }"
+      f"QTreeWidget::item {{ padding: 7px 4px; border-bottom: 1px solid {T['BORDER']}; }}"
+    )
+    header = self.node_tree.header()
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(0, QHeaderView.Stretch)
+    for column in range(1, 6):
+      header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+    self.node_tree.setAccessibleName("Kubernetes nodes and resource utilization")
+    lay.addWidget(self.node_tree)
+    add_icon_tab(self.sub_tabs, w, " Nodes")
 
 
   def _build_terminal_tab(self):
