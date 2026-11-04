@@ -221,7 +221,7 @@ class PodCardWidget(_CardBase):
   def __init__(self, meta: dict, show_namespace: bool, parent=None, metrics=None):
     """`metrics` is a k8s_metrics.PodMetrics (live CPU/memory usage for this
     pod), or None when none is available — shown as N/A, never as zero."""
-    super().__init__(_status_accent(meta.get("status", "")), parent)
+    super().__init__(_status_accent(meta.get("status", ""), meta.get("restarts")), parent)
 
     outer = QVBoxLayout(self)
     outer.setContentsMargins(14, 8, 14, 8)
