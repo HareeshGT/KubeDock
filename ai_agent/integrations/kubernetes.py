@@ -2,13 +2,13 @@
 from __future__ import annotations
 import re
 import shlex
+import unicodedata
 
 from ai_assist import _redact_sensitive_text
 from ..models import ToolSpec
 
 _NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
 _NAMESPACE_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
-_CONTEXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 
 
 def _validate_namespace(value):
@@ -29,9 +29,9 @@ def _validate_name(value, label="resource"):
 
 def _base(context, namespace=None):
     """Build a safely quoted kubectl prefix for a validated context/namespace."""
-    context = str(context or "").strip()
-    if context and not _CONTEXT_RE.fullmatch(context):
-        raise ValueError("The selected Kubernetes context contains unsupported characters.")
+    context = str(context or "")
+    if any(unicodedata.category(char) == "Cc" for char in context):
+        raise ValueError("The selected Kubernetes context contains control characters.")
     command = "kubectl"
     if context:
         command += " --context=" + shlex.quote(context)
@@ -61,7 +61,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
     """Register bounded read-only tools; no tool can submit a Kubernetes mutation."""
     if kubernetes_service is None or getattr(kubernetes_service, "commands", None) is None:
         raise ValueError("A shared Kubernetes command service is required.")
-    selected_context = str(context or "").strip()
+    selected_context = str(context or "")
     _base(selected_context)  # validate once before closing over this context
 
     def list_pods(args):
