@@ -11,8 +11,10 @@ _TYPE_MAP = {"object": dict, "array": list, "string": str, "integer": int, "numb
 class ToolRegistry:
     """Stores explicit tool capabilities; the model never supplies executable code."""
     def __init__(self):
+        """Create an empty registry of explicitly granted tool capabilities."""
         self._tools = {}
     def register(self, spec: ToolSpec) -> None:
+        """Register a unique tool after validating its name and object schema."""
         if not isinstance(spec, ToolSpec):
             raise TypeError("Register a ToolSpec instance.")
         if not _TOOL_NAME_RE.fullmatch(spec.name):
@@ -23,16 +25,20 @@ class ToolRegistry:
             raise ValueError("Tool parameters must be an object schema.")
         self._tools[spec.name] = spec
     def get(self, name: str):
+        """Return a registered tool by name, or None when it is unavailable."""
         return self._tools.get(str(name or ""))
     def names(self):
+        """Return registered tool names in stable sorted order."""
         return tuple(sorted(self._tools))
     def describe(self, allowed_tools=None):
+        """Return model-facing schemas, optionally filtered by an allowlist."""
         allowed = set(allowed_tools) if allowed_tools is not None else None
         return [{"name": spec.name, "description": spec.description, "parameters": dict(spec.parameters)}
                 for name in self.names() if allowed is None or name in allowed
                 for spec in (self._tools[name],)]
     @staticmethod
     def validate_arguments(schema: Mapping[str, Any], arguments: Mapping[str, Any]) -> Dict[str, Any]:
+        """Validate JSON arguments and return a clean mapping or raise ValueError."""
         if not isinstance(arguments, Mapping):
             raise ValueError("Tool arguments must be a JSON object.")
         properties = schema.get("properties") or {}
@@ -73,6 +79,7 @@ class ToolRegistry:
         return cleaned
     @staticmethod
     def serialize_result(value: Any) -> str:
+        """Convert a tool result to JSON text suitable for model context."""
         try:
             return json.dumps(value, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
