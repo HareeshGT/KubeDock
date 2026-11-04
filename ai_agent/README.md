@@ -37,19 +37,26 @@ owns authorization and execution; provider adapters never execute tools.
 ## Current integration boundary
 
 This commit adds the runtime, provider-neutral prompt adapter, shared AIService
-factory, and five initial read-only Kubernetes tools: list pods, list
-deployments, list nodes, read bounded namespace events, and read a bounded pod
-log tail. They execute through KubeDock's existing shared command/connection
+factory, and read-only Kubernetes tools for listing pods, deployments and nodes,
+reading namespace events and bounded pod logs, and retrieving one exact key
+from one explicitly named ConfigMap. The ConfigMap tool returns only the
+requested key/value, never the entire object. They execute through KubeDock's existing shared command/connection
 service. Namespace, context, pod name, and limits are validated before a
 command is built; log output is redacted before it returns to the model.
 
 Existing Ops Mind workflows remain in place for mutations and read operations
-that require capabilities not yet exposed to the agent. Mutation requests,
-resource describe requests, ConfigMap/Secret key reads, and investigations
-continue through the established interpreter and its existing confirmation,
-protected-namespace, RBAC, evidence-consent, and verification paths. Supported
-read-only inventory and diagnostic requests use the multi-step agent and show
-a compact tool timeline. Hosted-provider diagnostic requests ask before
+that require capabilities not yet exposed to the agent. Mutation requests, resource describe requests, Secret key reads, and
+investigations continue through the established interpreter and its existing
+confirmation, protected-namespace, RBAC, evidence-consent, and verification
+paths. Exact ConfigMap key reads may use the agent's scoped read-only tool.
+The agent policy requires evidence for live facts, carries tool execution
+status into model context, and treats failed/forbidden/missing reads as
+unverified. Conversation history cannot replace the mandatory system policy.
+For an exact ConfigMap key lookup, the runtime constructs the final answer
+from the successful exact-object tool result instead of asking the model to
+restate the value. Unsupported sources or failed lookups produce a safe
+clarification rather than a guessed value. Supported read-only inventory and
+diagnostic requests use the multi-step agent and show a compact tool timeline. Hosted-provider diagnostic requests ask before
 enabling the bounded pod-log tool. If that agent-specific consent is declined,
 the request falls back to the established Ops Mind interpreter, which applies
 its own evidence-sharing consent before collecting investigation logs. Local

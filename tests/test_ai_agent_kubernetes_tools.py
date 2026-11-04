@@ -23,7 +23,7 @@ class KubernetesToolTests(unittest.TestCase):
     def test_registers_only_read_tools(self):
         self.assertEqual(set(self.registry.names()), {
             "k8s_list_pods", "k8s_list_deployments", "k8s_list_nodes",
-            "k8s_get_events", "k8s_get_pod_logs",
+            "k8s_get_events", "k8s_get_pod_logs", "k8s_get_configmap_key",
         })
         self.assertTrue(all(self.registry.get(name).permission == "read" for name in self.registry.names()))
 
@@ -57,18 +57,29 @@ class KubernetesToolTests(unittest.TestCase):
             self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 500})
         self.assertEqual(self.commands.commands, [])
 
-    def test_success_with_empty_stdout_preserves_stderr(self):
+
+    def test_events_are_parsed_and_limited_without_shell_pipelines(self):
+        self.commands.output = '{"items":[{"lastTimestamp":"t1","type":"Normal","involvedObject":{"name":"pod-a"},"reason":"Scheduled","message":"first"},{"lastTimestamp":"t2","type":"Warning","involvedObject":{"name":"pod-b"},"reason":"BackOff","message":"second"}]}'
+        result = self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 1})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["object"], "pod-b")
+        command, _ = self.commands.commands[-1]
+        self.assertIn("get events --sort-by=.lastTimestamp -o json", command)
+        self.assertNotIn("|", command)
+
+
+    def test_success_with_empty_stdout_and_stderr_is_unverified(self):
         self.commands.output = "  "
         self.commands.error = "Warning: unable to retrieve optional metadata"
-        result = self.registry.get("k8s_list_nodes").handler({})
-        self.assertIn("unable to retrieve optional metadata", result)
+        with self.assertRaisesRegex(RuntimeError, "unable to retrieve optional metadata"):
+            self.registry.get("k8s_list_nodes").handler({})
 
     def test_failed_command_prefers_stderr(self):
         self.commands.code = 1
         self.commands.output = "partial output"
         self.commands.error = "Forbidden"
-        result = self.registry.get("k8s_list_nodes").handler({})
-        self.assertEqual(result, "Forbidden")
+        with self.assertRaisesRegex(RuntimeError, "Forbidden"):
+            self.registry.get("k8s_list_nodes").handler({})
 
     def test_log_output_is_redacted(self):
         self.commands.output = "Authorization: Bearer abcdefghijklmnopqrstuvwxyz"
@@ -99,6 +110,57 @@ class KubernetesToolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             register_kubernetes_read_tools(ToolRegistry(), self.service, context="team\nstaging")
         self.assertEqual(self.commands.commands, [])
+
+
+    def test_configmap_key_tool_reads_only_the_requested_key(self):
+        self.commands.output = "queue-ready"
+        result = self.registry.get("k8s_get_configmap_key").handler({
+            "namespace": "dev-cc", "configmap": "cow-env",
+            "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
+        })
+        self.assertEqual(result, {
+            "found": True, "resource": "ConfigMap", "name": "cow-env",
+            "namespace": "dev-cc", "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
+            "value": "queue-ready",
+        })
+        command, _ = self.commands.commands[-1]
+        self.assertIn("get configmap/cow-env", command)
+        self.assertIn("RECORDS_READY_FOR_PROCESSING_QUEUE_NAME", command)
+        self.assertNotIn("OTHER", command)
+        self.assertNotIn("get pods", command)
+
+    def test_configmap_key_tool_treats_missing_key_as_unverified(self):
+        self.commands.code = 1
+        self.commands.error = 'error: error executing jsonpath: no entry for key "MISSING_KEY"'
+        with self.assertRaisesRegex(RuntimeError, "no entry for key"):
+            self.registry.get("k8s_get_configmap_key").handler({
+                "namespace": "dev-cc", "configmap": "cow-env", "key": "MISSING_KEY",
+            })
+
+
+    def test_configmap_key_tool_rejects_truncated_values(self):
+        self.commands.output = "x" * 4001
+        with self.assertRaisesRegex(RuntimeError, "value is unverified"):
+            self.registry.get("k8s_get_configmap_key").handler({
+                "namespace": "dev-cc", "configmap": "cow-env", "key": "QUEUE_NAME",
+            })
+
+
+    def test_configmap_key_tool_rejects_invalid_key_before_remote_execution(self):
+        with self.assertRaises(ValueError):
+            self.registry.get("k8s_get_configmap_key").handler({
+                "namespace": "dev-cc", "configmap": "cow-env", "key": "X; cat /etc/passwd",
+            })
+        self.assertEqual(self.commands.commands, [])
+
+    def test_kubectl_not_found_is_a_tool_error_not_successful_empty_result(self):
+        self.commands.code = 1
+        self.commands.error = 'Error from server (NotFound): configmaps "cow-env" not found'
+        with self.assertRaisesRegex(RuntimeError, "NotFound"):
+            self.registry.get("k8s_get_configmap_key").handler({
+                "namespace": "dev-cc", "configmap": "cow-env", "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
+            })
+
 
 if __name__ == "__main__":
     unittest.main()
