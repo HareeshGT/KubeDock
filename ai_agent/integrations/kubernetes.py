@@ -2,6 +2,7 @@
 from __future__ import annotations
 import re
 import shlex
+import json
 import unicodedata
 
 from ai_assist import _redact_sensitive_text
@@ -109,13 +110,20 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         limit = int(args.get("limit", 30))
         if not 1 <= limit <= 50:
             raise ValueError("Event limit must be between 1 and 50.")
-        command = (
-            "set -o pipefail; " + _base(selected_context, namespace)
-            + " get events --sort-by=.lastTimestamp "
-            + "-o custom-columns=TIME:.lastTimestamp,TYPE:.type,OBJECT:.involvedObject.name,REASON:.reason,MESSAGE:.message "
-            + "--no-headers | tail -n " + str(limit)
-        )
-        return _run(kubernetes_service, command, 20)
+        command = _base(selected_context, namespace) + " get events --sort-by=.lastTimestamp -o json"
+        raw = _run(kubernetes_service, command, 20, max_chars=100000, reject_truncation=True)
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Kubernetes returned an invalid events JSON response.") from exc
+        items = payload.get("items") or []
+        return [{
+            "time": item.get("lastTimestamp") or item.get("eventTime") or item.get("metadata", {}).get("creationTimestamp", ""),
+            "type": item.get("type", ""),
+            "object": (item.get("involvedObject") or {}).get("name", ""),
+            "reason": item.get("reason", ""),
+            "message": item.get("message", ""),
+        } for item in items[-limit:]]
 
     def get_pod_logs(args):
         """Return a byte- and line-bounded pod log tail after redaction."""
