@@ -290,7 +290,13 @@ class K8sAIOpsOperationsMixin:
             agent_request = (
                 "Selected Kubernetes context: " + str(kube_context) + "\n"
                 + "Selected namespace: " + (str(namespace) if namespace else "none") + "\n"
-                + namespace_guidance + "\nUser request: " + str(request)
+                + namespace_guidance + "\n"
+                + "EVIDENCE RULES: Never infer a resource, owner, ConfigMap, Secret, key, or value from pod/deployment names or naming conventions. "
+                + "For an exact key lookup in a named ConfigMap, use k8s_get_configmap_key with the exact namespace, ConfigMap name, and key. "
+                + "That tool returns only the requested key. If it reports not found or errors, state that the value is unverified and ask whether the source is a Secret or another resource; do not try a similarly named object. "
+                + "Do not claim to have inspected an object unless the corresponding tool succeeded. "
+                + "If no available tool can inspect the requested source, say so rather than guessing.\n"
+                + "User request: " + str(request)
             )
             worker = ai_service.create_agent_worker(
                 runtime, adapter, agent_request,
