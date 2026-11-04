@@ -34,12 +34,11 @@ from utils import monospace_font
 from .core import *
 
 
-_MUTATING_REQUEST_RE = re.compile(
-    r"\b(delete|remove|restart|scale|patch|apply|edit|update|create|deploy|rollback|roll back|kill|terminate|drain|cordon|uncordon|resize)\b",
-    re.IGNORECASE,
-)
+from ai_agent.routing import should_use_legacy_interpreter
+
+
 _LOG_CONSENT_INTENT_RE = re.compile(
-    r"\b(why|diagnos\w*|investigat\w*|crash\w*|error\w*|fail\w*|oom\w*|memory|cpu|logs?|root cause|not ready|pending)\b",
+    r"\\b(why|diagnos\\w*|investigat\\w*|crash\\w*|error\\w*|fail\\w*|oom\\w*|memory|cpu|logs?|root cause|not ready|pending)\\b",
     re.IGNORECASE,
 )
 
@@ -190,9 +189,11 @@ class K8sAIOpsOperationsMixin:
         # Route read-only questions through the multi-step agent. Explicit
         # mutation requests remain on the established interpreter and its
         # existing risk checks, confirmation dialogs, and verification flow.
-        if not _MUTATING_REQUEST_RE.search(request):
-            self._start_agent_request(request, namespace, followup_context)
-            return
+        if not should_use_legacy_interpreter(request):
+            # If the user declines agent log sharing, use the established
+            # interpreter/investigation flow and its own evidence consent gate.
+            if self._start_agent_request(request, namespace, followup_context):
+                return
 
         ai_service = getattr(self, "ai_service", None)
         provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
@@ -236,11 +237,11 @@ class K8sAIOpsOperationsMixin:
         """Run a read-only multi-step investigation using the shared AI and connection services."""
         if not kube_context:
             self._write_error("No Kubernetes context is selected. Refresh contexts and try again.")
-            return
+            return True
         ai_service = getattr(self, "ai_service", None)
         if ai_service is None:
             self._write_error("The shared AI service is unavailable; cannot start the agent.")
-            return
+            return True
         self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
         self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')} · Agent mode (read-only)</span>""")
         self._set_busy(True)
@@ -260,7 +261,9 @@ class K8sAIOpsOperationsMixin:
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
-                include_logs = choice == QMessageBox.Yes
+                if choice != QMessageBox.Yes:
+                    return False
+                include_logs = True
             runtime, adapter = ai_service.create_agent(
                 context=kube_context, include_logs=include_logs,
             )
@@ -281,13 +284,14 @@ class K8sAIOpsOperationsMixin:
         except Exception as exc:
             self._write_error("\nUnable to start AI agent: " + str(exc))
             self._set_busy(False)
-            return
+            return True
         worker.done.connect(self._on_agent_done)
         worker.error.connect(self._on_ai_error)
         worker.finished.connect(self._on_ai_finished)
         self._ai_worker = worker
         track_worker(self._workers, worker)
         worker.start()
+        return True
 
     def _on_agent_done(self, result):
         """Render the agent's final answer and a compact, auditable tool timeline."""
