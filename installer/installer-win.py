@@ -60,7 +60,7 @@ def offer_embedded_model_download(install_dir: Path) -> None:
             return
         try:
             choice = input(
-                "\\nDownload the optional Embedded AI model into KubeDock now (~271 MB)? [y/N]: "
+                "\nDownload the optional Embedded AI model into KubeDock now (~271 MB)? [y/N]: "
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
             choice = ""
