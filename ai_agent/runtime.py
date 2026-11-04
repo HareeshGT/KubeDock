@@ -75,6 +75,12 @@ class AgentRuntime:
                 return AgentResult(AgentStatus.ERROR, events=events, tool_results=results, messages=messages, error=str(exc)[:1000])
             if not response.tool_calls:
                 answer = response.content.strip()
+                if not answer:
+                    emit("error", "Provider returned an empty response.")
+                    return AgentResult(
+                        AgentStatus.ERROR, events=events, tool_results=results,
+                        messages=messages, error="Provider returned an empty response without text or tool calls.",
+                    )
                 messages.append({"role": "assistant", "content": answer})
                 emit("completed", "Agent response completed.")
                 return AgentResult(AgentStatus.COMPLETED, answer, events, results, pending, messages)
