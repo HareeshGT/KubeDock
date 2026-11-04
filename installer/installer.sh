@@ -219,7 +219,8 @@ offer_embedded_model_download() {
       return 0
     fi
   fi
-  case "${choice,,}" in
+  choice="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
+  case "$choice" in
     1|yes|y|true) ;;
     *) ui_info "Embedded AI model download skipped."; return 0 ;;
   esac
@@ -258,7 +259,8 @@ offer_embedded_model_download() {
   if [[ -f "$destination" ]]; then
     if command -v sha256sum >/dev/null 2>&1; then actual_hash="$(sha256sum "$destination" | awk '{print $1}')"
     else actual_hash="$(shasum -a 256 "$destination" | awk '{print $1}')"; fi
-    if [[ "${actual_hash,,}" == "$expected" ]]; then ui_success "Embedded AI model already verified."; return 0; fi
+    actual_hash="$(printf '%s' "$actual_hash" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$actual_hash" == "$expected" ]]; then ui_success "Embedded AI model already verified."; return 0; fi
     rm -f "$destination"
   fi
   ui_info "Downloading Embedded AI model (maximum 500 MiB)..."
@@ -272,7 +274,8 @@ offer_embedded_model_download() {
   if command -v sha256sum >/dev/null 2>&1; then actual_hash="$(sha256sum "$temporary" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then actual_hash="$(shasum -a 256 "$temporary" | awk '{print $1}')"
   else rm -f "$temporary"; ui_warn "No SHA-256 tool found; model rejected."; return 0; fi
-  if [[ "${actual_hash,,}" != "$expected" ]]; then
+  actual_hash="$(printf '%s' "$actual_hash" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual_hash" != "$expected" ]]; then
     rm -f "$temporary"; ui_warn "Model SHA-256 verification failed; file rejected."; return 0
   fi
   mv "$temporary" "$destination"

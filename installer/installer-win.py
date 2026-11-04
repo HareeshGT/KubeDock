@@ -73,7 +73,11 @@ def offer_embedded_model_download() -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
     destination = model_dir / EMBEDDED_MODEL_FILENAME
     if destination.is_file():
-        digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+        existing_digest = hashlib.sha256()
+        with destination.open("rb") as existing:
+            for chunk in iter(lambda: existing.read(1024 * 1024), b""):
+                existing_digest.update(chunk)
+        digest = existing_digest.hexdigest()
         if digest == EMBEDDED_MODEL_SHA256:
             UI.success(f"Embedded AI model already installed: {destination}")
             return
