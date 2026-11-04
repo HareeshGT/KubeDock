@@ -550,6 +550,12 @@ PROVIDERS = {
 
         "default_model": "openai/gpt-oss-120b",
     },
+    "embedded": {
+        "label": "Embedded Local AI (Python / CPU)",
+        "key_placeholder": "Not required — runs inside KubeDock",
+        "model_samples": ["SmolLM2-360M-Instruct-Q4_K_M.gguf"],
+        "default_model": "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+    },
     "ollama": {
         "label": "Ollama (Local / Private)",
         "key_placeholder": "Not required — local loopback endpoint",
@@ -562,7 +568,8 @@ PROVIDERS = {
     },
 }
 
-DEFAULT_PROVIDER = "anthropic"
+DEFAULT_PROVIDER = "embedded"
+LOCAL_PROVIDER_IDS = frozenset(("embedded", "ollama"))
 
 
 # ─── Persisted settings ────────────────────────────────────────
@@ -631,16 +638,19 @@ def get_ai_settings() -> dict:
     provider, preserving compatibility with older installations and call sites.
     """
     stored = load_settings().get("ai") or {}
-    provider = stored.get("provider", DEFAULT_PROVIDER)
-    if provider not in PROVIDERS:
-        provider = DEFAULT_PROVIDER
-
     api_keys = dict(stored.get("api_keys") or {})
     # Migrate the pre-multi-provider layout (a single top-level api_key,
     # implicitly Anthropic) so upgrading doesn't drop an already-saved key.
     legacy_key = stored.get("api_key")
     if legacy_key and not api_keys.get("anthropic"):
         api_keys["anthropic"] = legacy_key
+
+    # New installs default to on-device inference; preserve saved provider choices.
+    provider = stored.get("provider")
+    if not provider:
+        provider = "anthropic" if legacy_key or any(api_keys.values()) else DEFAULT_PROVIDER
+    if provider not in PROVIDERS:
+        provider = DEFAULT_PROVIDER
 
     stored_models = dict(stored.get("models") or {})
     models = {
@@ -652,12 +662,12 @@ def get_ai_settings() -> dict:
     task_profiles = {}
     for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
         item = stored_profiles.get(profile) or {}
-        selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
-        invalid_local_provider = profile == "local_private" and selected_provider != "ollama"
+        selected_provider = item.get("provider", "embedded" if profile == "local_private" else provider)
+        invalid_local_provider = profile == "local_private" and selected_provider not in LOCAL_PROVIDER_IDS
         if selected_provider not in PROVIDERS or invalid_local_provider:
-            selected_provider = "ollama" if profile == "local_private" else provider
+            selected_provider = "embedded" if profile == "local_private" else provider
         selected_model = str(
-            (models.get("ollama") if invalid_local_provider else item.get("model_id"))
+            (models.get("embedded") if invalid_local_provider else item.get("model_id"))
             or models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
         ).strip()
         if not _is_valid_model_id(selected_model):
@@ -718,12 +728,12 @@ def save_ai_settings(provider: str, api_keys: dict, models: dict, custom_models=
     cleaned_profiles = {}
     for profile in ("quick", "deep_diagnosis", "voice", "local_private"):
         item = task_profiles.get(profile) or {}
-        selected_provider = item.get("provider", "ollama" if profile == "local_private" else provider)
-        invalid_local_provider = profile == "local_private" and selected_provider != "ollama"
+        selected_provider = item.get("provider", "embedded" if profile == "local_private" else provider)
+        invalid_local_provider = profile == "local_private" and selected_provider not in LOCAL_PROVIDER_IDS
         if selected_provider not in PROVIDERS or invalid_local_provider:
-            selected_provider = "ollama" if profile == "local_private" else provider
+            selected_provider = "embedded" if profile == "local_private" else provider
         selected_model = str(
-            (cleaned_models.get("ollama") if invalid_local_provider else item.get("model_id"))
+            (cleaned_models.get("embedded") if invalid_local_provider else item.get("model_id"))
             or cleaned_models.get(selected_provider) or PROVIDERS[selected_provider]["default_model"]
         ).strip()
         if not _is_valid_model_id(selected_model):
@@ -1124,12 +1134,12 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str,
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return None, f"Unknown AI provider: {provider_id!r}"
-    if provider_id != "ollama" and not get_ai_settings().get("cloud_ai_enabled", True):
+    if provider_id not in LOCAL_PROVIDER_IDS and not get_ai_settings().get("cloud_ai_enabled", True):
         return None, (
-            "Cloud AI is disabled in Settings → AI. Select the Local / Private "
-            "Ollama profile or explicitly re-enable cloud AI."
+            "Cloud AI is disabled in Settings → AI. Select Embedded Local AI or "
+            "the Ollama local provider, or explicitly re-enable cloud AI."
         )
-    if not api_key and provider_id != "ollama":
+    if not api_key and provider_id not in LOCAL_PROVIDER_IDS:
         return None, f"No {provider['label']} API key set. Add one in Settings → 🤖 AI."
 
     model = (model or "").strip()
@@ -1137,6 +1147,22 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str,
         return None, "No model selected. Choose a model in Settings → 🤖 AI."
     if not _is_valid_model_id(model):
         return None, "Invalid model ID syntax. Check the exact API model ID in Settings → 🤖 AI."
+
+    # Run embedded inference directly in this process; never use a local server
+    # and never silently fall back to a hosted provider.
+    if provider_id == "embedded":
+        from services import embedded_llm
+        if model != embedded_llm.DEFAULT_MODEL_FILENAME:
+            return None, "Embedded Local AI supports only the bundled KubeDock model."
+        model_path = embedded_llm.bundled_model_directory() / embedded_llm.DEFAULT_MODEL_FILENAME
+        if not model_path.is_file():
+            return None, ("The Embedded Local AI model is not installed inside KubeDock. "
+                          "Rerun the installer and choose to download the embedded model.")
+        try:
+            answer = embedded_llm.generate(model_path, _redact_sensitive_text(prompt), max_tokens=MAX_TOKENS)
+            return _redact_sensitive_text(answer).strip(), None
+        except Exception as exc:
+            return None, _redact_sensitive_text(str(exc)) or "Embedded Local AI inference failed."
 
     # Central enforcement covers every provider and all prompt builders,
     # including future call sites. Never silently switch providers.
@@ -1278,11 +1304,11 @@ def _task_provider_selection(profile: str, fallback_provider: str, fallback_key:
     provider = assignment.get("provider") or fallback_provider
     if provider not in PROVIDERS:
         provider = fallback_provider
-    if profile == "local_private" and provider != "ollama":
-        return None, None, None, "Local / Private inference must use the loopback Ollama provider."
+    if profile == "local_private" and provider not in LOCAL_PROVIDER_IDS:
+        return None, None, None, "Local / Private inference must use Embedded Local AI or Ollama."
     api_key = settings.get("api_keys", {}).get(provider) or (fallback_key if provider == fallback_provider else "")
     model = assignment.get("model_id") or settings.get("models", {}).get(provider) or (fallback_model if provider == fallback_provider else "")
-    if not api_key and provider != "ollama":
+    if not api_key and provider not in LOCAL_PROVIDER_IDS:
         return None, None, None, f"No API key is configured for the {profile.replace('_', ' ')} profile provider ({provider}). Add it in Settings → AI."
     if not _is_valid_model_id(model):
         return None, None, None, f"No valid model is configured for the {profile.replace('_', ' ')} profile provider ({provider})."
