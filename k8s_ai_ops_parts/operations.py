@@ -38,7 +38,7 @@ from ai_agent.routing import should_use_legacy_interpreter
 
 
 _LOG_CONSENT_INTENT_RE = re.compile(
-    r"\\b(why|diagnos\\w*|investigat\\w*|crash\\w*|error\\w*|fail\\w*|oom\\w*|memory|cpu|logs?|root cause|not ready|pending)\\b",
+    r"\b(why|diagnos\w*|investigat\w*|crash\w*|error\w*|fail\w*|oom\w*|memory|cpu|logs?|root cause|not ready|pending)\b",
     re.IGNORECASE,
 )
 
