@@ -12,7 +12,6 @@ class AIService:
         if self.commands is not None:
             self.commands.stop_service("ai")
 
-
     def __init__(self, commands=None):
         self.commands = commands
 
@@ -49,6 +48,41 @@ class AIService:
         return ai_assist._task_provider_selection(
             task, fallback_provider, fallback_key, fallback_model,
         )
+
+    def create_agent_runtime(self, registry=None, policy=None):
+        """Create the shared bounded agent engine; tools remain app-owned."""
+        from ai_agent import AgentPolicy, AgentRuntime, ToolRegistry
+        return AgentRuntime(registry or ToolRegistry(), policy or AgentPolicy())
+
+    def create_agent_adapter(self, provider=None, api_key=None, model=None, timeout_seconds=90):
+        """Create a structured tool-call adapter using KubeDock's existing provider boundary.
+
+        The adapter deliberately uses a provider-neutral JSON tool-call contract
+        for every currently supported provider. Native function-calling adapters
+        can replace it later without changing the registry or runtime.
+        """
+        import ai_assist
+        from ai_agent import PromptToolAdapter
+        fallback_provider = provider or self.provider()
+        fallback_key = self.api_key(fallback_provider) if api_key is None else api_key
+        fallback_model = model or self.model(fallback_provider)
+        selected_provider, selected_key, selected_model, error = self.task_provider_selection(
+            "quick", fallback_provider, fallback_key, fallback_model,
+        )
+        if error:
+            raise RuntimeError(error)
+        if selected_provider != "ollama" and not selected_key:
+            raise RuntimeError("Configure an AI provider API key in Settings.")
+        return PromptToolAdapter(
+            selected_provider, selected_key, selected_model,
+            ai_assist._call_provider, timeout_seconds=timeout_seconds,
+        )
+
+    def create_agent(self, registry=None, policy=None, provider=None, api_key=None, model=None):
+        """Return a ready runtime and adapter while leaving tool registration explicit."""
+        runtime = self.create_agent_runtime(registry, policy)
+        adapter = self.create_agent_adapter(provider, api_key, model)
+        return runtime, adapter
 
     def create_model_test_worker(self, provider, api_key, model, parent=None):
         """Create a provider/model connectivity test and track it for shutdown."""
