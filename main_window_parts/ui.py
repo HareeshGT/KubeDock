@@ -66,8 +66,8 @@ class UIMixin:
       tb_widget.setFixedHeight(44)
       self._toolbar = tb_widget
       tb = QHBoxLayout(tb_widget)
-      tb.setContentsMargins(8, 0, 8, 0)
-      tb.setSpacing(4)
+      tb.setContentsMargins(8, 0, 12, 0)
+      tb.setSpacing(3)
 
       def _tbtn(text, tooltip="", checkable=False, width=None):
         b = QPushButton()
@@ -187,8 +187,8 @@ class UIMixin:
       # a thousand pixels from the buttons it is supposed to separate.
       tb.addWidget(_sep()) # always-visible sep before connect buttons
 
-      self.act_connect  = _tbtn(" Connect",  "Connect to server")
-      self.act_disconnect = _tbtn(" Disconnect", "Disconnect")
+      self.act_connect  = _tbtn(" Connect",  "Connect to server", width=82)
+      self.act_disconnect = _tbtn(" Disconnect", "Disconnect", width=94)
       self.act_connect.clicked.connect(self._connect)
       # clicked emits a bool (the button's checked state) — connecting
       # directly to _disconnect(self, reason="Disconnected") lets that
@@ -207,6 +207,7 @@ class UIMixin:
         "", "Switch User — change the terminal and file-operations user",
         icon_name="user-round-cog",
       )
+      self.switch_user_btn.setFixedSize(28, 28)
       self.switch_user_btn.setAccessibleName("Switch User")
       self.switch_user_btn.clicked.connect(self._on_switch_user_btn)
       tb.addWidget(self.switch_user_btn)

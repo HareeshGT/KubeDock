@@ -20,17 +20,24 @@ class DashboardUIMixin:
       self.ctrl_bar.setObjectName("dash_ctrl")
       self.ctrl_bar.setFixedHeight(68)
       cb = QHBoxLayout(self.ctrl_bar)
-      cb.setContentsMargins(16, 8, 16, 8)
-      cb.setSpacing(10)
+      # Keep the header's trailing controls inside the available viewport.
+      # The title is allowed to elide before the status/actions are pushed off-screen.
+      cb.setContentsMargins(12, 8, 12, 8)
+      cb.setSpacing(8)
   
       # Page header: 22px title + secondary subtitle (design-system hierarchy)
       title_col = QVBoxLayout()
       title_col.setSpacing(0)
-      self.page_title_lbl = QLabel(" Connected Machine ")
+      self.page_title_lbl = QLabel("Connected Machine")
       self.page_sub_lbl = QLabel("Live host and Kubernetes infrastructure")
-      title_col.addWidget(self.page_title_lbl)
-      title_col.addWidget(self.page_sub_lbl)
-      cb.addLayout(title_col)
+      for label in (self.page_title_lbl, self.page_sub_lbl):
+        label.setMinimumWidth(0)
+        label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+      title_col_widget = QWidget()
+      title_col_widget.setLayout(title_col)
+      title_col_widget.setMinimumWidth(0)
+      title_col_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+      cb.addWidget(title_col_widget, 1)
       cb.addStretch()
   
       self.updated_lbl = QLabel("")
