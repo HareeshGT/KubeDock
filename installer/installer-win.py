@@ -70,18 +70,22 @@ def offer_embedded_model_download() -> None:
 
     data_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local")))
     model_dir = data_root / "KubeDock" / "models"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    destination = model_dir / EMBEDDED_MODEL_FILENAME
-    if destination.is_file():
-        existing_digest = hashlib.sha256()
-        with destination.open("rb") as existing:
-            for chunk in iter(lambda: existing.read(1024 * 1024), b""):
-                existing_digest.update(chunk)
-        digest = existing_digest.hexdigest()
-        if digest == EMBEDDED_MODEL_SHA256:
-            UI.success(f"Embedded AI model already installed: {destination}")
-            return
-        destination.unlink()
+    try:
+        model_dir.mkdir(parents=True, exist_ok=True)
+        destination = model_dir / EMBEDDED_MODEL_FILENAME
+        if destination.is_file():
+            existing_digest = hashlib.sha256()
+            with destination.open("rb") as existing:
+                for chunk in iter(lambda: existing.read(1024 * 1024), b""):
+                    existing_digest.update(chunk)
+            if existing_digest.hexdigest() == EMBEDDED_MODEL_SHA256:
+                UI.success(f"Embedded AI model already installed: {destination}")
+                return
+            destination.unlink()
+    except OSError as exc:
+        UI.warning(f"Could not prepare the model cache: {exc}")
+        UI.info("KubeDock itself is installed; skipping the optional model download.")
+        return
 
     temporary = destination.with_suffix(destination.suffix + ".part")
     digest = hashlib.sha256()
@@ -112,7 +116,10 @@ def offer_embedded_model_download() -> None:
         UI.info("The model download is complete; the app must select Embedded Local Model to use it.")
     except Exception as exc:
         UI.clear_progress()
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
         UI.warning(f"Could not download the Embedded AI model: {exc}")
         UI.info("KubeDock itself is installed. You can retry by rerunning the installer and opting in.")
 
