@@ -253,7 +253,7 @@ class K8sAIOpsOperationsMixin:
                     "Allow pod log collection?",
                     "To investigate this issue, the agent can collect a bounded pod-log sample. "
                     "Logs will be redacted on a best-effort basis before being sent to the configured hosted AI provider. "
-                    "Without consent, the agent can still inspect pod lists, deployments, nodes, and events, but cannot read pod logs.",
+                    "If you decline, the request falls back to the existing Ops Mind interpreter, which can retrieve logs locally. Any investigation evidence sent to a hosted provider is subject to its separate consent prompt.",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
