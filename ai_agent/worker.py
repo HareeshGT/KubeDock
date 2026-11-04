@@ -10,6 +10,7 @@ class AgentRunWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, runtime, adapter, request, conversation=None, parent=None):
+        """Prepare a single agent turn for execution outside the Qt UI thread."""
         super().__init__(parent)
         self.runtime = runtime
         self.adapter = adapter
@@ -18,6 +19,7 @@ class AgentRunWorker(QThread):
         self.finished.connect(self.deleteLater)
 
     def run(self):
+        """Execute the agent and emit its result or a bounded error message."""
         try:
             result = self.runtime.run(
                 self.request, self.adapter, conversation=self.conversation,
