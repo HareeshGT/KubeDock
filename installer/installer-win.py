@@ -422,7 +422,7 @@ def install_requirements(python, repo, include_qwen: bool = False):
 def verify(python, include_qwen: bool = False):
     code = (
         "import importlib; "
-        "mods=['PyQt5','paramiko','speech_recognition','pyaudio','pyttsx3','PyInstaller']; "
+        "mods=['PyQt5','paramiko','speech_recognition','pyaudio','pyttsx3','PyInstaller','llama_cpp']; "
         "[print('[OK]', m) or importlib.import_module(m) for m in mods]"
     )
     run([python, "-c", code])
@@ -473,6 +473,7 @@ def build(python, repo, include_qwen: bool = False):
         "--hidden-import=webapp",
         "--hidden-import=webapp.server",
         "--hidden-import=ai_assist",
+        "--collect-all=llama_cpp",
         "--hidden-import=k8s_ai_ops",
         "--hidden-import=speech_recognition",
         "--hidden-import=pyaudio",

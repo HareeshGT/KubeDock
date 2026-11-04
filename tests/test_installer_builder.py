@@ -66,6 +66,7 @@ class PrebuiltBundleBuilderTests(unittest.TestCase):
         args = builder.build_args(include_qwen=False)
         joined = " ".join(args)
         self.assertIn("--collect-all=paramiko", joined)
+        self.assertIn("--collect-all=llama_cpp", joined)
         self.assertIn("--hidden-import=webapp.server", joined)
         self.assertIn("--collect-submodules=k8s_ai_ops_parts", joined)
         self.assertIn("assets", joined)

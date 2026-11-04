@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a bundled, CPU-capable local inference option to KubeDock without replacing or changing the existing API-provider and Ollama flows.
+Add an in-process, CPU-capable Python GGUF inference option to KubeDock without replacing or changing the existing API-provider and Ollama flows.
 
 ## Compatibility requirements
 
@@ -14,7 +14,8 @@ Add a bundled, CPU-capable local inference option to KubeDock without replacing 
 
 ## User experience
 
-- Add an independently selectable **Embedded Local Model** provider in AI settings.
+- Add an independently selectable **Embedded Local AI (Python / CPU)** provider in AI settings.
+- New installations default to Embedded Local AI when no provider or API key has been configured; existing saved provider selections are preserved.
 - Retain model selection for every existing API provider. The existing editable model selector and custom-model management remain available.
 - Offer a local model selector that lists only compatible, verified local model artifacts.
 - Offer an explicit model download during installation. If skipped, the user can rerun the installer to add the model. Do not attempt to write model weights into a protected application directory from the running app.
@@ -23,7 +24,7 @@ Add a bundled, CPU-capable local inference option to KubeDock without replacing 
 
 ## Runtime and model constraints
 
-- Bundle the inference engine with KubeDock installers for supported Windows, macOS, and Linux architectures. Users must not need to install Ollama, llama.cpp, Python packages, or another runtime separately.
+- Bundle `llama-cpp-python` and its native libraries into KubeDock release/source-build artifacts for supported Windows, macOS, and Linux architectures. Users must not need to install Ollama, llama.cpp, Python packages, or another runtime separately.
 - Keep model weights as the only separately downloaded runtime asset; enforce a maximum artifact size of 500 MB. When selected during installation, install them directly into the KubeDock application bundle. A skipped model is installed by rerunning the installer; runtime self-updates must not write into protected app directories.
 - Prefer a CPU baseline. GPU acceleration may be an optional platform-specific optimization and must not be required.
 - Pin model artifact URL, license, expected byte size, and SHA-256 digest in reviewed application metadata. Reject oversized, truncated, mismatched, or unverified artifacts. Use a temporary file and atomic promotion after verification.
@@ -33,7 +34,7 @@ Add a bundled, CPU-capable local inference option to KubeDock without replacing 
 ## Architecture work
 
 1. Inspect the existing installer workflows and supported OS/architecture matrix before selecting the native runtime packaging strategy.
-2. Add a provider adapter that conforms to the existing provider boundary and does not alter other provider request builders.
+2. Add a provider adapter that invokes `llama-cpp-python` directly in the KubeDock worker process and does not alter other provider request builders.
 3. Implement a bounded model catalogue and downloader with checksum verification, cancellation, and atomic installation into the app's `models/` resources directory; fail with a clear installer/admin instruction if the bundle is not writable.
 4. Implement lazy model initialization and inference in a managed worker; resolve weights from the app bundle, ensure one model load per selected artifact, and shut down safely.
 5. Extend AI settings persistence additively, with migrations/defaults that preserve existing saved provider and API model selections.
@@ -54,4 +55,4 @@ Add a bundled, CPU-capable local inference option to KubeDock without replacing 
 
 ## Current validation status
 
-This file records the implementation requirements and acceptance criteria only. It does not claim that the runtime, downloader, UI, installers, or tests have been implemented or validated.
+The initial Python provider integration and PyInstaller collection wiring are implemented on the feature branch. Cross-platform native-wheel resolution, release builds, runtime inference, installer flows, and automated test execution still require validation; this plan does not claim those checks have passed.
