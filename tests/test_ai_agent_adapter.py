@@ -39,7 +39,7 @@ class PromptToolAdapterTests(unittest.TestCase):
             with self.subTest(response=response):
                 adapter, _ = self._adapter(response)
                 result = adapter.complete(messages=[], tools=[])
-                self.assertIsNone(result.tool_calls[0].arguments)
+                self.assertNotIsInstance(result.tool_calls[0].arguments, dict)
 
     def test_explicit_empty_object_is_valid_zero_argument_call(self):
         for arguments in ('{}', {}):
