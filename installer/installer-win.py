@@ -701,7 +701,7 @@ def install_prebuilt_release() -> Path:
         UI.success(f"Installed to: {destination}")
         UI.info(f"Executable: {destination / 'KubeDock.exe'}")
         UI.info("Optional Qwen3-TTS is not included in the fast bundle.")
-        offer_embedded_model_download()
+        offer_embedded_model_download(destination)
         return destination
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
