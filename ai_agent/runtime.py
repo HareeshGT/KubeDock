@@ -32,9 +32,12 @@ class AgentRuntime:
                 continue
             if not isinstance(item, Mapping):
                 raise ValueError("Provider returned a malformed tool call.")
-            args = item.get("arguments", {})
+            args = item.get("arguments", None)
             if isinstance(args, str):
-                args = json.loads(args)
+                try:
+                    args = json.loads(args)
+                except (TypeError, ValueError):
+                    args = None
             calls.append(ToolCall(str(item.get("id") or ""), str(item.get("name") or ""), args))
         return AssistantMessage(str(response.get("content") or ""), calls, str(response.get("finish_reason") or ""))
 
