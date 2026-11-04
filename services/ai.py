@@ -91,7 +91,7 @@ class AIService:
         )
         if error:
             raise RuntimeError(error)
-        if selected_provider != "ollama" and not selected_key:
+        if selected_provider not in ai_assist.LOCAL_PROVIDER_IDS and not selected_key:
             raise RuntimeError("Configure an AI provider API key in Settings.")
         return PromptToolAdapter(
             selected_provider, selected_key, selected_model,
@@ -123,7 +123,7 @@ class AIService:
         import ai_assist
         provider = ai_assist.get_provider()
         api_key = ai_assist.get_api_key(provider)
-        if not api_key:
+        if not api_key and provider not in ai_assist.LOCAL_PROVIDER_IDS:
             raise RuntimeError("Configure an AI provider API key in Settings")
         return self._register(ai_assist.AICommandExplainWorker(
             provider, api_key, ai_assist.get_model(provider),
@@ -135,7 +135,7 @@ class AIService:
         import ai_assist
         provider = ai_assist.get_provider()
         api_key = ai_assist.get_api_key(provider)
-        if not api_key:
+        if not api_key and provider not in ai_assist.LOCAL_PROVIDER_IDS:
             raise RuntimeError("Configure an AI provider API key in Settings")
         return self._register(ai_assist.AIExplainWorker(
             provider, api_key, ai_assist.get_model(provider),
