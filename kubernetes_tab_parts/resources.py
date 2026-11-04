@@ -199,8 +199,6 @@ class KubernetesResourcesMixin:
       ])
       item.setToolTip(0, node.tooltip)
       item.setToolTip(1, node.tooltip)
-      item.setAccessibleText(0, f"Node {node.name}")
-      item.setAccessibleText(1, f"Health {node.status}")
       item.setForeground(1, QColor(tone_colors[node.tone]))
       item.setData(0, Qt.UserRole, node)
       self.node_tree.addTopLevelItem(item)
@@ -226,7 +224,7 @@ class KubernetesResourcesMixin:
             else T["SUCCESS"]
           )
         bar.setStyleSheet(
-          f"QProgressBar {{ color: {T['TEXT']}; background: {T['BG_ITEM']}; "
+          f"QProgressBar {{ color: {T['TEXT_PRIMARY']}; background: {T['BG_ITEM']}; "
           f"border: 1px solid {T['BORDER']}; border-radius: 5px; "
           "text-align: center; padding: 1px; }"
           f"QProgressBar::chunk {{ background: {bar_color}; border-radius: 4px; }}"
