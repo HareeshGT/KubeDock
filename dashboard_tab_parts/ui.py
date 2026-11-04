@@ -30,6 +30,10 @@ class DashboardUIMixin:
       title_col.setSpacing(0)
       self.page_title_lbl = QLabel("Connected Machine")
       self.page_sub_lbl = QLabel("Live host and Kubernetes infrastructure")
+      self.page_title_lbl.setObjectName("dashboardPageTitle")
+      self.page_sub_lbl.setObjectName("dashboardPageSubtitle")
+      title_col.addWidget(self.page_title_lbl)
+      title_col.addWidget(self.page_sub_lbl)
       for label in (self.page_title_lbl, self.page_sub_lbl):
         label.setMinimumWidth(0)
         label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
