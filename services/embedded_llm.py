@@ -13,6 +13,7 @@ CHUNK_BYTES = 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 
 MODEL_DIRECTORY_NAME = "models"
+DEFAULT_MODEL_FILENAME = "SmolLM2-360M-Instruct-Q4_K_M.gguf"
 
 
 def bundled_model_directory() -> Path:
@@ -125,8 +126,8 @@ def generate(model_path: Path, prompt: str, *, max_tokens: int = 1024) -> str:
         from llama_cpp import Llama
     except ImportError as exc:
         raise EmbeddedModelError(
-            "This KubeDock build does not include the embedded inference runtime yet. "
-            "Select an API provider or Ollama."
+            "The embedded Python inference runtime (llama-cpp-python) is not available in this KubeDock build. "
+            "Reinstall a build that includes Embedded Local AI."
         ) from exc
     try:
         engine = Llama(model_path=str(model_path), n_ctx=4096,
