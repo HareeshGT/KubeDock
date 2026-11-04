@@ -12,7 +12,6 @@ from .terminal import TerminalService
 from .ai import AIService
 from .webapp import WebAppService
 from .persistence import DatabaseService, SettingsService
-from .design_intelligence import DesignIntelligenceService, DesignIntelligenceError
 
 __all__ = [
     "AppServices", "ConnectionService", "ConnectionSnapshot",
@@ -20,5 +19,4 @@ __all__ = [
     "ServiceStatus", "KubernetesService", "DockerService",
     "DashboardService", "FileManagerService", "TerminalService",
     "AIService", "WebAppService", "DatabaseService", "SettingsService",
-    "DesignIntelligenceService", "DesignIntelligenceError",
 ]
