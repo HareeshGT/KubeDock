@@ -30,10 +30,15 @@ instead of keeping them quiet behind progress indicators.
 - `KUBEDOCK_INSTALL_MODE=release`: require the prebuilt release; do not fall back to a slow source build.
 - `KUBEDOCK_INSTALL_MODE=source`: select/build a branch with the existing installer.
 
-Passing a branch argument to `installer/installer.sh` selects source mode for
-that branch. The Windows Python installer follows the same environment variable.
-The macOS package wizard presents fast install first and retains an explicit
-source-build option.
+Passing a branch argument to `installer/installer.sh` or
+`installer/installer-win.py` selects source mode for that branch. On Windows,
+use either `python installer/installer-win.py <branch>` or
+`python installer/installer-win.py --branch <branch>`; the branch is validated
+against the remote repository and cloned directly without an interactive branch
+selection. The `KUBEDECK_BRANCH` and `KUBEDOCK_BRANCH` environment variables
+are also accepted when no command-line branch is supplied. An explicit branch
+cannot be combined with `KUBEDOCK_INSTALL_MODE=release`. The macOS package
+wizard presents fast install first and retains an explicit source-build option.
 
 ## Published bundles
 
