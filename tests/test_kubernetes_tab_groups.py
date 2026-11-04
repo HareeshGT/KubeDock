@@ -9,7 +9,7 @@ class KubernetesTabGroupTests(unittest.TestCase):
         expected = {
             "pods", "deployments", "statefulsets", "daemonsets", "hpa",
             "jobs & cronjobs", "services", "ingress", "storage",
-            "config & secrets", "events", "terminal", "tunnels", "ops mind",
+            "config & secrets", "events", "nodes", "terminal", "tunnels", "ops mind",
         }
         memberships = [title for titles in groups.values() for title in titles]
         self.assertEqual(set(memberships), expected)
