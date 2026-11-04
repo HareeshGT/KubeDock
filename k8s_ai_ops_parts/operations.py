@@ -186,9 +186,9 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(True)
             self._execute_action(followup['action'])
             return
-        # Route read-only questions through the multi-step agent. Explicit
-        # mutation requests remain on the established interpreter and its
-        # existing risk checks, confirmation dialogs, and verification flow.
+        # Route supported read-only questions through the multi-step agent.
+        # Mutations and reads needing describe/key/investigation capabilities
+        # stay on the established interpreter and its safety/verification flow.
         if not should_use_legacy_interpreter(request):
             # If the user declines agent log sharing, use the established
             # interpreter/investigation flow and its own evidence consent gate.
