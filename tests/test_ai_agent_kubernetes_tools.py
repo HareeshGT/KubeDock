@@ -61,6 +61,11 @@ class KubernetesToolTests(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnopqrstuvwxyz", result)
         self.assertIn("[REDACTED]", result)
 
+    def test_namespace_must_be_a_dns_label(self):
+        with self.assertRaises(ValueError):
+            self.registry.get("k8s_list_pods").handler({"namespace": "dev.team"})
+        self.assertEqual(self.commands.commands, [])
+
     def test_context_is_validated(self):
         with self.assertRaises(ValueError):
             register_kubernetes_read_tools(ToolRegistry(), self.service, context="dev; rm -rf /")
