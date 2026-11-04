@@ -242,10 +242,6 @@ class K8sAIOpsOperationsMixin:
         if ai_service is None:
             self._write_error("The shared AI service is unavailable; cannot start the agent.")
             return True
-        self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
-        self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')} · Agent mode (read-only)</span>""")
-        self._set_busy(True)
-        self._speak("Checking the cluster.")
         try:
             settings = ai_service.settings()
             quick_profile = (settings.get("task_profiles") or {}).get("quick") or {}
@@ -264,6 +260,10 @@ class K8sAIOpsOperationsMixin:
                 if choice != QMessageBox.Yes:
                     return False
                 include_logs = True
+            self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
+            self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')} · Agent mode (read-only)</span>""")
+            self._set_busy(True)
+            self._speak("Checking the cluster.")
             runtime, adapter = ai_service.create_agent(
                 context=kube_context, include_logs=include_logs,
             )
