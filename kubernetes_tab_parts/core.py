@@ -574,8 +574,31 @@ class KubernetesCoreMixin:
 
   # ── Terminal tab ──────────────────────────────────────────
 
+  def _set_request_status(self, state: str, detail: str = ""):
+    """Update the persistent, accessible feedback for Kubernetes requests."""
+    label = getattr(self, "request_status_lbl", None)
+    if label is None:
+      return
+    states = {
+      "working": ("Working…", "ACCENT2"),
+      "success": ("Updated", "SUCCESS"),
+      "error": ("Request failed", "DANGER"),
+      "ready": ("Ready", "TEXT_MUTED"),
+    }
+    text, color_key = states.get(state, states["ready"])
+    label.setText(text)
+    label.setStyleSheet(
+      f"color: {T[color_key]}; font-size: 11px; padding: 0 6px;"
+    )
+    description = detail.strip() or text
+    label.setToolTip(description)
+    label.setAccessibleDescription(description)
+    self.status_msg.emit(description[:80])
+
+
   def _run_cmd(self, cmd: str, callback, apply_context: bool = True, on_error=None, sudo_user=None):
     if not self.ssh:
+      self._set_request_status("error", "Connect to a Kubernetes host before running commands")
       return
     if apply_context:
       cmd = self._apply_context_to_command(cmd)
@@ -583,6 +606,11 @@ class KubernetesCoreMixin:
     started = time.monotonic()
     self._active_command_count = getattr(self, "_active_command_count", 0) + 1
     self.progress.show()
+    self.progress.setToolTip(f"Running Kubernetes request: {operation}")
+    refresh_btn = getattr(self, "refresh_btn", None)
+    if refresh_btn is not None:
+      refresh_btn.setEnabled(False)
+    self._set_request_status("working", f"Running Kubernetes request: {operation}")
     worker = (
       self.kubernetes_service.create_worker(
         None, cmd, sudo_user=sudo_user or getattr(self, "_sudo_user", None)
@@ -595,15 +623,29 @@ class KubernetesCoreMixin:
       self._active_command_count = max(0, getattr(self, "_active_command_count", 1) - 1)
       if self._active_command_count == 0:
         self.progress.hide()
+        self.progress.setToolTip("No Kubernetes request is running")
+        if refresh_btn is not None:
+          refresh_btn.setEnabled(True)
+      return self._active_command_count
 
     def on_done(out):
       callback_started = time.monotonic()
+      callback_error = None
       try:
         callback(out)
+      except Exception as exc:
+        callback_error = exc
+        _LOG.exception("kubernetes_response_handler_failed operation=%s", operation)
+        self._log(f"[error] Unable to process Kubernetes response: {exc}")
       finally:
         callback_ms = (time.monotonic() - callback_started) * 1000.0
         total_ms = (time.monotonic() - started) * 1000.0
-        release_progress()
+        remaining = release_progress()
+        if remaining == 0:
+          if callback_error is None:
+            self._set_request_status("success", f"Kubernetes request completed: {operation}")
+          else:
+            self._set_request_status("error", f"Could not process {operation}: {callback_error}")
         _LOG.debug(
           "kubernetes_request_complete operation=%s request_and_dispatch_ms=%.1f callback_ms=%.1f",
           operation, total_ms, callback_ms,
@@ -619,7 +661,9 @@ class KubernetesCoreMixin:
           on_error(e)
       finally:
         total_ms = (time.monotonic() - started) * 1000.0
-        release_progress()
+        remaining = release_progress()
+        if remaining == 0:
+          self._set_request_status("error", f"Kubernetes request failed: {e}")
         _LOG.debug(
           "kubernetes_request_failed operation=%s elapsed_ms=%.1f",
           operation, total_ms,
