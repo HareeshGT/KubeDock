@@ -13,7 +13,7 @@ _CONTEXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 
 def _validate_namespace(value):
     value = str(value or "").strip()
-    if not _NAME_RE.fullmatch(value) or len(value) > 253:
+    if not _NAMESPACE_RE.fullmatch(value) or len(value) > 63:
         raise ValueError("A valid Kubernetes namespace is required.")
     return value
 
@@ -85,7 +85,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context=""):
 
     registry.register(ToolSpec(
         "k8s_list_pods", "List pods in one namespace. Read-only.",
-        {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 253}},
+        {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 63}},
          "required": ["namespace"], "additionalProperties": False},
         list_pods,
     ))
