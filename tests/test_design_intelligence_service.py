@@ -1,5 +1,4 @@
 """Tests for the optional real DIS HTTP integration."""
-import io
 import json
 import unittest
 from unittest.mock import patch
@@ -69,6 +68,16 @@ class DesignIntelligenceServiceTests(unittest.TestCase):
         service = DesignIntelligenceService("http://127.0.0.1:8000")
         with self.assertRaisesRegex(DesignIntelligenceError, "quality evaluation"):
             service.run_design_review("Review the pod details panel")
+
+    def test_remote_http_and_credential_bearing_urls_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            DesignIntelligenceService("http://dis.example.com")
+        with self.assertRaisesRegex(ValueError, "without credentials"):
+            DesignIntelligenceService("https://user:password@dis.example.com")
+
+    def test_localhost_http_is_allowed(self):
+        service = DesignIntelligenceService("http://127.0.0.1:8000/")
+        self.assertEqual(service.base_url, "http://127.0.0.1:8000")
 
     def test_brief_and_autonomy_are_validated_before_network_call(self):
         service = DesignIntelligenceService("http://127.0.0.1:8000")
