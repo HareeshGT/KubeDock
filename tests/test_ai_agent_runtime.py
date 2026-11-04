@@ -122,6 +122,19 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_empty_request_is_rejected(self):
         self.assertEqual(AgentRuntime(self.registry).run(" ", FakeAdapter([])).status, AgentStatus.ERROR)
 
+    def test_empty_provider_response_is_not_marked_completed(self):
+        adapter = FakeAdapter([AssistantMessage(content="")])
+        result = AgentRuntime(self.registry).run("Check api", adapter)
+        self.assertEqual(result.status, AgentStatus.ERROR)
+        self.assertIn("empty response", result.error)
+        self.assertFalse(any(event.kind == "completed" for event in result.events))
+
+    def test_whitespace_provider_response_is_not_marked_completed(self):
+        adapter = FakeAdapter([AssistantMessage(content="  \\n\\t ")])
+        result = AgentRuntime(self.registry).run("Check api", adapter)
+        self.assertEqual(result.status, AgentStatus.ERROR)
+        self.assertFalse(any(event.kind == "completed" for event in result.events))
+
     def test_duplicate_tool_registration_is_rejected(self):
         spec = ToolSpec("another_tool", "A tool.", {"type": "object"}, lambda args: None)
         self.registry.register(spec)
