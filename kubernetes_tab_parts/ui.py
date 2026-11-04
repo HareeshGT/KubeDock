@@ -1,4 +1,5 @@
 from .common import *
+from ui_kit import pill_qss
 
 
 class KubernetesUiMixin:
@@ -201,7 +202,29 @@ class KubernetesUiMixin:
     tb.addWidget(self.pod_filter)
 
     self.pod_count_lbl = QLabel("")
+    self.pod_count_lbl.setAccessibleName("Running pod count")
     tb.addWidget(self.pod_count_lbl)
+
+    # Compact live summary; state names supplement color for accessibility.
+    self.pod_health_summary = QWidget()
+    self.pod_health_summary.setObjectName("pod_health_summary")
+    summary_row = QHBoxLayout(self.pod_health_summary)
+    summary_row.setContentsMargins(0, 0, 0, 0)
+    summary_row.setSpacing(6)
+    for attr, label, key in (
+      ("pod_healthy_lbl", "0 healthy", "SUCCESS"),
+      ("pod_warning_lbl", "0 attention", "WARNING"),
+      ("pod_critical_lbl", "0 critical", "DANGER"),
+    ):
+      badge = QLabel(label)
+      badge.setStyleSheet(pill_qss(T[key]))
+      badge.setAccessibleName(label)
+      badge.setToolTip(label)
+      setattr(self, attr, badge)
+      summary_row.addWidget(badge)
+    self.pod_health_summary.setAccessibleName("Pod health summary")
+    self.pod_health_summary.hide()
+    tb.addWidget(self.pod_health_summary)
     tb.addStretch()
 
     # Safe, frequent actions live inside one clustered pill; the
