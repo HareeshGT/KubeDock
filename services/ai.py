@@ -97,6 +97,13 @@ class AIService:
         adapter = self.create_agent_adapter(provider, api_key, model)
         return runtime, adapter
 
+    def create_agent_worker(self, runtime, adapter, request, conversation=None, parent=None):
+        """Run a bounded agent turn in the shared worker lifecycle."""
+        from ai_agent.worker import AgentRunWorker
+        return self._register(AgentRunWorker(
+            runtime, adapter, request, conversation=conversation, parent=parent,
+        ), "ai:agent")
+
     def create_model_test_worker(self, provider, api_key, model, parent=None):
         """Create a provider/model connectivity test and track it for shutdown."""
         import ai_assist
