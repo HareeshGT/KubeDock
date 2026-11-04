@@ -201,7 +201,13 @@ class UIMixin:
       tb.addWidget(self.act_connect)
       tb.addWidget(self.act_disconnect)
 
-      self.switch_user_btn = _tbtn(" Switch User", "sudo -u <user> — switch context for terminal and file ops")
+      # Keep the far-right toolbar action compact so it cannot be clipped
+      # on narrower windows; the tooltip and accessible name retain its meaning.
+      self.switch_user_btn = _icon_btn(
+        "", "Switch User — change the terminal and file-operations user",
+        icon_name="user-round-cog",
+      )
+      self.switch_user_btn.setAccessibleName("Switch User")
       self.switch_user_btn.clicked.connect(self._on_switch_user_btn)
       tb.addWidget(self.switch_user_btn)
 
