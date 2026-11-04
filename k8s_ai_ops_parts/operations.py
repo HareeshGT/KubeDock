@@ -198,7 +198,7 @@ class K8sAIOpsOperationsMixin:
         ai_service = getattr(self, "ai_service", None)
         provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
         api_key = ai_service.api_key(provider) if ai_service is not None else ai_assist.get_api_key(provider)
-        if not api_key:
+        if not api_key and provider not in ai_assist.LOCAL_PROVIDER_IDS:
             label = ai_assist.PROVIDERS.get(provider, {}).get('label', provider)
             QMessageBox.information(self, 'No API key set', f'Add a {label} API key in Settings → AI to use AI Kubernetes Operations.')
             return
