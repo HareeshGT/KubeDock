@@ -68,6 +68,16 @@ class AgentRuntimeTests(unittest.TestCase):
         feedback = next(m["content"] for m in result.messages if m.get("role") == "tool")
         self.assertIn("JSON object", feedback)
 
+
+    def test_mapping_response_missing_arguments_is_invalid(self):
+        adapter = FakeAdapter([
+            {"tool_calls": [{"id": "c1", "name": "inspect_pod"}]},
+            AssistantMessage(content="The malformed call was rejected."),
+        ])
+        result = AgentRuntime(self.registry).run("Check api", adapter)
+        self.assertEqual(result.tool_results[0].status, "invalid_arguments")
+        self.assertEqual(self.executed, [])
+
     def test_unknown_tool_is_rejected(self):
         adapter = FakeAdapter([AssistantMessage(tool_calls=[ToolCall("c1", "run_shell", {"command": "whoami"})]),
                                AssistantMessage(content="I cannot run that tool.")])
