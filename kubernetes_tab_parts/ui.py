@@ -33,7 +33,8 @@ class KubernetesUiMixin:
     ctx_row.addWidget(ctx_lbl)
     self.context_combo = QComboBox()
     self.context_combo.setObjectName("context_combo")
-    self.context_combo.setMinimumWidth(190)
+    self.context_combo.setMinimumWidth(120)
+    self.context_combo.setMaximumWidth(260)
     self.context_combo.setFixedHeight(30)
     self.context_combo.setMaxVisibleItems(12)
     self.context_combo.setEditable(True)
@@ -73,7 +74,8 @@ class KubernetesUiMixin:
     ns_row.addWidget(ns_lbl)
     self.ns_combo = QComboBox()
     self.ns_combo.setObjectName("ns_combo")
-    self.ns_combo.setMinimumWidth(190)
+    self.ns_combo.setMinimumWidth(120)
+    self.ns_combo.setMaximumWidth(260)
     self.ns_combo.setFixedHeight(30)
     self.ns_combo.setMaxVisibleItems(12)
     self.ns_combo.setEditable(True)
@@ -122,8 +124,9 @@ class KubernetesUiMixin:
     # Compact navigation context: current context → namespace → resource.
     self.navigation_path_lbl = QLabel("Context: —  ›  Namespace: —  ›  Pods")
     self.navigation_path_lbl.setObjectName("k8s_navigation_path")
-    self.navigation_path_lbl.setMinimumWidth(150)
-    self.navigation_path_lbl.setMaximumWidth(460)
+    self.navigation_path_lbl.setMinimumWidth(0)
+    self.navigation_path_lbl.setMaximumWidth(220)
+    self.navigation_path_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     self.navigation_path_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
     self.navigation_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
     self.navigation_path_lbl.setStyleSheet(
@@ -224,7 +227,7 @@ class KubernetesUiMixin:
     tb.setSpacing(8)
     self.pod_filter = QLineEdit()
     self.pod_filter.setPlaceholderText(" Filter pods…")
-    self.pod_filter.setMaximumWidth(200)
+    self.pod_filter.setMaximumWidth(160)
     self.pod_filter.textChanged.connect(self._filter_pods)
     tb.addWidget(self.pod_filter)
 
@@ -237,7 +240,7 @@ class KubernetesUiMixin:
     self.pod_health_summary.setObjectName("pod_health_summary")
     summary_row = QHBoxLayout(self.pod_health_summary)
     summary_row.setContentsMargins(0, 0, 0, 0)
-    summary_row.setSpacing(6)
+    summary_row.setSpacing(4)
     for attr, label, key in (
       ("pod_healthy_lbl", "0 healthy", "SUCCESS"),
       ("pod_warning_lbl", "0 attention", "WARNING"),
@@ -245,7 +248,7 @@ class KubernetesUiMixin:
       ("pod_unknown_lbl", "0 unknown", "TEXT_MUTED"),
     ):
       badge = QLabel(label)
-      badge.setStyleSheet(pill_qss(T[key]))
+      badge.setStyleSheet(pill_qss(T[key]) + "padding: 1px 5px;")
       badge.setAccessibleName(label)
       badge.setToolTip(label)
       setattr(self, attr, badge)
@@ -270,7 +273,7 @@ class KubernetesUiMixin:
     ]:
       btn = self._toolbar_btn(label)
       btn.setFlat(True)
-      btn.setStyleSheet("border: none; padding: 0 14px; background: transparent;")
+      btn.setStyleSheet("border: none; padding: 0 8px; background: transparent;")
       setattr(self, obj, btn)
       btn.clicked.connect(slot)
       cl.addWidget(btn)

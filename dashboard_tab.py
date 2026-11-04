@@ -1100,6 +1100,6 @@ class DashboardTab(DashboardConnectionMixin, DashboardUIMixin, DashboardRefreshM
         self._build_ui()
         self.apply_refresh_settings()
         self._show_disconnected()
-    NODE_GRID_COLS = 3
+    NODE_GRID_COLS = 2  # maximum responsive columns; narrow views fall back to one
     NODE_CARD_MIN_SIDE = 320
     NODE_CARD_MAX_SIDE = 420
