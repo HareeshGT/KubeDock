@@ -45,9 +45,14 @@ command is built; log output is redacted before it returns to the model.
 
 Existing Ops Mind and Kubernetes operations remain unchanged and continue to
 use their existing validation, confirmation, RBAC, and verification paths.
-No mutation tool is registered. Docker, SSH host inspection, and monitoring
-tools remain follow-up integrations and must use the same narrow service
-interfaces rather than bypassing existing connection ownership or safeguards.
+No mutation tool is registered. Explicit mutation requests remain on the
+existing Ops Mind path and retain its confirmation, protected-namespace, RBAC,
+and verification checks. Read-only Ops Mind requests now use the multi-step
+agent and show a compact tool timeline. Hosted-provider diagnostic requests
+ask before enabling the pod-log tool; declining leaves metadata, node, and
+event tools available but does not expose logs to the agent. Local Ollama can
+use the bounded log tool without sending logs to a hosted provider. Docker,
+SSH host inspection, and monitoring tools remain follow-up integrations.
 
 ## Test
 
