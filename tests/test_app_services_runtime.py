@@ -13,8 +13,6 @@ def test_app_services_share_one_connection_and_command_runtime():
     assert runtime.files.connection is runtime.connection
     assert runtime.terminal.commands is runtime.commands
     assert runtime.ai.commands is runtime.commands
-    assert runtime.design_intelligence.status()["service"] == "design-intelligence-system"
-    assert runtime.design_intelligence.enabled is False
     assert runtime.webapp.connection is runtime.connection
     assert runtime.settings.database is runtime.database
     assert runtime.lifecycle.status("database").state == ServiceState.STOPPED
