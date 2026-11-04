@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import shlex
 import unicodedata
-import json
 
 from ai_assist import _redact_sensitive_text
 from ..models import ToolSpec
@@ -84,20 +83,13 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         key = str(args["key"] or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,253}", key):
             raise ValueError("A valid ConfigMap data key is required.")
-        raw = _run(kubernetes_service,
-                   _base(selected_context, namespace) + " get configmap/" + shlex.quote(name) + " -o json", 20)
-        try:
-            obj = json.loads(raw)
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError("Kubernetes returned an invalid ConfigMap JSON response.") from exc
-        data = obj.get("data") or {}
-        if key not in data:
-            return {"found": False, "resource": "ConfigMap", "name": name,
-                    "namespace": namespace, "key": key,
-                    "reason": "The ConfigMap exists, but the requested key is not present."}
-        value = data[key]
-        if not isinstance(value, str):
-            raise RuntimeError("The requested ConfigMap key did not contain a string value.")
+        jsonpath = shlex.quote("{.data['" + key + "']}")
+        value = _run(
+            kubernetes_service,
+            _base(selected_context, namespace) + " get configmap/" + shlex.quote(name)
+            + " -o jsonpath=" + jsonpath + " --allow-missing-template-keys=false",
+            20,
+        )
         return {"found": True, "resource": "ConfigMap", "name": name,
                 "namespace": namespace, "key": key,
                 "value": _redact_sensitive_text(value)[:4000]}
