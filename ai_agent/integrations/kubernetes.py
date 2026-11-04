@@ -43,7 +43,7 @@ def _run(kubernetes_service, command, timeout=20):
     return _redact_sensitive_text(str(text))[:12000]
 
 
-def register_kubernetes_read_tools(registry, kubernetes_service, context=""):
+def register_kubernetes_read_tools(registry, kubernetes_service, context="", include_logs=False):
     """Register bounded read-only tools; no tool can submit a Kubernetes mutation."""
     if kubernetes_service is None or getattr(kubernetes_service, "commands", None) is None:
         raise ValueError("A shared Kubernetes command service is required.")
@@ -91,7 +91,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context=""):
     ))
     registry.register(ToolSpec(
         "k8s_list_deployments", "List deployments in one namespace. Read-only.",
-        {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 253}},
+        {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 63}},
          "required": ["namespace"], "additionalProperties": False},
         list_deployments,
     ))
@@ -103,18 +103,19 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context=""):
     registry.register(ToolSpec(
         "k8s_get_events", "Read the latest events from one namespace. Read-only.",
         {"type": "object", "properties": {
-            "namespace": {"type": "string", "minLength": 1, "maxLength": 253},
+            "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
          "required": ["namespace"], "additionalProperties": False},
         get_events,
     ))
-    registry.register(ToolSpec(
-        "k8s_get_pod_logs", "Read a bounded tail of pod logs. Output is redacted before AI use. Read-only.",
-        {"type": "object", "properties": {
-            "namespace": {"type": "string", "minLength": 1, "maxLength": 253},
-            "pod": {"type": "string", "minLength": 1, "maxLength": 253},
-            "tail": {"type": "integer", "minimum": 1, "maximum": 100}},
-         "required": ["namespace", "pod"], "additionalProperties": False},
-        get_pod_logs,
-    ))
+    if include_logs:
+        registry.register(ToolSpec(
+            "k8s_get_pod_logs", "Read a bounded tail of pod logs. Output is redacted before AI use. Read-only.",
+            {"type": "object", "properties": {
+                "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
+                "pod": {"type": "string", "minLength": 1, "maxLength": 253},
+                "tail": {"type": "integer", "minimum": 1, "maximum": 100}},
+             "required": ["namespace", "pod"], "additionalProperties": False},
+            get_pod_logs,
+        ))
     return registry
