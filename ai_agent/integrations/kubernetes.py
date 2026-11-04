@@ -39,7 +39,17 @@ def _base(context, namespace=None):
 
 def _run(kubernetes_service, command, timeout=20):
     code, output, error = kubernetes_service.commands.execute(command, timeout=timeout)
-    text = output if code == 0 else (error or output or "kubectl exited with status " + str(code))
+    if code != 0:
+        text = error or output or "kubectl exited with status " + str(code)
+    elif str(output or "").strip():
+        text = output
+    elif str(error or "").strip():
+        # Some SSH/command wrappers return a zero status with diagnostics on
+        # stderr and no stdout. Do not turn an RBAC/connection warning into
+        # an apparently empty, successful result.
+        text = error
+    else:
+        text = output
     return _redact_sensitive_text(str(text))[:12000]
 
 
