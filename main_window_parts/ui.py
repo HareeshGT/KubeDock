@@ -141,21 +141,21 @@ class UIMixin:
       self._fm_seps = []  # separators that only appear in FM mode
 
       for b in [self.act_back, self.act_forward, self.act_up, self.act_refresh]:
-        tb.addWidget(b)
-      sep1 = _sep(); tb.addWidget(sep1); self._fm_seps.append(sep1)
+        fm_tb.addWidget(b)
+      sep1 = _sep(); fm_tb.addWidget(sep1); self._fm_seps.append(sep1)
 
       self.addr_bar = QLineEdit()
       self.addr_bar.setPlaceholderText("Path…")
       self.addr_bar.returnPressed.connect(self._navigate_addr)
-      tb.addWidget(self.addr_bar, 3)
-      sep2 = _sep(); tb.addWidget(sep2); self._fm_seps.append(sep2)
+      fm_tb.addWidget(self.addr_bar, 3)
+      sep2 = _sep(); fm_tb.addWidget(sep2); self._fm_seps.append(sep2)
 
       self.search_bar = QLineEdit()
       self.search_bar.setPlaceholderText("Filter…")
       self.search_bar.textChanged.connect(self._filter_list)
       self.search_bar.setFixedWidth(140)
-      tb.addWidget(self.search_bar)
-      sep3 = _sep(); tb.addWidget(sep3); self._fm_seps.append(sep3)
+      fm_tb.addWidget(self.search_bar)
+      sep3 = _sep(); fm_tb.addWidget(sep3); self._fm_seps.append(sep3)
 
       self._sort_lbl = _lbl("Sort")
       tb.addWidget(self._sort_lbl)
