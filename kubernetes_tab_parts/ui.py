@@ -248,7 +248,7 @@ class KubernetesUiMixin:
       ("pod_unknown_lbl", "0 unknown", "TEXT_MUTED"),
     ):
       badge = QLabel(label)
-      badge.setStyleSheet(pill_qss(T[key], padding="3px 6px"))
+      badge.setStyleSheet(pill_qss(T[key]) + "padding: 1px 5px;")
       badge.setAccessibleName(label)
       badge.setToolTip(label)
       setattr(self, attr, badge)
