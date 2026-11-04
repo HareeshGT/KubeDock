@@ -5,11 +5,25 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+import sys
 import urllib.request
 
 MAX_MODEL_BYTES = 500 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
+
+MODEL_DIRECTORY_NAME = "models"
+
+
+def bundled_model_directory() -> Path:
+    """Return the model directory inside the installed KubeDock application."""
+    if getattr(sys, "frozen", False):
+        executable_dir = Path(sys.executable).resolve().parent
+        if sys.platform == "darwin" and executable_dir.parent.name == "Contents":
+            return executable_dir.parent / "Resources" / MODEL_DIRECTORY_NAME
+        return executable_dir / MODEL_DIRECTORY_NAME
+    return Path(__file__).resolve().parent.parent / MODEL_DIRECTORY_NAME
+
 
 
 class EmbeddedModelError(RuntimeError):
@@ -50,11 +64,17 @@ def verify_model(path: Path, spec: ModelSpec) -> bool:
         return False
 
 
-def download_model(spec: ModelSpec, cache_dir: Path, *, progress=None, cancel=None) -> Path:
-    """Download, enforce byte bounds, verify digest, then atomically publish."""
+def download_model(spec: ModelSpec, cache_dir: Path | None = None, *, progress=None, cancel=None) -> Path:
+    """Download, enforce byte bounds, verify digest, then atomically publish inside KubeDock."""
     spec.validate()
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = Path(cache_dir) if cache_dir is not None else bundled_model_directory()
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise EmbeddedModelError(
+            "KubeDock cannot write to its installed model directory. "
+            "Rerun the installer with permission to update the application bundle."
+        ) from exc
     destination = cache_dir / spec.filename
     if verify_model(destination, spec):
         return destination
