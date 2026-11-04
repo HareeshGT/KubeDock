@@ -1,4 +1,5 @@
 from .common import *
+from k8s_visuals import summarize_pod_statuses
 import logging
 from k8s_metrics import (
   build_pod_metrics, build_pod_list_command, build_pod_metrics_command,
@@ -162,6 +163,7 @@ class KubernetesResourcesMixin:
     all_ns = (self._current_ns == "(all namespaces)")
     total  = 0
     running = 0
+    pod_statuses = []
     # Parse each section of the shared snapshot once. No kubectl calls are
     # performed within the card loop; all cards reuse the same mappings.
     (pods_text, _top_text, _limits_text,
@@ -212,6 +214,7 @@ class KubernetesResourcesMixin:
         self._pod_ai_card = card
         card.set_ai_busy(True)
       total += 1
+      pod_statuses.append(meta)
       if "running" in status.lower():
         running += 1
     if total == 0:
@@ -223,6 +226,20 @@ class KubernetesResourcesMixin:
     else:
       color_key = "WARNING"
     self._set_count_badge(self.pod_count_lbl, f"{running}/{total} running", color_key)
+    summary = summarize_pod_statuses(pod_statuses)
+    for attr, state, label in (
+      ("pod_healthy_lbl", "healthy", "healthy"),
+      ("pod_warning_lbl", "warning", "attention"),
+      ("pod_critical_lbl", "critical", "critical"),
+    ):
+      badge = getattr(self, attr, None)
+      if badge is not None:
+        count = summary[state]
+        badge.setText(f"● {count} {label}")
+        badge.setAccessibleName(f"{count} {label} pods")
+        badge.setToolTip(f"{count} pods: {label}")
+    if hasattr(self, "pod_health_summary"):
+      self.pod_health_summary.setVisible(total > 0)
     # Refreshing rebuilds every row from scratch, which would otherwise
     # silently show everything again even though the filter box still
     # has text in it — reapply whatever's currently typed there.
