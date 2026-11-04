@@ -9,9 +9,9 @@ from .registry import ToolRegistry
 
 
 _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
-    r"\\b(?:get|show|read|fetch|retrieve)\\s+(?:the\\s+)?"
-    r"(?:value\\s+of\\s+)?(?:key\\s+)?"
-    r"([A-Za-z0-9_.-]+)\\s+from\\s+([A-Za-z0-9_.-]+)\\b",
+    r"\b(?:get|show|read|fetch|retrieve)\s+(?:the\s+)?"
+    r"(?:value\s+of\s+)?(?:key\s+)?"
+    r"([A-Za-z0-9_.-]+)\s+from\s+([A-Za-z0-9_.-]+)\b",
     re.IGNORECASE,
 )
 
