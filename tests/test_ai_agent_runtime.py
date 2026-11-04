@@ -78,6 +78,16 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result.tool_results[0].status, "invalid_arguments")
         self.assertEqual(self.executed, [])
 
+
+    def test_non_object_arguments_are_rejected_without_coercion(self):
+        adapter = FakeAdapter([
+            {"tool_calls": [{"id": "c1", "name": "inspect_pod", "arguments": ["api"]}]},
+            AssistantMessage(content="The tool arguments were invalid."),
+        ])
+        result = AgentRuntime(self.registry).run("Check api", adapter)
+        self.assertEqual(result.tool_results[0].status, "invalid_arguments")
+        self.assertEqual(self.executed, [])
+
     def test_unknown_tool_is_rejected(self):
         adapter = FakeAdapter([AssistantMessage(tool_calls=[ToolCall("c1", "run_shell", {"command": "whoami"})]),
                                AssistantMessage(content="I cannot run that tool.")])
