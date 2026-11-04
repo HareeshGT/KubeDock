@@ -231,6 +231,7 @@ class KubernetesResourcesMixin:
       ("pod_healthy_lbl", "healthy", "healthy"),
       ("pod_warning_lbl", "warning", "attention"),
       ("pod_critical_lbl", "critical", "critical"),
+      ("pod_unknown_lbl", "unknown", "unknown"),
     ):
       badge = getattr(self, attr, None)
       if badge is not None:
