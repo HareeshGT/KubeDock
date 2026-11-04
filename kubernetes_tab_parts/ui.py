@@ -227,7 +227,7 @@ class KubernetesUiMixin:
     tb.setSpacing(8)
     self.pod_filter = QLineEdit()
     self.pod_filter.setPlaceholderText(" Filter pods…")
-    self.pod_filter.setMaximumWidth(200)
+    self.pod_filter.setMaximumWidth(160)
     self.pod_filter.textChanged.connect(self._filter_pods)
     tb.addWidget(self.pod_filter)
 
@@ -240,7 +240,7 @@ class KubernetesUiMixin:
     self.pod_health_summary.setObjectName("pod_health_summary")
     summary_row = QHBoxLayout(self.pod_health_summary)
     summary_row.setContentsMargins(0, 0, 0, 0)
-    summary_row.setSpacing(6)
+    summary_row.setSpacing(4)
     for attr, label, key in (
       ("pod_healthy_lbl", "0 healthy", "SUCCESS"),
       ("pod_warning_lbl", "0 attention", "WARNING"),
@@ -248,7 +248,7 @@ class KubernetesUiMixin:
       ("pod_unknown_lbl", "0 unknown", "TEXT_MUTED"),
     ):
       badge = QLabel(label)
-      badge.setStyleSheet(pill_qss(T[key]))
+      badge.setStyleSheet(pill_qss(T[key], padding="3px 6px"))
       badge.setAccessibleName(label)
       badge.setToolTip(label)
       setattr(self, attr, badge)
@@ -273,7 +273,7 @@ class KubernetesUiMixin:
     ]:
       btn = self._toolbar_btn(label)
       btn.setFlat(True)
-      btn.setStyleSheet("border: none; padding: 0 14px; background: transparent;")
+      btn.setStyleSheet("border: none; padding: 0 8px; background: transparent;")
       setattr(self, obj, btn)
       btn.clicked.connect(slot)
       cl.addWidget(btn)
