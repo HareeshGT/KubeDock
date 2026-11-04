@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
   QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
   QComboBox, QLineEdit, QProgressBar, QTabWidget, QTreeWidget,
   QTreeWidgetItem, QListWidget, QListWidgetItem, QTextEdit,
-  QSplitter, QFrame, QSpinBox, QHeaderView, QAbstractItemView,
+  QSplitter, QFrame, QSpinBox, QHeaderView, QAbstractItemView, QSizePolicy,
   QDialog, QVBoxLayout as _QVL, QDialogButtonBox, QMessageBox,
   QMenu, QInputDialog, QApplication, QButtonGroup, QCompleter,
 )
