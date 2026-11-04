@@ -61,6 +61,29 @@ class WindowsReleaseAssetURLTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             win_installer.release_asset_url("latest", "folder\\KubeDock.zip")
 
+class WindowsInstallerBranchArgumentTests(unittest.TestCase):
+    def test_accepts_positional_branch_argument(self):
+        args = win_installer.parse_installer_args(["feature/my-branch"])
+        self.assertEqual(args.branch, "feature/my-branch")
+        self.assertIsNone(args.branch_option)
+
+    def test_accepts_named_branch_argument(self):
+        args = win_installer.parse_installer_args(["--branch", "release/next"])
+        self.assertEqual(args.branch_option, "release/next")
+
+    def test_rejects_duplicate_branch_arguments(self):
+        with self.assertRaises(SystemExit):
+            win_installer.parse_installer_args(["main", "--branch", "develop"])
+
+    def test_explicit_branch_is_validated_without_prompting(self):
+        self.assertEqual(
+            win_installer.resolve_source_branch("feature/ui", ["main", "feature/ui"]),
+            "feature/ui",
+        )
+        with self.assertRaisesRegex(ValueError, "was not found"):
+            win_installer.resolve_source_branch("missing", ["main", "develop"])
+
+
 class PrebuiltBundleBuilderTests(unittest.TestCase):
     def test_build_arguments_include_core_runtime_and_static_ui(self):
         args = builder.build_args(include_qwen=False)
