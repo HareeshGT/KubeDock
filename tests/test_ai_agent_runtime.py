@@ -224,6 +224,31 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("wrong-object-value", result.answer)
 
 
+
+    def test_exact_configmap_lookup_rejects_evidence_from_another_namespace(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_configmap_key", "Read exact ConfigMap key.",
+            {"type": "object", "properties": {
+                "namespace": {"type": "string"}, "configmap": {"type": "string"}, "key": {"type": "string"}},
+             "required": ["namespace", "configmap", "key"], "additionalProperties": False},
+            lambda args: {"found": True, "resource": "ConfigMap", "namespace": "other-ns",
+                          "name": args["configmap"], "key": args["key"], "value": "wrong-namespace-value"},
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "k8s_get_configmap_key", {
+                "namespace": "dev-cc", "configmap": "cow-env",
+                "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
+            })]),
+            AssistantMessage(content="I found it."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "User request: get the value of RECORDS_READY_FOR_PROCESSING_QUEUE_NAME from cow-env in dev-cc",
+            adapter,
+        )
+        self.assertIn("did not return the requested key and object", result.answer)
+        self.assertNotIn("wrong-namespace-value", result.answer)
+
+
     def test_empty_request_is_rejected(self):
         self.assertEqual(AgentRuntime(self.registry).run(" ", FakeAdapter([])).status, AgentStatus.ERROR)
 
