@@ -171,7 +171,7 @@ class AgentRuntimeTests(unittest.TestCase):
             {"type": "object", "properties": {
                 "namespace": {"type": "string"}, "configmap": {"type": "string"}, "key": {"type": "string"}},
              "required": ["namespace", "configmap", "key"], "additionalProperties": False},
-            lambda args: {"found": True, "namespace": args["namespace"], "name": args["configmap"],
+            lambda args: {"found": True, "resource": "ConfigMap", "namespace": args["namespace"], "name": args["configmap"],
                           "key": args["key"], "value": "queue-ready"},
         ))
         adapter = FakeAdapter([
@@ -206,7 +206,7 @@ class AgentRuntimeTests(unittest.TestCase):
             {"type": "object", "properties": {
                 "namespace": {"type": "string"}, "configmap": {"type": "string"}, "key": {"type": "string"}},
              "required": ["namespace", "configmap", "key"], "additionalProperties": False},
-            lambda args: {"found": True, "namespace": "dev-cc", "name": "another-config",
+            lambda args: {"found": True, "resource": "ConfigMap", "namespace": "dev-cc", "name": "another-config",
                           "key": args["key"], "value": "wrong-object-value"},
         ))
         adapter = FakeAdapter([
