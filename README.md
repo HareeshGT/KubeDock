@@ -22,6 +22,7 @@ KubeDock brings everyday infrastructure tasks into one desktop app, so you can m
 - **Ops Mind root-cause investigations:** Ask why a pod or workload is consuming high CPU/memory, restarting, or behaving unexpectedly. Ops Mind collects bounded read-only Kubernetes state, per-container usage and resource requests/limits, events, current/previous logs, and node pressure signals. When a Prometheus URL is configured in AI Intelligence settings, it also samples bounded historical CPU and memory trends. Findings distinguish measurements from hypotheses; a high memory value alone is not labelled a memory leak. Hosted AI analysis requires per-investigation consent, while Local / Private uses the configured local provider.
 - **Embedded Web App:** Use a mobile-friendly interface for common Kubernetes tasks.
 - **Themes & settings:** Customize the desktop experience and configure supported AI providers.
+- **Design Intelligence System (DIS):** Submit UI/UX briefs from AI Intelligence → Design Intelligence to a configured DIS API. Results come from the actual service; no local simulated agent results are substituted. See [DIS integration setup](docs/DESIGN_INTELLIGENCE_INTEGRATION.md).
 
 ## Installation
 

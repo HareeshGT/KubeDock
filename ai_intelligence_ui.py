@@ -1,5 +1,6 @@
 """Compact UI for safety-first AI infrastructure utilities."""
 import json
+import os
 import re
 import shlex
 import time
@@ -22,6 +23,7 @@ import db
 import ai_assist
 from themes import load_settings, save_settings
 from workers import CommandWorker
+from services.design_intelligence import DesignIntelligenceError, DesignIntelligenceService
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -63,6 +65,40 @@ class PrometheusHistoryWorker(QThread):
             self.error.emit(ai_intelligence.redact_evidence(str(exc))[:1000])
 
 
+class DesignReviewWorker(QThread):
+    """Runs a real DIS API request off the UI thread."""
+    result_ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, endpoint, brief, parent=None):
+        super().__init__(parent)
+        self.endpoint = endpoint
+        self.brief = brief
+
+    def run(self):
+        try:
+            client = DesignIntelligenceService(self.endpoint, timeout_seconds=20)
+            result = client.run_design_review(
+                self.brief,
+                product_context=(
+                    "KubeDock is a Python desktop application for Kubernetes, Docker, SSH, "
+                    "remote files and DevOps workflows. Preserve existing theme support and "
+                    "safety-conscious infrastructure workflows."
+                ),
+                constraints=[
+                    "Preserve existing KubeDock theme support",
+                    "Prioritize desktop usability and accessibility",
+                    "Return design recommendations only; do not execute changes",
+                ],
+                target_platforms=["macOS", "Windows", "Linux"],
+                project_id="kubedock",
+                autonomy="high",
+            )
+            self.result_ready.emit(result)
+        except Exception as exc:
+            self.error.emit(ai_intelligence.redact_evidence(str(exc))[:1000])
+
+
 class AIIntelligenceDialog(QDialog):
     """Human-reviewed advisor tools; no action in this dialog mutates a cluster."""
 
@@ -79,6 +115,7 @@ class AIIntelligenceDialog(QDialog):
         root.addWidget(intro)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
+        self._design_worker = None
         self._rightsizing_worker = None
         self._prometheus_worker = None
         self._live_incident_worker = None
@@ -111,10 +148,91 @@ class AIIntelligenceDialog(QDialog):
         self._build_usage_tab()
         self._build_runbooks_tab()
         self._build_overview_tab()
+        self._build_design_intelligence_tab()
         self.tabs.insertTab(0, self._overview_tab, "Overview")
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         root.addWidget(close)
+
+    def _build_design_intelligence_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(10)
+
+        intro = QLabel(
+            "Send a design brief to the configured Design Intelligence System (DIS). "
+            "KubeDock displays the actual API response and never substitutes simulated agent output."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        self.dis_endpoint = QLineEdit(
+            str(load_settings().get("design_intelligence_url", "") or os.getenv("KUBEDOCK_DIS_URL", ""))
+        )
+        self.dis_endpoint.setPlaceholderText("https://your-deployed-dis.example.com")
+        form.addRow("DIS API base URL", self.dis_endpoint)
+        layout.addLayout(form)
+
+        layout.addWidget(QLabel("Design brief"))
+        self.dis_brief = QTextEdit()
+        self.dis_brief.setPlaceholderText(
+            "Example: Review the Kubernetes dashboard and recommend improvements to hierarchy, "
+            "pod status visibility, spacing, accessibility and theme consistency."
+        )
+        self.dis_brief.setMinimumHeight(100)
+        layout.addWidget(self.dis_brief)
+
+        self.dis_run_button = QPushButton("Run DIS design review")
+        self.dis_run_button.clicked.connect(self._run_dis_design_review)
+        layout.addWidget(self.dis_run_button)
+
+        self.dis_output = self._output(layout)
+        self.dis_output.setPlaceholderText(
+            "The actual DIS response or a clear connection error will appear here."
+        )
+        self.tabs.addTab(tab, "Design Intelligence")
+
+    def _run_dis_design_review(self):
+        if self._design_worker is not None:
+            return
+        endpoint = self.dis_endpoint.text().strip()
+        brief = self.dis_brief.toPlainText().strip()
+        if not brief:
+            QMessageBox.information(self, "Design brief required", "Describe the screen or workflow to review.")
+            return
+        try:
+            client = DesignIntelligenceService(endpoint, timeout_seconds=20)
+            if not client.enabled:
+                raise DesignIntelligenceError(
+                    "Enter a deployed DIS API base URL. No local simulation will be used."
+                )
+        except (ValueError, DesignIntelligenceError) as exc:
+            QMessageBox.warning(self, "DIS configuration", str(exc))
+            return
+
+        save_settings(design_intelligence_url=endpoint)
+        self.dis_run_button.setEnabled(False)
+        self.dis_output.setPlainText("Calling the configured DIS API…")
+        worker = DesignReviewWorker(endpoint, brief, parent=self)
+        self._design_worker = worker
+        worker.result_ready.connect(self._on_dis_design_review)
+        worker.error.connect(self._on_dis_design_review_error)
+        worker.finished.connect(self._on_dis_design_review_finished)
+        worker.start()
+
+    def _on_dis_design_review(self, result):
+        self._show_result(self.dis_output, result)
+
+    def _on_dis_design_review_error(self, message):
+        self.dis_output.setPlainText(
+            "DIS design review failed. No simulated result was generated.\n\n"
+            + ai_intelligence.redact_evidence(message)
+        )
+
+    def _on_dis_design_review_finished(self):
+        self._design_worker = None
+        self.dis_run_button.setEnabled(True)
 
     def _output(self, parent_layout):
         view = QTextEdit()
