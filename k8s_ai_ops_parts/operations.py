@@ -198,7 +198,7 @@ class K8sAIOpsOperationsMixin:
         ai_service = getattr(self, "ai_service", None)
         provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
         api_key = ai_service.api_key(provider) if ai_service is not None else ai_assist.get_api_key(provider)
-        if not api_key:
+        if not api_key and ai_assist.provider_requires_api_key(provider):
             label = ai_assist.PROVIDERS.get(provider, {}).get('label', provider)
             QMessageBox.information(self, 'No API key set', f'Add a {label} API key in Settings → AI to use AI Kubernetes Operations.')
             return
@@ -246,8 +246,8 @@ class K8sAIOpsOperationsMixin:
             settings = ai_service.settings()
             quick_profile = (settings.get("task_profiles") or {}).get("quick") or {}
             selected_provider = quick_profile.get("provider") or settings.get("provider") or "anthropic"
-            include_logs = selected_provider == "ollama"
-            if selected_provider != "ollama" and _LOG_CONSENT_INTENT_RE.search(request):
+            include_logs = selected_provider in ai_assist.LOCAL_PROVIDER_IDS
+            if ai_assist.provider_requires_api_key(selected_provider) and _LOG_CONSENT_INTENT_RE.search(request):
                 choice = QMessageBox.question(
                     self,
                     "Allow pod log collection?",
@@ -502,9 +502,9 @@ class K8sAIOpsOperationsMixin:
             return
 
         settings = ai_service.settings() if ai_service is not None else ai_assist.get_ai_settings()
-        if provider != "ollama":
+        if ai_assist.provider_requires_api_key(provider):
             if not settings.get("cloud_ai_enabled", True):
-                self._write_error("\nCloud AI is disabled. Select the Local / Private (Ollama) profile to analyze collected evidence.")
+                self._write_error("\nCloud AI is disabled. Select Embedded Local AI or Ollama in the Local / Private profile to analyze collected evidence.")
                 self._set_busy(False)
                 return
             consent = QMessageBox.question(

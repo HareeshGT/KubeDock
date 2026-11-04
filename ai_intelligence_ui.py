@@ -1241,11 +1241,11 @@ class AIIntelligenceDialog(QDialog):
             task_profile = self.incident_profile_combo.currentData() or "deep_diagnosis"
             assignment = ai_settings.get("task_profiles", {}).get(task_profile, {})
             provider = assignment.get("provider") or ai_settings["provider"]
-            if provider != "ollama":
+            if ai_assist.provider_requires_api_key(provider):
                 if not ai_settings.get("cloud_ai_enabled", True):
                     QMessageBox.information(
                         self, "Cloud AI is blocked",
-                        "Local-only mode is enabled. Select Local / Private (Ollama) to investigate without a hosted provider."
+                        "Local-only mode is enabled. Select Embedded Local AI or Ollama in the Local / Private profile to investigate without a hosted provider."
                     )
                     return
                 if not self.incident_cloud_consent_chk.isChecked():
@@ -1444,11 +1444,11 @@ class AIIntelligenceDialog(QDialog):
         task_profile = self.incident_profile_combo.currentData() or "deep_diagnosis"
         assignment = settings.get("task_profiles", {}).get(task_profile, {})
         provider = assignment.get("provider") or settings["provider"]
-        if provider != "ollama":
+        if ai_assist.provider_requires_api_key(provider):
             if not settings.get("cloud_ai_enabled", True):
                 QMessageBox.information(
                     self, "Cloud AI is blocked",
-                    "Local-only mode is enabled. Select Local / Private (Ollama) to analyze this evidence."
+                    "Local-only mode is enabled. Select Embedded Local AI or Ollama in the Local / Private profile to analyze this evidence."
                 )
                 return
             if not self.incident_cloud_consent_chk.isChecked():
@@ -1458,7 +1458,7 @@ class AIIntelligenceDialog(QDialog):
                 )
                 return
         api_key = ai_assist.get_api_key(provider)
-        if not api_key and provider != "ollama":
+        if not api_key and ai_assist.provider_requires_api_key(provider):
             QMessageBox.information(self, "API key required", f"Configure an API key for {provider} in Settings → AI.")
             return
         model = assignment.get("model_id") or ai_assist.get_model(provider)

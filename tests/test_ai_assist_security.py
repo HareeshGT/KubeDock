@@ -97,6 +97,14 @@ class AIContextSecurityTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(answer, "Local response")
 
+    def test_embedded_and_ollama_do_not_require_api_keys(self):
+        self.assertFalse(ai_assist.provider_requires_api_key("embedded"))
+        self.assertFalse(ai_assist.provider_requires_api_key("ollama"))
+
+    def test_hosted_providers_still_require_api_keys(self):
+        self.assertTrue(ai_assist.provider_requires_api_key("openai"))
+        self.assertTrue(ai_assist.provider_requires_api_key("gemini"))
+
     def test_new_install_defaults_to_embedded_but_saved_provider_is_preserved(self):
         with patch("ai_assist.load_settings", return_value={"ai": {}}):
             self.assertEqual(ai_assist.get_ai_settings()["provider"], "embedded")

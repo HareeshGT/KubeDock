@@ -572,6 +572,11 @@ DEFAULT_PROVIDER = "embedded"
 LOCAL_PROVIDER_IDS = frozenset(("embedded", "ollama"))
 
 
+def provider_requires_api_key(provider_id: str) -> bool:
+    """Return whether a provider requires a hosted API credential."""
+    return provider_id not in LOCAL_PROVIDER_IDS
+
+
 # ─── Persisted settings ────────────────────────────────────────
 def _normalise_custom_models(value) -> dict:
     """Return a stable provider -> [{display_name, model_id}] mapping."""
