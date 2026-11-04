@@ -74,17 +74,20 @@ class PromptToolAdapter:
         for index, item in enumerate(payload["tool_calls"], 1):
             if not isinstance(item, Mapping):
                 continue
-            arguments = item.get("arguments", {})
+            # A zero-argument call must explicitly provide {}. Missing,
+            # malformed, scalar, or array arguments stay invalid so the
+            # runtime can return an invalid_arguments result to the model.
+            arguments = item.get("arguments", None)
             if isinstance(arguments, str):
                 try:
                     arguments = json.loads(arguments)
-                except ValueError:
+                except (TypeError, ValueError):
                     arguments = None
-            if not isinstance(arguments, Mapping):
-                arguments = {}
+            if isinstance(arguments, Mapping):
+                arguments = dict(arguments)
             calls.append(ToolCall(
                 id=str(item.get("id") or "call_" + str(index)),
                 name=str(item.get("name") or ""),
-                arguments=dict(arguments),
+                arguments=arguments,
             ))
         return AssistantMessage(content=str(payload.get("content") or ""), tool_calls=calls)
