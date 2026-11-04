@@ -48,11 +48,11 @@ def _run(kubernetes_service, command, timeout=20):
         raise RuntimeError(_redact_sensitive_text(str(detail))[:2000])
     elif str(output or "").strip():
         text = output
-    elif str(error or "").strip():
-        # Some SSH/command wrappers return a zero status with diagnostics on
-        # stderr and no stdout. Do not turn an RBAC/connection warning into
-        # an apparently empty, successful result.
-        text = error
+    elif str(error or "").strip() and not str(output or "").strip():
+        # A zero exit code with stderr-only output is ambiguous (for example,
+        # an SSH/RBAC warning with no actual resource data). Treat it as
+        # unverified instead of passing diagnostics off as a resource value.
+        raise RuntimeError(_redact_sensitive_text(str(error))[:2000])
     else:
         text = output
     return _redact_sensitive_text(str(text))[:12000]
@@ -68,12 +68,12 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
     def list_pods(args):
         """List a bounded set of pods in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
-        return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide | head -n 100", 20)
+        return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide", 20)
 
     def list_deployments(args):
         """List a bounded set of deployments in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
-        return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide | head -n 100", 20)
+        return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide", 20)
 
 
     def get_configmap_key(args):
@@ -96,7 +96,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
 
     def list_nodes(_args):
         """List a bounded set of cluster nodes."""
-        return _run(kubernetes_service, _base(selected_context) + " get nodes -o wide | head -n 100", 20)
+        return _run(kubernetes_service, _base(selected_context) + " get nodes -o wide", 20)
 
     def get_events(args):
         """Return a bounded, recent event sample for one namespace."""
