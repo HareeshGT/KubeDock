@@ -23,7 +23,7 @@ class ToolCall:
     """Represent one normalized model request to invoke a registered tool."""
     id: str
     name: str
-    arguments: Mapping[str, Any]
+    arguments: Any
 
 @dataclass(frozen=True)
 class AssistantMessage:
