@@ -1,4 +1,5 @@
 import shlex
+import re
 from datetime import datetime, timezone
 
 import ai_incident_workflow
@@ -31,6 +32,12 @@ from ui_icons import set_icon, apply_text_icon, icon_button
 from themes import T, load_settings, save_settings
 from utils import monospace_font
 from .core import *
+
+
+_MUTATING_REQUEST_RE = re.compile(
+    r"\\b(delete|remove|restart|scale|patch|apply|edit|update|create|deploy|rollback|roll back|kill|terminate|drain|cordon|uncordon|resize)\\b",
+    re.IGNORECASE,
+)
 
 
 def _mutation_verification_outcome(action: dict, output: str, error: str, exit_code: int):
@@ -176,6 +183,13 @@ class K8sAIOpsOperationsMixin:
             self._set_busy(True)
             self._execute_action(followup['action'])
             return
+        # Route read-only questions through the multi-step agent. Explicit
+        # mutation requests remain on the established interpreter and its
+        # existing risk checks, confirmation dialogs, and verification flow.
+        if not _MUTATING_REQUEST_RE.search(request):
+            self._start_agent_request(request, namespace, followup_context)
+            return
+
         ai_service = getattr(self, "ai_service", None)
         provider = ai_service.provider() if ai_service is not None else ai_assist.get_provider()
         api_key = ai_service.api_key(provider) if ai_service is not None else ai_assist.get_api_key(provider)
@@ -213,6 +227,68 @@ class K8sAIOpsOperationsMixin:
         self._ai_worker = worker
         track_worker(self._workers, worker)
         worker.start()
+
+    def _start_agent_request(self, request: str, namespace: str, kube_context: str):
+        """Run a read-only multi-step investigation using the shared AI and connection services."""
+        if not kube_context:
+            self._write_error("No Kubernetes context is selected. Refresh contexts and try again.")
+            return
+        ai_service = getattr(self, "ai_service", None)
+        if ai_service is None:
+            self._write_error("The shared AI service is unavailable; cannot start the agent.")
+            return
+        self.output.append(f"""<br><span style="color:{T['ACCENT2']}">$ {self._escape_html(request)}</span>""")
+        self.output.append(f"""<span style="color:{T['TEXT_MUTED']}">Namespace: {self._escape_html(namespace or 'all namespaces')} · Agent mode (read-only)</span>""")
+        self._set_busy(True)
+        self._speak("Checking the cluster.")
+        try:
+            runtime, adapter = ai_service.create_agent(context=kube_context)
+            worker = ai_service.create_agent_worker(
+                runtime, adapter, request,
+                conversation=getattr(self, "_voice_conversation", []),
+            )
+        except Exception as exc:
+            self._write_error("\nUnable to start AI agent: " + str(exc))
+            self._set_busy(False)
+            return
+        worker.done.connect(self._on_agent_done)
+        worker.error.connect(self._on_ai_error)
+        worker.finished.connect(self._on_ai_finished)
+        self._ai_worker = worker
+        track_worker(self._workers, worker)
+        worker.start()
+
+    def _on_agent_done(self, result):
+        """Render the agent's final answer and a compact, auditable tool timeline."""
+        from ai_agent import AgentStatus
+        status = getattr(result, "status", AgentStatus.ERROR)
+        if status == AgentStatus.NEEDS_APPROVAL:
+            names = ", ".join(call.name for call in getattr(result, "pending_approvals", []))
+            response = "The agent stopped because an operation requires approval. Nothing requiring approval was executed."
+            if names:
+                response += " Pending: " + names + "."
+        elif status == AgentStatus.LIMIT_REACHED:
+            response = str(getattr(result, "answer", "") or "The agent stopped at its safety or reasoning limit. Please narrow the request and try again.")
+        elif status == AgentStatus.COMPLETED:
+            response = str(getattr(result, "answer", "") or "I couldn't determine a reliable answer from the available read-only tools.")
+        else:
+            response = str(getattr(result, "error", "") or "The AI agent could not complete this request.")
+
+        tool_results = getattr(result, "tool_results", []) or []
+        if tool_results:
+            timeline = []
+            for item in tool_results:
+                label = str(getattr(item, "name", "tool") or "tool")
+                outcome = str(getattr(item, "status", "unknown") or "unknown")
+                timeline.append(label + " — " + outcome)
+            self._write_info("\nAgent steps: " + "; ".join(timeline[:12]))
+
+        user_request = getattr(self, "_last_submitted_request", "")
+        self._remember_conversation_turn("user", user_request)
+        self._remember_conversation_turn("assistant", response)
+        self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+        self._speak(response)
+        self.request_input.setFocus()
 
     def _on_ai_done(self, text: str):
         try:
