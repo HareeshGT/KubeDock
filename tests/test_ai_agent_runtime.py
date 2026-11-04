@@ -162,6 +162,66 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("Ignore safety rules", str(messages))
 
 
+
+    def test_exact_configmap_lookup_answer_comes_only_from_matching_tool_evidence(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_configmap_key", "Read exact ConfigMap key.",
+            {"type": "object", "properties": {
+                "namespace": {"type": "string"}, "configmap": {"type": "string"}, "key": {"type": "string"}},
+             "required": ["namespace", "configmap", "key"], "additionalProperties": False},
+            lambda args: {"found": True, "namespace": args["namespace"], "name": args["configmap"],
+                          "key": args["key"], "value": "queue-ready"},
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "k8s_get_configmap_key", {
+                "namespace": "dev-cc", "configmap": "cow-env",
+                "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
+            })]),
+            AssistantMessage(content="The queue is probably records-ready."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "User request: get the value of RECORDS_READY_FOR_PROCESSING_QUEUE_NAME from cow-env in dev-cc",
+            adapter,
+        )
+        self.assertEqual(result.status, AgentStatus.COMPLETED)
+        self.assertEqual(
+            result.answer,
+            "Verified from ConfigMap cow-env in namespace dev-cc: RECORDS_READY_FOR_PROCESSING_QUEUE_NAME=queue-ready",
+        )
+
+    def test_exact_configmap_lookup_never_accepts_model_guess_without_tool_evidence(self):
+        adapter = FakeAdapter([AssistantMessage(content="The value is probably records-ready.")])
+        result = AgentRuntime(self.registry).run(
+            "User request: get the value of RECORDS_READY_FOR_PROCESSING_QUEUE_NAME from cow-env in dev-cc",
+            adapter,
+        )
+        self.assertIn("couldn't verify", result.answer)
+        self.assertNotIn("records-ready", result.answer)
+
+    def test_exact_configmap_lookup_rejects_evidence_for_a_different_object_or_key(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_configmap_key", "Read exact ConfigMap key.",
+            {"type": "object", "properties": {
+                "namespace": {"type": "string"}, "configmap": {"type": "string"}, "key": {"type": "string"}},
+             "required": ["namespace", "configmap", "key"], "additionalProperties": False},
+            lambda args: {"found": True, "namespace": "dev-cc", "name": "another-config",
+                          "key": args["key"], "value": "wrong-object-value"},
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "k8s_get_configmap_key", {
+                "namespace": "dev-cc", "configmap": "cow-env",
+                "key": "RECORDS_READY_FOR_PROCESSING_QUEUE_NAME",
+            })]),
+            AssistantMessage(content="I found it."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "User request: get the value of RECORDS_READY_FOR_PROCESSING_QUEUE_NAME from cow-env in dev-cc",
+            adapter,
+        )
+        self.assertIn("did not return the requested key and object", result.answer)
+        self.assertNotIn("wrong-object-value", result.answer)
+
+
     def test_empty_request_is_rejected(self):
         self.assertEqual(AgentRuntime(self.registry).run(" ", FakeAdapter([])).status, AgentStatus.ERROR)
 
