@@ -16,7 +16,6 @@ from .ai import AIService
 from .webapp import WebAppService
 from .lifecycle import ServiceLifecycleManager
 from .persistence import DatabaseService, SettingsService
-from .design_intelligence import DesignIntelligenceService
 
 
 class AppServices:
@@ -37,8 +36,6 @@ class AppServices:
         self.files = FileManagerService(self.connection, self.commands)
         self.terminal = TerminalService(self.connection, self.commands)
         self.ai = AIService(self.commands)
-        # Optional external design intelligence; disabled until KUBEDOCK_DIS_URL is set.
-        self.design_intelligence = DesignIntelligenceService()
         self.webapp = WebAppService(self.connection, self.commands)
         self.lifecycle = ServiceLifecycleManager()
         self.lifecycle.register("database", self.database)
