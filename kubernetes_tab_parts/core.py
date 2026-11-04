@@ -4,6 +4,7 @@ from command_utils import command_operation_label
 from themes import load_settings, save_settings
 from app_preferences import normalize_performance_settings, k8s_connection_profile_key
 from k8s_navigation import build_navigation_path
+from k8s_feedback import command_output_has_error
 
 _LOG = logging.getLogger(__name__)
 
@@ -581,7 +582,7 @@ class KubernetesCoreMixin:
       return
     states = {
       "working": ("Working…", "ACCENT2"),
-      "success": ("Updated", "SUCCESS"),
+      "success": ("Completed", "SUCCESS"),
       "error": ("Request failed", "DANGER"),
       "ready": ("Ready", "TEXT_MUTED"),
     }
@@ -631,6 +632,7 @@ class KubernetesCoreMixin:
     def on_done(out):
       callback_started = time.monotonic()
       callback_error = None
+      output_error = command_output_has_error(out)
       try:
         callback(out)
       except Exception as exc:
@@ -642,10 +644,12 @@ class KubernetesCoreMixin:
         total_ms = (time.monotonic() - started) * 1000.0
         remaining = release_progress()
         if remaining == 0:
-          if callback_error is None:
-            self._set_request_status("success", f"Kubernetes request completed: {operation}")
-          else:
+          if callback_error is not None:
             self._set_request_status("error", f"Could not process {operation}: {callback_error}")
+          elif output_error:
+            self._set_request_status("error", f"Kubernetes reported an error during {operation}")
+          else:
+            self._set_request_status("success", f"Kubernetes request completed: {operation}")
         _LOG.debug(
           "kubernetes_request_complete operation=%s request_and_dispatch_ms=%.1f callback_ms=%.1f",
           operation, total_ms, callback_ms,
