@@ -36,14 +36,18 @@ owns authorization and execution; provider adapters never execute tools.
 
 ## Current integration boundary
 
-This commit adds the runtime, provider-neutral prompt adapter, tests, and the
-shared AIService factory. Existing Ops Mind and Kubernetes operations remain
-unchanged and continue to use their existing validation, confirmation, RBAC,
-and verification paths. No Kubernetes, Docker, SSH, or monitoring tool is
-registered automatically yet. Those capabilities must be exposed through
-small, bounded service methods and registered explicitly in a follow-up
-integration step; existing UI-bound workers and mutation safeguards must not
-be bypassed.
+This commit adds the runtime, provider-neutral prompt adapter, shared AIService
+factory, and five initial read-only Kubernetes tools: list pods, list
+deployments, list nodes, read bounded namespace events, and read a bounded pod
+log tail. They execute through KubeDock's existing shared command/connection
+service. Namespace, context, pod name, and limits are validated before a
+command is built; log output is redacted before it returns to the model.
+
+Existing Ops Mind and Kubernetes operations remain unchanged and continue to
+use their existing validation, confirmation, RBAC, and verification paths.
+No mutation tool is registered. Docker, SSH host inspection, and monitoring
+tools remain follow-up integrations and must use the same narrow service
+interfaces rather than bypassing existing connection ownership or safeguards.
 
 ## Test
 
