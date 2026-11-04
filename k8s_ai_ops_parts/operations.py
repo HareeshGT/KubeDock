@@ -246,8 +246,8 @@ class K8sAIOpsOperationsMixin:
             settings = ai_service.settings()
             quick_profile = (settings.get("task_profiles") or {}).get("quick") or {}
             selected_provider = quick_profile.get("provider") or settings.get("provider") or "anthropic"
-            include_logs = selected_provider == "ollama"
-            if selected_provider != "ollama" and _LOG_CONSENT_INTENT_RE.search(request):
+            include_logs = selected_provider in ai_assist.LOCAL_PROVIDER_IDS
+            if selected_provider not in ai_assist.LOCAL_PROVIDER_IDS and _LOG_CONSENT_INTENT_RE.search(request):
                 choice = QMessageBox.question(
                     self,
                     "Allow pod log collection?",
