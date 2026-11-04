@@ -57,6 +57,17 @@ class KubernetesToolTests(unittest.TestCase):
             self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 500})
         self.assertEqual(self.commands.commands, [])
 
+
+    def test_events_are_parsed_and_limited_without_shell_pipelines(self):
+        self.commands.output = '{"items":[{"lastTimestamp":"t1","type":"Normal","involvedObject":{"name":"pod-a"},"reason":"Scheduled","message":"first"},{"lastTimestamp":"t2","type":"Warning","involvedObject":{"name":"pod-b"},"reason":"BackOff","message":"second"}]}'
+        result = self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 1})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["object"], "pod-b")
+        command, _ = self.commands.commands[-1]
+        self.assertIn("get events --sort-by=.lastTimestamp -o json", command)
+        self.assertNotIn("|", command)
+
+
     def test_success_with_empty_stdout_and_stderr_is_unverified(self):
         self.commands.output = "  "
         self.commands.error = "Warning: unable to retrieve optional metadata"
