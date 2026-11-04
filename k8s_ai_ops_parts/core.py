@@ -867,9 +867,9 @@ _SCOPE_WORDS = {"in", "from", "namespace", "ns", "all", "every", "everything", "
 
 
 _SCALE_UNDO_REQUEST_RE = re.compile(
-  r"(?:please\\s+)?(?:revert\\s+(?:it|that|the\\s+last\\s+scale)|"
-  r"undo\\s+(?:it|that|the\\s+last\\s+scale)|"
-  r"scale\\s+it\\s+back|restore\\s+(?:the\\s+)?(?:previous|prior)\\s+replicas)[\\s.!]*",
+  r"(?:please\s+)?(?:revert\s+(?:it|that|the\s+last\s+scale)|"
+  r"undo\s+(?:it|that|the\s+last\s+scale)|"
+  r"scale\s+it\s+back|restore\s+(?:the\s+)?(?:previous|prior)\s+replicas)[\s.!]*",
   re.IGNORECASE,
 )
 
