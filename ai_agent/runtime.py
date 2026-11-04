@@ -56,9 +56,14 @@ class AgentRuntime:
             return AgentResult(status=AgentStatus.ERROR, error="Enter a request.")
         if len(request) > 8000:
             return AgentResult(status=AgentStatus.ERROR, error="Request exceeds the 8,000 character limit.")
-        messages = list(conversation or [])
-        if not messages:
-            messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
+        # The policy prompt is mandatory on every run. Conversation history is
+        # context only; never let a carried system message replace the safety rules.
+        history = [
+            item for item in (conversation or [])
+            if isinstance(item, Mapping) and str(item.get("role", "")).lower() != "system"
+        ]
+        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+        messages.extend(history)
         messages.append({"role": "user", "content": request})
         events, results, pending = [], [], []
         total_chars = 0
