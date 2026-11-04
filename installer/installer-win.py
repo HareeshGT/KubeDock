@@ -775,7 +775,7 @@ def main():
         UI.info("Qwen3-TTS local voice included: " + ("YES" if include_qwen else "NO (default lightweight build)"))
         if include_qwen:
             UI.info("Qwen model weights download on first launch; model weights are not embedded in the installer.")
-        offer_embedded_model_download()
+        offer_embedded_model_download(destination)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
