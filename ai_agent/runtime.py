@@ -81,7 +81,7 @@ class AgentRuntime:
             assistant_calls = []
             for call in response.tool_calls:
                 if call.id and call.name:
-                    assistant_calls.append({"id": call.id, "name": call.name, "arguments": dict(call.arguments or {})})
+                    assistant_calls.append({"id": call.id, "name": call.name, "arguments": call.arguments})
                 else:
                     emit("rejected", "A tool call was missing its identifier or name.", call.name, call.id)
             messages.append({"role": "assistant", "content": response.content, "tool_calls": assistant_calls})
