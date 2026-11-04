@@ -5,12 +5,14 @@ from ai_agent import ToolRegistry
 from ai_agent.integrations.kubernetes import register_kubernetes_read_tools
 
 class FakeCommands:
-    def __init__(self, output="ok"):
+    def __init__(self, output="ok", error="", code=0):
         self.output = output
+        self.error = error
+        self.code = code
         self.commands = []
     def execute(self, command, timeout=30):
         self.commands.append((command, timeout))
-        return 0, self.output, ""
+        return self.code, self.output, self.error
 
 class KubernetesToolTests(unittest.TestCase):
     def setUp(self):
@@ -54,6 +56,19 @@ class KubernetesToolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 500})
         self.assertEqual(self.commands.commands, [])
+
+    def test_success_with_empty_stdout_preserves_stderr(self):
+        self.commands.output = "  "
+        self.commands.error = "Warning: unable to retrieve optional metadata"
+        result = self.registry.get("k8s_list_nodes").handler({})
+        self.assertIn("unable to retrieve optional metadata", result)
+
+    def test_failed_command_prefers_stderr(self):
+        self.commands.code = 1
+        self.commands.output = "partial output"
+        self.commands.error = "Forbidden"
+        result = self.registry.get("k8s_list_nodes").handler({})
+        self.assertEqual(result, "Forbidden")
 
     def test_log_output_is_redacted(self):
         self.commands.output = "Authorization: Bearer abcdefghijklmnopqrstuvwxyz"
