@@ -3,6 +3,7 @@ import logging
 from command_utils import command_operation_label
 from themes import load_settings, save_settings
 from app_preferences import normalize_performance_settings, k8s_connection_profile_key
+from k8s_navigation import build_navigation_path
 
 _LOG = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ class KubernetesCoreMixin:
       # — which can be a different cluster than the one shown here.
       self.context_changed.emit(chosen)
     self.context_combo.blockSignals(False)
+    self._update_navigation_context()
 
     if not self._current_context:
       self._cluster_available = False
@@ -155,6 +157,7 @@ class KubernetesCoreMixin:
     self._current_context = context
     self.context_changed.emit(context)
     self._current_ns = "default"
+    self._update_navigation_context()
     self._save_k8s_selection(save_namespace=False)
     self.ns_combo.blockSignals(True)
     self.ns_combo.clear()
@@ -257,6 +260,7 @@ class KubernetesCoreMixin:
     self.ns_combo.blockSignals(False)
     self._current_ns = self.ns_combo.currentText()
     self._save_k8s_selection(save_namespace=True)
+    self._update_navigation_context()
     if self._cluster_available:
       self._refresh_current_tab()
 
@@ -264,6 +268,7 @@ class KubernetesCoreMixin:
   def _on_ns_change(self, ns: str):
     self._current_ns = ns
     self._save_k8s_selection(save_namespace=True)
+    self._update_navigation_context()
     self._refresh_current_tab()
 
 
@@ -424,6 +429,34 @@ class KubernetesCoreMixin:
       self._current_context = ""
     self.health_lbl.setText("● Cluster")
     self.health_lbl.setStyleSheet(f"color: {T['TEXT_MUTED']}; font-size: 12px;")
+    self._update_navigation_context()
+
+
+  def _on_subtab_changed(self, _=None):
+    self._update_navigation_context()
+    self._refresh_current_tab()
+
+
+  def _update_navigation_context(self):
+    label = getattr(self, "navigation_path_lbl", None)
+    if label is None:
+      return
+    index = self.sub_tabs.currentIndex() if hasattr(self, "sub_tabs") else 0
+    tab = self.sub_tabs.tabText(index).strip() if index >= 0 else "Resources"
+    namespace = self._current_ns or "Not selected"
+    resource = None
+    if index == 0 and hasattr(self, "pod_list"):
+      item = self.pod_list.currentItem()
+      if item is not None:
+        meta = item.data(Qt.UserRole) or {}
+        name = (meta.get("name") or "").strip()
+        if name:
+          namespace = meta.get("namespace") or namespace
+          resource = f"Pod: {name}"
+    path = build_navigation_path(self._current_context, namespace, tab, resource)
+    label.setText(path)
+    label.setToolTip(path)
+    label.setAccessibleDescription(path)
 
 
   def _refresh_current_tab(self, _=None):
