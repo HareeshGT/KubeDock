@@ -66,6 +66,7 @@ def build_args(include_qwen: bool) -> list[str]:
         "--hidden-import=webapp",
         "--hidden-import=webapp.server",
         "--hidden-import=ai_assist",
+        "--collect-all=llama_cpp",
         "--hidden-import=k8s_ai_ops",
         "--collect-submodules=dialogs_parts",
         "--collect-submodules=kubernetes_tab_parts",
