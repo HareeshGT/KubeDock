@@ -39,6 +39,79 @@ RECOMMENDED_PYTHON = "3.13"
 LATEST_RELEASE_API = "https://api.github.com/repos/HareeshGT/KubeDock/releases/latest"
 RELEASE_DOWNLOAD_BASE = "https://github.com/HareeshGT/KubeDock/releases/download"
 
+# Small, Apache-2.0 licensed CPU model; immutable revision and verified SHA-256.
+EMBEDDED_MODEL_URL = (
+    "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/"
+    "resolve/ab928a97ee49f3a015f35194879f68211291d6ca/"
+    "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+)
+EMBEDDED_MODEL_SHA256 = "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+EMBEDDED_MODEL_FILENAME = "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+EMBEDDED_MODEL_MAX_BYTES = 500 * 1024 * 1024
+
+
+def offer_embedded_model_download() -> None:
+    """Offer an optional verified local-model download after installation."""
+    choice = os.environ.get("KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL", "").strip().lower()
+    if choice not in {"1", "0", "yes", "no", "true", "false"}:
+        if not UI.interactive:
+            UI.info("Skipping optional Embedded AI model download in non-interactive mode.")
+            UI.info("Set KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to opt in.")
+            return
+        try:
+            choice = input(
+                "\nDownload the optional Embedded AI model now (~271 MB)? [y/N]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = ""
+    if choice not in {"1", "yes", "y", "true"}:
+        UI.info("Embedded AI model download skipped.")
+        return
+
+    data_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local")))
+    model_dir = data_root / "KubeDock" / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    destination = model_dir / EMBEDDED_MODEL_FILENAME
+    if destination.is_file():
+        digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+        if digest == EMBEDDED_MODEL_SHA256:
+            UI.success(f"Embedded AI model already installed: {destination}")
+            return
+        destination.unlink()
+
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    digest = hashlib.sha256()
+    received = 0
+    UI.phase(1, 1, "Downloading Embedded AI model", "CPU model · maximum 500 MiB")
+    try:
+        request = urllib.request.Request(
+            EMBEDDED_MODEL_URL, headers={"User-Agent": "KubeDock-Installer"}
+        )
+        with urllib.request.urlopen(request, timeout=45) as response, temporary.open("wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received > EMBEDDED_MODEL_MAX_BYTES:
+                    raise RuntimeError("The model download exceeded the 500 MiB limit.")
+                output.write(chunk)
+                digest.update(chunk)
+                if response.headers.get("Content-Length"):
+                    total = int(response.headers["Content-Length"])
+                    UI.progress("Downloading model", min(100, received * 100 // max(total, 1)), received, total)
+        if digest.hexdigest() != EMBEDDED_MODEL_SHA256:
+            raise RuntimeError("Model SHA-256 verification failed; the file was rejected.")
+        os.replace(temporary, destination)
+        UI.clear_progress()
+        UI.success(f"Verified Embedded AI model saved to: {destination}")
+        UI.info("The model download is complete; the app must select Embedded Local Model to use it.")
+    except Exception as exc:
+        UI.clear_progress()
+        temporary.unlink(missing_ok=True)
+        UI.warning(f"Could not download the Embedded AI model: {exc}")
+        UI.info("KubeDock itself is installed. You can retry by rerunning the installer and opting in.")
+
 
 def get_latest_release_tag() -> str:
     """Resolve the latest published stable release once per installation."""
@@ -623,6 +696,7 @@ def install_prebuilt_release() -> Path:
         UI.success(f"Installed to: {destination}")
         UI.info(f"Executable: {destination / 'KubeDock.exe'}")
         UI.info("Optional Qwen3-TTS is not included in the fast bundle.")
+        offer_embedded_model_download()
         return destination
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -696,6 +770,7 @@ def main():
         UI.info("Qwen3-TTS local voice included: " + ("YES" if include_qwen else "NO (default lightweight build)"))
         if include_qwen:
             UI.info("Qwen model weights download on first launch; model weights are not embedded in the installer.")
+        offer_embedded_model_download()
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
