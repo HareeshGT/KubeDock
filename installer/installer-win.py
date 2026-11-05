@@ -39,6 +39,7 @@ RECOMMENDED_PYTHON = "3.13"
 LATEST_RELEASE_API = "https://api.github.com/repos/HareeshGT/KubeDock/releases/latest"
 RELEASE_DOWNLOAD_BASE = "https://github.com/HareeshGT/KubeDock/releases/download"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from local_model_catalog import MODELS, compatible_models, detect_hardware, recommended_model
 
 EMBEDDED_MODEL_MAX_BYTES = 500 * 1024 * 1024
