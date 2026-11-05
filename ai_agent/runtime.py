@@ -151,12 +151,12 @@ class AgentRuntime:
                                 "The ConfigMap tool returned an invalid evidence payload. "
                                 "The value is unverified; I will not guess."
                             )
-                else:
+                elif not lookup:
                     deployment_match = _DEPLOYMENT_DIAGNOSIS_RE.search(request)
                     if deployment_match:
                         requested_name = deployment_match.group(1)
                         namespace_match = re.search(
-                            r"\\b(?:in|namespace)\\s+([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)\\b",
+                            r"\b(?:in|namespace)\s+([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)\b",
                             request, re.IGNORECASE,
                         )
                         requested_namespace = namespace_match.group(1) if namespace_match else ""
