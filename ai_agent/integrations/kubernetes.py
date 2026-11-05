@@ -82,6 +82,47 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         return _run(kubernetes_service, _base(selected_context, namespace) + " get deployments -o wide", 20)
 
 
+    def get_deployment(args):
+        """Inspect one exact Deployment; never infer its existence from a list."""
+        namespace = _validate_namespace(args["namespace"])
+        name = _validate_name(args["name"], "Deployment")
+        raw = _run(
+            kubernetes_service,
+            _base(selected_context, namespace) + " get deployment/" + shlex.quote(name) + " -o json",
+            20, max_chars=100000, reject_truncation=True,
+        )
+        try:
+            obj = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Kubernetes returned invalid Deployment JSON; its state is unverified.") from exc
+        metadata = obj.get("metadata") or {}
+        spec = obj.get("spec") or {}
+        status = obj.get("status") or {}
+        pod_template = spec.get("template") or {}
+        pod_spec = pod_template.get("spec") or {}
+        return {
+            "found": True,
+            "resource": "Deployment",
+            "name": metadata.get("name", ""),
+            "namespace": metadata.get("namespace", ""),
+            "uid": metadata.get("uid", ""),
+            "generation": metadata.get("generation"),
+            "observedGeneration": status.get("observedGeneration"),
+            "replicas": {
+                "desired": spec.get("replicas", 1),
+                "updated": status.get("updatedReplicas", 0),
+                "ready": status.get("readyReplicas", 0),
+                "available": status.get("availableReplicas", 0),
+                "unavailable": status.get("unavailableReplicas", 0),
+            },
+            "selector": spec.get("selector") or {},
+            "conditions": status.get("conditions") or [],
+            "containers": [
+                {"name": c.get("name", ""), "image": c.get("image", "")}
+                for c in pod_spec.get("containers") or []
+            ],
+        }
+
     def get_configmap_key(args):
         """Read exactly one key from one named ConfigMap; return no unrelated data."""
         namespace = _validate_namespace(args["namespace"])
@@ -146,6 +187,15 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 63}},
          "required": ["namespace"], "additionalProperties": False},
         list_deployments,
+    ))
+    registry.register(ToolSpec(
+        "k8s_get_deployment",
+        "Inspect exactly one named Deployment in one namespace. Returns its actual namespace, rollout counts, selector, conditions and container images. Use this before claiming whether a named Deployment exists. Read-only.",
+        {"type": "object", "properties": {
+            "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
+            "name": {"type": "string", "minLength": 1, "maxLength": 253}},
+         "required": ["namespace", "name"], "additionalProperties": False},
+        get_deployment,
     ))
     registry.register(ToolSpec(
         "k8s_get_configmap_key",
