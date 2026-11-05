@@ -211,7 +211,7 @@ offer_embedded_model_download() {
   local choice="${KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL:-}"
   if [[ "$choice" != "1" && "$choice" != "0" && "$choice" != "yes" && "$choice" != "no" ]]; then
     if [[ "$UI_INTERACTIVE" == "1" && -r /dev/tty ]]; then
-      printf '\\nDownload an optional Embedded AI model into KubeDock? [y/N]: ' > /dev/tty
+      printf '\nDownload an optional Embedded AI model into KubeDock? [y/N]: ' > /dev/tty
       IFS= read -r choice < /dev/tty || choice=""
     else
       ui_info "Skipping optional Embedded AI model download in non-interactive mode. Set KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to opt in."
@@ -259,9 +259,9 @@ offer_embedded_model_download() {
   fi
   local selected_id="${KUBEDOCK_MODEL_ID:-$default_id}"
   if [[ "$UI_INTERACTIVE" == "1" && -r /dev/tty && -z "${KUBEDOCK_MODEL_ID:-}" ]]; then
-    printf '\\nAvailable local models (minimum requirements):\\n' > /dev/tty
-    printf '  1) SmolLM2 360M Instruct Q4_K_M — ~271 MB; RAM >= 4 GB; CPU >= 2 cores; disk >= 1 GB (lightweight)\\n' > /dev/tty
-    printf '  2) Qwen3 0.6B Q4_K_M — ~484 MB; RAM >= 8 GB; recommended RAM 12 GB; CPU >= 4 cores; disk >= 2 GB\\n' > /dev/tty
+    printf '\nAvailable local models (minimum requirements):\n' > /dev/tty
+    printf '  1) SmolLM2 360M Instruct Q4_K_M — ~271 MB; RAM >= 4 GB; CPU >= 2 cores; disk >= 1 GB (lightweight)\n' > /dev/tty
+    printf '  2) Qwen3 0.6B Q4_K_M — ~484 MB; RAM >= 8 GB; recommended RAM 12 GB; CPU >= 4 cores; disk >= 2 GB\n' > /dev/tty
     printf 'Select model [1/2, default %s]: ' "$([[ "$default_id" == "qwen3-06b-q4km" ]] && echo 2 || echo 1)" > /dev/tty
     local selection
     IFS= read -r selection < /dev/tty || selection=""
@@ -318,7 +318,7 @@ offer_embedded_model_download() {
   if ! $SUDO mkdir -p "$model_dir" || ! $SUDO mv "$temporary" "$model_dir/$model_name"; then
     rm -f "$temporary"; ui_warn "Could not place verified model inside KubeDock resources."; return 0
   fi
-  printf '{"id":"%s","filename":"%s"}\\n' "$selected_id" "$model_name" | $SUDO tee "$model_dir/selected_model.json" >/dev/null
+  printf '{"id":"%s","filename":"%s"}\n' "$selected_id" "$model_name" | $SUDO tee "$model_dir/selected_model.json" >/dev/null
   if [[ "$OS" == "Darwin" ]]; then
     $SUDO codesign --deep --force --sign - "/Applications/KubeDock.app" || {
       ui_warn "Model installed, but macOS app re-signing failed; verify app signature before launch."
