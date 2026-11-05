@@ -2,7 +2,9 @@
 import unittest
 
 from ai_agent.adapters import PromptToolAdapter
-from ai_agent.models import AssistantMessage
+from ai_agent.models import AssistantMessage, AgentStatus, ToolSpec
+from ai_agent.registry import ToolRegistry
+from ai_agent.runtime import AgentRuntime
 
 
 class PromptToolAdapterTests(unittest.TestCase):
@@ -51,6 +53,33 @@ class PromptToolAdapterTests(unittest.TestCase):
             self._adapter('{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}').complete(
                 messages=[], tools=[]
             )
+
+    def test_incomplete_tool_call_json_is_an_error_not_raw_text(self):
+        with self.assertRaisesRegex(ValueError, "incomplete tool-call JSON"):
+            self._adapter('{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}').complete(
+                messages=[], tools=[]
+            )
+
+    def test_tool_calls_are_dispatched_and_results_return_to_the_model(self):
+        responses = iter([
+            '{"tool_calls":[{"id":"call_1","name":"read_cluster","arguments":{}}],"content":"Checking cluster state."}',
+            "The cluster read completed successfully.",
+        ])
+        def provider(*args, **kwargs):
+            return next(responses), None
+        adapter = PromptToolAdapter("embedded", "", "test-model", provider)
+        registry = ToolRegistry()
+        executions = []
+        registry.register(ToolSpec(
+            "read_cluster", "Read cluster state.",
+            {"type": "object", "properties": {}, "additionalProperties": False},
+            lambda args: executions.append("called") or {"status": "Ready"},
+        ))
+        result = AgentRuntime(registry).run("Check cluster", adapter)
+        self.assertEqual(result.status, AgentStatus.COMPLETED)
+        self.assertEqual(result.answer, "The cluster read completed successfully.")
+        self.assertEqual(executions, ["called"])
+        self.assertTrue(any(message.get("role") == "tool" for message in result.messages))
 
     def test_invalid_tool_calls_shape_is_an_error(self):
         with self.assertRaisesRegex(ValueError, "expected a JSON array"):
