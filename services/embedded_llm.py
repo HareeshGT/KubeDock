@@ -16,6 +16,28 @@ DOWNLOAD_TIMEOUT_SECONDS = 30
 MODEL_DIRECTORY_NAME = "models"
 DEFAULT_MODEL_FILENAME = "SmolLM2-360M-Instruct-Q4_K_M.gguf"
 DEFAULT_MODEL_SHA256 = "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+MODEL_SHA256_BY_FILENAME = {
+    DEFAULT_MODEL_FILENAME: DEFAULT_MODEL_SHA256,
+    "Qwen_Qwen3-0.6B-Q4_K_M.gguf": "9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14",
+}
+MODEL_MAX_BYTES_BY_FILENAME = {
+    DEFAULT_MODEL_FILENAME: 500 * 1024 * 1024,
+    "Qwen_Qwen3-0.6B-Q4_K_M.gguf": 500 * 1024 * 1024,
+}
+
+
+def selected_model_filename() -> str:
+    """Return the installer-selected model, falling back to the lightweight default."""
+    import json
+    manifest = bundled_model_directory() / "selected_model.json"
+    try:
+        value = json.loads(manifest.read_text(encoding="utf-8"))
+        filename = value.get("filename") if isinstance(value, dict) else None
+        if filename in MODEL_SHA256_BY_FILENAME:
+            return filename
+    except (OSError, ValueError, TypeError):
+        pass
+    return DEFAULT_MODEL_FILENAME
 _ENGINE_LOCK = threading.Lock()
 _ENGINE = None
 _ENGINE_PATH = None
@@ -142,13 +164,17 @@ def generate(model_path: Path, prompt: str, *, max_tokens: int = 1024) -> str:
             if _ENGINE is None or _ENGINE_PATH != resolved_path:
                 if not model_path.is_file():
                     raise EmbeddedModelError("The embedded model file is missing from KubeDock resources.")
-                if model_path.stat().st_size > MAX_MODEL_BYTES:
-                    raise EmbeddedModelError("The embedded model exceeds the 500 MiB safety limit.")
+                expected_sha256 = MODEL_SHA256_BY_FILENAME.get(model_path.name)
+                max_bytes = MODEL_MAX_BYTES_BY_FILENAME.get(model_path.name)
+                if not expected_sha256 or not max_bytes:
+                    raise EmbeddedModelError("This model is not in KubeDock's verified model catalog.")
+                if model_path.stat().st_size > max_bytes:
+                    raise EmbeddedModelError("The embedded model exceeds its catalog size limit.")
                 digest = hashlib.sha256()
                 with model_path.open("rb") as stream:
                     for chunk in iter(lambda: stream.read(CHUNK_BYTES), b""):
                         digest.update(chunk)
-                if digest.hexdigest() != DEFAULT_MODEL_SHA256:
+                if digest.hexdigest() != expected_sha256:
                     raise EmbeddedModelError("The embedded model failed SHA-256 verification and will not be loaded.")
                 _ENGINE = Llama(
                     model_path=resolved_path,

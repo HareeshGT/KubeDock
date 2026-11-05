@@ -39,19 +39,14 @@ RECOMMENDED_PYTHON = "3.13"
 LATEST_RELEASE_API = "https://api.github.com/repos/HareeshGT/KubeDock/releases/latest"
 RELEASE_DOWNLOAD_BASE = "https://github.com/HareeshGT/KubeDock/releases/download"
 
-# Small, Apache-2.0 licensed CPU model; immutable revision and verified SHA-256.
-EMBEDDED_MODEL_URL = (
-    "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/"
-    "resolve/ab928a97ee49f3a015f35194879f68211291d6ca/"
-    "SmolLM2-360M-Instruct-Q4_K_M.gguf"
-)
-EMBEDDED_MODEL_SHA256 = "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
-EMBEDDED_MODEL_FILENAME = "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from local_model_catalog import MODELS, compatible_models, detect_hardware, recommended_model
+
 EMBEDDED_MODEL_MAX_BYTES = 500 * 1024 * 1024
 
 
 def offer_embedded_model_download(install_dir: Path) -> None:
-    """Offer a verified model download into the installed KubeDock bundle."""
+    """Offer a hardware-informed choice from the fixed, SHA-pinned model catalog."""
     choice = os.environ.get("KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL", "").strip().lower()
     if choice not in {"1", "0", "yes", "no", "true", "false"}:
         if not UI.interactive:
@@ -59,17 +54,53 @@ def offer_embedded_model_download(install_dir: Path) -> None:
             UI.info("Set KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to opt in.")
             return
         try:
-            choice = input(
-                "\nDownload the optional Embedded AI model into KubeDock now (~271 MB)? [y/N]: "
-            ).strip().lower()
+            choice = input("\\nDownload an optional Embedded AI model now? [y/N]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             choice = ""
     if choice not in {"1", "yes", "y", "true"}:
         UI.info("Embedded AI model download skipped.")
         return
 
+    hardware = detect_hardware(install_dir)
+    suggested = recommended_model(hardware)
+    candidates = compatible_models(hardware)
+    UI.info("Detected hardware for local model selection:")
+    UI.info(f"CPU: {hardware.cpu} ({hardware.cpu_cores} cores); RAM: {hardware.ram_gb} GB total / {hardware.available_ram_gb} GB available")
+    UI.info(f"GPU: {hardware.gpu}; VRAM: {hardware.vram_gb} GB; free disk: {hardware.free_disk_gb} GB")
+    if not candidates:
+        UI.warning("Hardware did not meet the catalog minimums; only the lightweight model will be offered.")
+        candidates = [MODELS[0]]
+
+    selected = suggested
+    requested_id = os.environ.get("KUBEDOCK_MODEL_ID", "").strip()
+    if requested_id:
+        match = next((model for model in candidates if model.id == requested_id), None)
+        if not match:
+            UI.warning(f"Requested model '{requested_id}' is not compatible with detected hardware; using {suggested.name}.")
+        else:
+            selected = match
+    elif UI.interactive:
+        UI.info("Available local models (requirements are minimums; actual performance varies):")
+        for index, model in enumerate(candidates, 1):
+            marker = " [RECOMMENDED]" if model.id == suggested.id else ""
+            UI.menu_item(index, f"{model.name}{marker} — ~{model.size_mb} MB; RAM >= {model.min_ram_gb} GB (recommended {model.recommended_ram_gb} GB), CPU >= {model.min_cpu_cores} cores, free disk >= {model.min_disk_gb} GB")
+            UI.info(f"    {model.description}")
+        while True:
+            try:
+                raw = input(f"Select model [1-{len(candidates)}; default {next(i for i,m in enumerate(candidates,1) if m.id == suggested.id)}]: ").strip()
+                if not raw:
+                    selected = suggested
+                    break
+                number = int(raw)
+                if 1 <= number <= len(candidates):
+                    selected = candidates[number - 1]
+                    break
+            except (ValueError, EOFError, KeyboardInterrupt):
+                break
+            UI.warning("Enter one of the listed model numbers.")
+
     model_dir = Path(install_dir) / "models"
-    destination = model_dir / EMBEDDED_MODEL_FILENAME
+    destination = model_dir / selected.filename
     temporary = destination.with_suffix(destination.suffix + ".part")
     try:
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -78,45 +109,52 @@ def offer_embedded_model_download(install_dir: Path) -> None:
             with destination.open("rb") as existing:
                 for chunk in iter(lambda: existing.read(1024 * 1024), b""):
                     existing_digest.update(chunk)
-            if existing_digest.hexdigest() == EMBEDDED_MODEL_SHA256:
-                UI.success(f"Embedded AI model already verified inside KubeDock: {destination}")
+            if existing_digest.hexdigest() == selected.sha256:
+                (model_dir / "selected_model.json").write_text(
+                    json.dumps({"id": selected.id, "filename": selected.filename}, indent=2) + "\\n",
+                    encoding="utf-8",
+                )
+                UI.success(f"Selected model is already verified: {destination}")
                 return
         digest = hashlib.sha256()
         received = 0
-        UI.phase(1, 1, "Downloading Embedded AI model", "Installing into KubeDock application resources · maximum 500 MiB")
-        request = urllib.request.Request(
-            EMBEDDED_MODEL_URL, headers={"User-Agent": "KubeDock-Installer"}
-        )
+        max_bytes = min(EMBEDDED_MODEL_MAX_BYTES, selected.size_mb * 1024 * 1024 + 4 * 1024 * 1024)
+        UI.phase(1, 1, "Downloading Embedded AI model", f"{selected.name} · about {selected.size_mb} MB")
+        request = urllib.request.Request(selected.url, headers={"User-Agent": "KubeDock-Installer"})
         with urllib.request.urlopen(request, timeout=45) as response, temporary.open("wb") as output:
             declared = response.headers.get("Content-Length")
-            if declared and int(declared) > EMBEDDED_MODEL_MAX_BYTES:
-                raise RuntimeError("The model download exceeds the 500 MiB limit.")
+            if declared and int(declared) > max_bytes:
+                raise RuntimeError("The model download exceeds its catalog size limit.")
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
                     break
                 received += len(chunk)
-                if received > EMBEDDED_MODEL_MAX_BYTES:
-                    raise RuntimeError("The model download exceeded the 500 MiB limit.")
+                if received > max_bytes:
+                    raise RuntimeError("The model download exceeded its catalog size limit.")
                 output.write(chunk)
                 digest.update(chunk)
                 if declared:
-                    total = int(declared)
-                    UI.progress("Downloading model", min(100, received * 100 // max(total, 1)), received, total)
-        if digest.hexdigest() != EMBEDDED_MODEL_SHA256:
+                    UI.progress("Downloading model", min(100, received * 100 // max(int(declared), 1)), received, int(declared))
+        if digest.hexdigest() != selected.sha256:
             raise RuntimeError("Model SHA-256 verification failed; the file was rejected.")
         os.replace(temporary, destination)
+        manifest_tmp = model_dir / "selected_model.json.part"
+        manifest_tmp.write_text(
+            json.dumps({"id": selected.id, "filename": selected.filename}, indent=2) + "\\n",
+            encoding="utf-8",
+        )
+        os.replace(manifest_tmp, model_dir / "selected_model.json")
         UI.clear_progress()
-        UI.success(f"Verified Embedded AI model installed inside KubeDock: {destination}")
-        UI.info("The model is now part of the KubeDock installation directory.")
+        UI.success(f"Verified model installed inside KubeDock: {destination}")
     except Exception as exc:
         UI.clear_progress()
         try:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
-        UI.warning(f"Could not install the Embedded AI model inside KubeDock: {exc}")
-        UI.info("KubeDock itself is installed; rerun the installer with KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to retry.")
+        UI.warning(f"Could not install the selected Embedded AI model: {exc}")
+        UI.info("KubeDock itself is installed; rerun with KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to retry.")
 
 def get_latest_release_tag() -> str:
     """Resolve the latest published stable release once per installation."""

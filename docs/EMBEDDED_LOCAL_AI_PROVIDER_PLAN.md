@@ -17,7 +17,7 @@ Add an in-process, CPU-capable Python GGUF inference option to KubeDock without 
 - Add an independently selectable **Embedded Local AI (Python / CPU)** provider in AI settings.
 - New installations default to Embedded Local AI when no provider or API key has been configured; existing saved provider selections are preserved.
 - Retain model selection for every existing API provider. The existing editable model selector and custom-model management remain available.
-- Offer a local model selector that lists only compatible, verified local model artifacts.
+- The installer uses a fixed, hardcoded catalog and deterministic hardware rules (no AI-based recommendation). It detects CPU architecture/core count, RAM/available RAM, NVIDIA GPU/VRAM where available, Apple Silicon, and free disk; it displays minimum requirements beside each model and permits selecting a compatible alternative.
 - Offer an explicit model download during installation. If skipped, the user can rerun the installer to add the model. Do not attempt to write model weights into a protected application directory from the running app.
 - Run downloads and inference outside the UI thread; expose progress, cancellation, retry, and actionable offline/error states.
 - Do not require an API key for the embedded provider.
@@ -27,7 +27,7 @@ Add an in-process, CPU-capable Python GGUF inference option to KubeDock without 
 - Bundle `llama-cpp-python` and its native libraries into KubeDock release/source-build artifacts for supported Windows, macOS, and Linux architectures. Users must not need to install Ollama, llama.cpp, Python packages, or another runtime separately.
 - Keep model weights as the only separately downloaded runtime asset; enforce a maximum artifact size of 500 MB. When selected during installation, install them directly into the KubeDock application bundle. A skipped model is installed by rerunning the installer; runtime self-updates must not write into protected app directories.
 - Prefer a CPU baseline. GPU acceleration may be an optional platform-specific optimization and must not be required.
-- Pin model artifact URL, license, expected byte size, and SHA-256 digest in reviewed application metadata. Reject oversized, truncated, mismatched, or unverified artifacts. Use a temporary file and atomic promotion after verification.
+- Pin immutable model artifact URLs and SHA-256 digests in the reviewed installer catalog. Reject oversized, truncated, mismatched, or unverified artifacts. Use a temporary file and atomic promotion after verification. The current catalog contains SmolLM2 360M Q4_K_M (minimum 4 GB RAM, 2 CPU cores, 1 GB free disk; ~271 MB) and Qwen3 0.6B Q4_K_M (minimum 8 GB RAM, recommended 12 GB, 4 CPU cores, 2 GB free disk; ~484 MB).
 - Store model weights inside the installed KubeDock application resources (`models/`; macOS: `Contents/Resources/models/`), never in a separate user-data/cache directory. Downloads are staged in a temporary directory, verified, and then copied into the app bundle by the installer. The app itself must not silently write to protected install locations.
 - Do not claim hardware support or performance until measured on representative platform builds.
 
@@ -55,4 +55,4 @@ Add an in-process, CPU-capable Python GGUF inference option to KubeDock without 
 
 ## Current validation status
 
-The initial Python provider integration and PyInstaller collection wiring are implemented on the feature branch. Cross-platform native-wheel resolution, release builds, runtime inference, installer flows, and automated test execution still require validation; this plan does not claim those checks have passed.
+The initial Python provider integration and PyInstaller collection wiring are implemented. A hardcoded hardware-aware installer catalog and selected-model manifest are being added in the current feature branch. Cross-platform native-wheel resolution, release builds, runtime inference, installer flows, and automated test execution still require validation; this plan does not claim those checks have passed.

@@ -1158,9 +1158,10 @@ def _call_provider_impl(provider_id: str, api_key: str, model: str, prompt: str,
     # and never silently fall back to a hosted provider.
     if provider_id == "embedded":
         from services import embedded_llm
-        if model != embedded_llm.DEFAULT_MODEL_FILENAME:
-            return None, "Embedded Local AI supports only the bundled KubeDock model."
-        model_path = embedded_llm.bundled_model_directory() / embedded_llm.DEFAULT_MODEL_FILENAME
+        selected_filename = embedded_llm.selected_model_filename()
+        if model not in {embedded_llm.DEFAULT_MODEL_FILENAME, selected_filename}:
+            return None, "The selected Embedded Local AI model is not in KubeDock's verified model catalog."
+        model_path = embedded_llm.bundled_model_directory() / selected_filename
         if not model_path.is_file():
             return None, ("The Embedded Local AI model is not installed inside KubeDock. "
                           "Rerun the installer and choose to download the embedded model.")

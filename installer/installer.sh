@@ -205,64 +205,104 @@ if [[ "$KUBEDOCK_INSTALL_MODE" != "auto" && "$KUBEDOCK_INSTALL_MODE" != "release
 fi
 
 
-# Optional model download is explicitly user-approved; never prompt in CI/pipes.
-# Model weights are installed inside the application bundle, never in user data.
+# Optional, deterministic hardware-aware model selection. No AI recommendation.
+# Every selectable artifact has an immutable URL and pinned SHA-256.
 offer_embedded_model_download() {
-  local choice="${KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL:-}" model_name="SmolLM2-360M-Instruct-Q4_K_M.gguf"
-  local model_url="https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/ab928a97ee49f3a015f35194879f68211291d6ca/SmolLM2-360M-Instruct-Q4_K_M.gguf"
-  local expected="2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+  local choice="${KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL:-}"
   if [[ "$choice" != "1" && "$choice" != "0" && "$choice" != "yes" && "$choice" != "no" ]]; then
     if [[ "$UI_INTERACTIVE" == "1" && -r /dev/tty ]]; then
-      printf '\nDownload the optional Embedded AI model into the KubeDock application now (~271 MB)? [y/N]: ' > /dev/tty
+      printf '\\nDownload an optional Embedded AI model into KubeDock? [y/N]: ' > /dev/tty
       IFS= read -r choice < /dev/tty || choice=""
     else
       ui_info "Skipping optional Embedded AI model download in non-interactive mode. Set KUBEDOCK_DOWNLOAD_EMBEDDED_MODEL=1 to opt in."
       return 0
     fi
   fi
-  choice="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
-  case "$choice" in
+  case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
     1|yes|y|true) ;;
     *) ui_info "Embedded AI model download skipped."; return 0 ;;
   esac
+
+  local ram_gb=0 available_gb=0 cores=1 free_gb=0 gpu="Not detected" vram_gb=0
+  cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+  case "$OS" in
+    Darwin)
+      ram_gb="$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1073741824}')"
+      available_gb="$(vm_stat 2>/dev/null | awk '/Pages free:|Pages inactive:|Pages speculative:|Pages purgeable:/ {gsub(/\\./, "", $NF); pages += $NF} END {printf "%d", pages * 4096 / 1073741824}')"
+      if [[ "$(uname -m)" == "arm64" ]]; then gpu="Apple Silicon integrated GPU (unified memory)"; fi
+      ;;
+    Linux)
+      ram_gb="$(awk '/MemTotal:/ {printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null || echo 0)"
+      available_gb="$(awk '/MemAvailable:/ {printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null || echo 0)"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      ram_gb="$(powershell.exe -NoProfile -Command '[math]::Floor((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)' 2>/dev/null | tr -d '\r' || echo 0)"
+      available_gb="$ram_gb"
+      ;;
+  esac
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    local gpu_line
+    gpu_line="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$gpu_line" ]]; then
+      gpu="${gpu_line%%,*}"
+      vram_gb="$(printf '%s' "${gpu_line#*,}" | awk '{printf "%d", $1/1024}')"
+    fi
+  fi
+  local check_path="${HOME:-/tmp}"
+  free_gb="$(df -Pk "$check_path" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1048576}' || echo 0)"
+  ui_info "Hardware: OS=$OS arch=$(uname -m) CPU cores=$cores RAM=$ram_gb GB (available ~$available_gb GB) GPU=$gpu VRAM=$vram_gb GB free disk=$free_gb GB"
+
+  local model_name model_url expected size_mb min_ram min_cores min_disk
+  local default_id="smollm2-360m-q4"
+  if [[ "$ram_gb" -ge 8 && "$available_gb" -ge 6 && "$cores" -ge 4 && "$free_gb" -ge 2 ]]; then
+    default_id="qwen3-06b-q4km"
+  fi
+  local selected_id="${KUBEDOCK_MODEL_ID:-$default_id}"
+  if [[ "$UI_INTERACTIVE" == "1" && -r /dev/tty && -z "${KUBEDOCK_MODEL_ID:-}" ]]; then
+    printf '\\nAvailable local models (minimum requirements):\\n' > /dev/tty
+    printf '  1) SmolLM2 360M Instruct Q4_K_M — ~271 MB; RAM >= 4 GB; CPU >= 2 cores; disk >= 1 GB (lightweight)\\n' > /dev/tty
+    printf '  2) Qwen3 0.6B Q4_K_M — ~484 MB; RAM >= 8 GB; recommended RAM 12 GB; CPU >= 4 cores; disk >= 2 GB\\n' > /dev/tty
+    printf 'Select model [1/2, default %s]: ' "$([[ "$default_id" == "qwen3-06b-q4km" ]] && echo 2 || echo 1)" > /dev/tty
+    local selection
+    IFS= read -r selection < /dev/tty || selection=""
+    case "$selection" in
+      2) selected_id="qwen3-06b-q4km" ;;
+      ""|1) selected_id="smollm2-360m-q4" ;;
+      *) ui_warn "Invalid choice; using hardware-based default $default_id."; selected_id="$default_id" ;;
+    esac
+  fi
+
+  if [[ "$selected_id" == "qwen3-06b-q4km" ]]; then
+    model_name="Qwen_Qwen3-0.6B-Q4_K_M.gguf"
+    model_url="https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/f9184d8b4c371cb52af5b8cb3d38e55e3cf0f4a0/Qwen_Qwen3-0.6B-Q4_K_M.gguf"
+    expected="9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14"
+    size_mb=484; min_ram=8; min_cores=4; min_disk=2
+  else
+    selected_id="smollm2-360m-q4"
+    model_name="SmolLM2-360M-Instruct-Q4_K_M.gguf"
+    model_url="https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/ab928a97ee49f3a015f35194879f68211291d6ca/SmolLM2-360M-Instruct-Q4_K_M.gguf"
+    expected="2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+    size_mb=271; min_ram=4; min_cores=2; min_disk=1
+  fi
+  if [[ "$ram_gb" -gt 0 && "$ram_gb" -lt "$min_ram" || "$cores" -lt "$min_cores" || "$free_gb" -lt "$min_disk" ]]; then
+    ui_warn "Selected model's minimum hardware requirements are not met; download cancelled."
+    return 0
+  fi
 
   local model_dir=""
   case "$OS" in
     Darwin) model_dir="/Applications/KubeDock.app/Contents/Resources/models" ;;
     Linux) model_dir="/opt/KubeDock/models" ;;
     MINGW*|MSYS*|CYGWIN*)
-      if ! command -v powershell.exe >/dev/null 2>&1; then
-        ui_warn "PowerShell is unavailable; skipped Embedded AI model download."
-        return 0
-      fi
-      KUBEDOCK_MODEL_URL="$model_url" KUBEDOCK_MODEL_SHA256="$expected" KUBEDOCK_MODEL_NAME="$model_name" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
-        $ErrorActionPreference = "Stop"
-        $appDir = Join-Path $env:ProgramFiles "KubeDock"
-        $dir = Join-Path $appDir "models"
-        New-Item -ItemType Directory -Force -Path $dir | Out-Null
-        $dest = Join-Path $dir $env:KUBEDOCK_MODEL_NAME
-        $tmp = "$dest.part"
-        try {
-          Invoke-WebRequest -Uri $env:KUBEDOCK_MODEL_URL -OutFile $tmp
-          if ((Get-Item $tmp).Length -gt 524288000) { throw "Model exceeds 500 MiB." }
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tmp).Hash.ToLowerInvariant()
-          if ($hash -ne $env:KUBEDOCK_MODEL_SHA256) { throw "Model SHA-256 verification failed." }
-          Move-Item -Force $tmp $dest
-          Write-Output "Verified Embedded AI model installed inside KubeDock: $dest"
-        } finally { Remove-Item -Force -ErrorAction SilentlyContinue $tmp }
-      ' || ui_warn "Embedded AI model download failed; KubeDock is still installed."
-      return 0
-      ;;
-    *) ui_info "Model download is not configured for this platform."; return 0 ;;
+      ui_warn "Use installer-win.py for Windows model selection and installation."
+      return 0 ;;
+    *) ui_warn "Model download is not configured for this platform."; return 0 ;;
   esac
-
   local temporary actual_size actual_hash
-  temporary="$(mktemp "${TMPDIR:-/tmp}/kubedock-model.XXXXXX")" || {
-    ui_warn "Could not create a temporary model download file."; return 0;
-  }
-  ui_info "Downloading Embedded AI model (maximum 500 MiB)..."
+  temporary="$(mktemp "${TMPDIR:-/tmp}/kubedock-model.XXXXXX")" || { ui_warn "Could not create temporary model file."; return 0; }
+  ui_info "Downloading $model_name (~$size_mb MB)..."
   if ! curl -fL --retry 2 --connect-timeout 15 --max-time 900 --max-filesize 524288000 "$model_url" -o "$temporary"; then
-    rm -f "$temporary"; ui_warn "Embedded AI model download failed; KubeDock is still installed."; return 0
+    rm -f "$temporary"; ui_warn "Model download failed; KubeDock is still installed."; return 0
   fi
   actual_size="$(wc -c < "$temporary" | tr -d ' ')"
   if [[ "$actual_size" -le 0 || "$actual_size" -gt 524288000 ]]; then
@@ -276,16 +316,18 @@ offer_embedded_model_download() {
     rm -f "$temporary"; ui_warn "Model SHA-256 verification failed; file rejected."; return 0
   fi
   if ! $SUDO mkdir -p "$model_dir" || ! $SUDO mv "$temporary" "$model_dir/$model_name"; then
-    rm -f "$temporary"; ui_warn "Could not place the verified model inside the KubeDock application bundle."; return 0
+    rm -f "$temporary"; ui_warn "Could not place verified model inside KubeDock resources."; return 0
   fi
+  printf '{"id":"%s","filename":"%s"}\\n' "$selected_id" "$model_name" | $SUDO tee "$model_dir/selected_model.json" >/dev/null
   if [[ "$OS" == "Darwin" ]]; then
     $SUDO codesign --deep --force --sign - "/Applications/KubeDock.app" || {
-      ui_warn "Model installed, but macOS app re-signing failed; verify the app signature before launch."
+      ui_warn "Model installed, but macOS app re-signing failed; verify app signature before launch."
       return 0
     }
   fi
-  ui_success "Verified Embedded AI model installed inside KubeDock: $model_dir/$model_name"
+  ui_success "Verified $model_name installed and selected inside KubeDock."
 }
+
 install_prebuilt_bundle() {
   ui_phase 1 5 "Checking platform" "Selecting a compatible prebuilt KubeDock release."
   local asset="" arch="" base url tmp archive checksum_file expected_hash actual_hash extracted target staged backup archive_win tmp_win
