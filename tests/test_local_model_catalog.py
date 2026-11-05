@@ -1,11 +1,13 @@
 import importlib.util
 import unittest
+import sys
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "installer" / "local_model_catalog.py"
 SPEC = importlib.util.spec_from_file_location("local_model_catalog_test", MODULE_PATH)
 assert SPEC and SPEC.loader
 catalog = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = catalog
 SPEC.loader.exec_module(catalog)
 
 
