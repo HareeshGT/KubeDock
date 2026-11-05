@@ -8,6 +8,13 @@ from .models import AgentEvent, AgentPolicy, AgentResult, AgentStatus, Assistant
 from .registry import ToolRegistry
 
 
+_DEPLOYMENT_DIAGNOSIS_RE = re.compile(
+    r"\\b(?:why\\s+is|why\\s+does|diagnos(?:e|is)|troubleshoot|investigate|stuck|containercreating|container\\s+creating|failing|not\\s+ready)\\b"
+    r".{0,160}?\\bdeployment\\s+([a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?)\\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
     r"\b(?:get|show|read|fetch|retrieve)\s+(?:the\s+)?"
     r"(?:value\s+of\s+)?(?:key\s+)?"
@@ -35,6 +42,9 @@ class AgentRuntime:
         "For exact values, quote only the exact value returned by a successful tool that inspected the exact requested object and key. "
         "Do not substitute a similarly named object or a different resource type. If the available tools cannot inspect the requested source, "
         "say so and ask for the missing detail or explain the limitation. "
+        "For a question about the live state or failure of a specifically named Deployment, inspect that exact Deployment with k8s_get_deployment before stating whether it exists or describing its rollout. "
+        "A successful list of other Deployments does not prove the requested Deployment is absent. If exact inspection fails, report the failure as unknown, not as absence. "
+        "For ContainerCreating, diagnose Pods and their events; Deployment availability alone does not establish the current Pod state. "
         "Distinguish observed facts from inference, and label any inference explicitly. "
         "Do not claim an operation succeeded unless a tool result confirms it. Prefer read-only checks. Explain uncertainty and impact."
     )
@@ -140,6 +150,38 @@ class AgentRuntime:
                             answer = (
                                 "The ConfigMap tool returned an invalid evidence payload. "
                                 "The value is unverified; I will not guess."
+                            )
+                else:
+                    deployment_match = _DEPLOYMENT_DIAGNOSIS_RE.search(request)
+                    if deployment_match:
+                        requested_name = deployment_match.group(1)
+                        namespace_match = re.search(
+                            r"\\b(?:in|namespace)\\s+([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)\\b",
+                            request, re.IGNORECASE,
+                        )
+                        requested_namespace = namespace_match.group(1) if namespace_match else ""
+                        exact_evidence = None
+                        for item in reversed(results):
+                            if item.name != "k8s_get_deployment" or item.status != "success":
+                                continue
+                            try:
+                                payload = json.loads(item.content)
+                            except (TypeError, ValueError):
+                                continue
+                            if (payload.get("found") is True
+                                    and payload.get("resource") == "Deployment"
+                                    and payload.get("name") == requested_name
+                                    and (not requested_namespace or payload.get("namespace") == requested_namespace)):
+                                exact_evidence = payload
+                                break
+                        if exact_evidence is None:
+                            answer = (
+                                "I couldn't verify the exact Deployment "
+                                + requested_name
+                                + ((" in namespace " + requested_namespace) if requested_namespace else "")
+                                + ". The list/diagnostic results are not sufficient to conclude that it does not exist, "
+                                "and failed event or log reads do not establish a root cause. "
+                                "Please retry the exact Deployment inspection and Pod-specific event checks."
                             )
                 elif results and not any(item.status == "success" for item in results):
                     answer = (
