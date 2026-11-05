@@ -132,6 +132,8 @@ class PromptToolAdapter:
         # Extract only a complete JSON object; do not parse arbitrary substrings.
         extracted = _extract_json_object(candidate)
         if extracted is None:
+            if '"tool_calls"' in candidate and "{" in candidate:
+                raise ValueError("The model returned incomplete tool-call JSON. Please retry the request.")
             return AssistantMessage(content=text)
         try:
             payload = json.loads(extracted)
