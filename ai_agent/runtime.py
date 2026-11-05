@@ -24,6 +24,29 @@ _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
 )
 
 
+def _deployment_namespace_requested(request: str) -> str:
+    """Extract an explicitly stated namespace without mistaking status text for it."""
+    text = str(request or "")
+    namespace = r"([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)"
+    patterns = (
+        # Common natural-language form: "in dev-cc ns" / "in dev-cc namespace".
+        rf"\b(?:in|within)\s+{namespace}\s+(?:ns|namespace)\b",
+        # Explicit form: "in namespace dev-cc".
+        rf"\b(?:in|within)\s+namespace\s+{namespace}\b",
+        # Label form: "Namespace: dev-cc" or "namespace=dev-cc".
+        rf"\bnamespace\s*[:=]\s*{namespace}\b",
+        # Explicit trailing form: "namespace dev-cc".
+        rf"\bnamespace\s+{namespace}\s*$",
+        # Short form at the end: "in dev-cc".
+        rf"\b(?:in|within)\s+{namespace}\s*$",
+    )
+    for pattern in patterns:
+        matches = list(re.finditer(pattern, text, re.IGNORECASE))
+        if matches:
+            return matches[-1].group(1).lower()
+    return ""
+
+
 def _configmap_lookup_requested(request: str):
     """Identify a direct key lookup and its explicitly named ConfigMap/namespace."""
     match = _CONFIGMAP_KEY_LOOKUP_RE.search(str(request or ""))
@@ -155,11 +178,7 @@ class AgentRuntime:
                     deployment_match = _DEPLOYMENT_DIAGNOSIS_RE.search(request)
                     if deployment_match:
                         requested_name = deployment_match.group(1)
-                        namespace_match = re.search(
-                            r"\b(?:in|namespace)\s+([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)\b",
-                            request, re.IGNORECASE,
-                        )
-                        requested_namespace = namespace_match.group(1) if namespace_match else ""
+                        requested_namespace = _deployment_namespace_requested(request)
                         exact_evidence = None
                         for item in reversed(results):
                             if item.name != "k8s_get_deployment" or item.status != "success":
