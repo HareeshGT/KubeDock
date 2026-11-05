@@ -380,6 +380,14 @@ install_prebuilt_bundle() {
   fi
 
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/kubedock-prebuilt.XXXXXX")" || return 2
+
+  # The prebuilt path can exit early or be interrupted during download,
+  # checksum verification, extraction, or installation. Keep all transient
+  # files under one directory and remove it whenever this function returns.
+  trap 'rm -rf -- "$tmp"; trap - RETURN' RETURN
+  trap 'rm -rf -- "$tmp"; exit 130' INT
+  trap 'rm -rf -- "$tmp"; exit 143' TERM
+
   archive="$tmp/$asset"
   url="$base/$asset"
 
@@ -534,7 +542,7 @@ install_prebuilt_bundle() {
     fi
     if $SUDO mkdir -p "/usr/share/applications" 2>/dev/null; then
       local desktop_tmp
-      desktop_tmp="$(mktemp)"
+      desktop_tmp="$(mktemp "$tmp/kubedock-desktop.XXXXXX")"
       cat > "$desktop_tmp" <<'EOF'
 [Desktop Entry]
 Type=Application
