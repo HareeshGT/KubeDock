@@ -109,6 +109,10 @@ def offer_embedded_model_download(install_dir: Path) -> None:
                 for chunk in iter(lambda: existing.read(1024 * 1024), b""):
                     existing_digest.update(chunk)
             if existing_digest.hexdigest() == selected.sha256:
+                (model_dir / "selected_model.json").write_text(
+                    json.dumps({"id": selected.id, "filename": selected.filename}, indent=2) + "\\n",
+                    encoding="utf-8",
+                )
                 UI.success(f"Selected model is already verified: {destination}")
                 return
         digest = hashlib.sha256()
@@ -134,6 +138,12 @@ def offer_embedded_model_download(install_dir: Path) -> None:
         if digest.hexdigest() != selected.sha256:
             raise RuntimeError("Model SHA-256 verification failed; the file was rejected.")
         os.replace(temporary, destination)
+        manifest_tmp = model_dir / "selected_model.json.part"
+        manifest_tmp.write_text(
+            json.dumps({"id": selected.id, "filename": selected.filename}, indent=2) + "\\n",
+            encoding="utf-8",
+        )
+        os.replace(manifest_tmp, model_dir / "selected_model.json")
         UI.clear_progress()
         UI.success(f"Verified model installed inside KubeDock: {destination}")
     except Exception as exc:
