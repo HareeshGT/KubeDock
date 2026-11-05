@@ -271,5 +271,36 @@ class AgentRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.register(spec)
 
+
+    def test_deployment_diagnosis_cannot_claim_absence_without_exact_inspection(self):
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "inspect_pod", {"name": "api"})]),
+            AssistantMessage(content="The deployment moocp does not exist in dev-cc."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "Why is the deployment moocp in ContainerCreating state in dev-cc ns", adapter
+        )
+        self.assertIn("couldn't verify the exact Deployment moocp", result.answer)
+        self.assertNotIn("does not exist", result.answer)
+
+    def test_deployment_diagnosis_accepts_only_matching_exact_inspection(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_deployment", "Inspect one exact Deployment.",
+            {"type": "object", "properties": {
+                "namespace": {"type": "string"}, "name": {"type": "string"}},
+             "required": ["namespace", "name"], "additionalProperties": False},
+            lambda args: {"found": True, "resource": "Deployment", "name": args["name"],
+                          "namespace": args["namespace"], "replicas": {"desired": 1, "available": 1}},
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "k8s_get_deployment",
+                                                  {"namespace": "dev-cc", "name": "moocp"})]),
+            AssistantMessage(content="The Deployment is present and has one available replica."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "Why is the deployment moocp in ContainerCreating state in dev-cc ns", adapter
+        )
+        self.assertIn("one available replica", result.answer)
+
 if __name__ == "__main__":
     unittest.main()
