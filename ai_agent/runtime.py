@@ -29,12 +29,12 @@ def _deployment_namespace_requested(request: str) -> str:
     text = str(request or "")
     namespace = r"([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)"
     patterns = (
+        # Prefer an explicit UI/context namespace label when present.
+        rf"\bnamespace\s*[:=]\s*{namespace}\b",
         # Common natural-language form: "in dev-cc ns" / "in dev-cc namespace".
         rf"\b(?:in|within)\s+{namespace}\s+(?:ns|namespace)\b",
         # Explicit form: "in namespace dev-cc".
         rf"\b(?:in|within)\s+namespace\s+{namespace}\b",
-        # Label form: "Namespace: dev-cc" or "namespace=dev-cc".
-        rf"\bnamespace\s*[:=]\s*{namespace}\b",
         # Explicit trailing form: "namespace dev-cc".
         rf"\bnamespace\s+{namespace}\s*$",
         # Short form at the end: "in dev-cc".
