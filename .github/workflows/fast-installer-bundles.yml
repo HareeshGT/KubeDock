@@ -2,9 +2,6 @@
 name: Fast prebuilt installer bundles
 
 on:
-  schedule:
-    - cron: "0 0 * * *"   # 5:30 AM IST
-    - cron: "0 8 * * *"   # 1:30 PM IST
   workflow_dispatch:
     inputs:
       version_bump:
