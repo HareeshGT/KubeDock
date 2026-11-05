@@ -151,7 +151,7 @@ class AgentRuntime:
                                 "The ConfigMap tool returned an invalid evidence payload. "
                                 "The value is unverified; I will not guess."
                             )
-                elif not lookup:
+                elif not lookup and _DEPLOYMENT_DIAGNOSIS_RE.search(request):
                     deployment_match = _DEPLOYMENT_DIAGNOSIS_RE.search(request)
                     if deployment_match:
                         requested_name = deployment_match.group(1)
