@@ -228,7 +228,7 @@ offer_embedded_model_download() {
   case "$OS" in
     Darwin)
       ram_gb="$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1073741824}')"
-      available_gb="$ram_gb"
+      available_gb="$(vm_stat 2>/dev/null | awk '/Pages free:|Pages inactive:|Pages speculative:|Pages purgeable:/ {gsub(/\\./, "", $NF); pages += $NF} END {printf "%d", pages * 4096 / 1073741824}')"
       if [[ "$(uname -m)" == "arm64" ]]; then gpu="Apple Silicon integrated GPU (unified memory)"; fi
       ;;
     Linux)
