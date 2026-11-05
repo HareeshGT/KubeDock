@@ -302,5 +302,23 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("one available replica", result.answer)
 
+
+    def test_deployment_namespace_parser_uses_trailing_namespace_not_container_state(self):
+        from ai_agent.runtime import _deployment_namespace_requested
+
+        request = (
+            "why is the deployment cowmonitorservice in containercreating "
+            "state in dev-cc ns"
+        )
+        self.assertEqual(_deployment_namespace_requested(request), "dev-cc")
+
+    def test_deployment_namespace_parser_supports_explicit_namespace_label(self):
+        from ai_agent.runtime import _deployment_namespace_requested
+
+        self.assertEqual(
+            _deployment_namespace_requested("Namespace: dev-cc; why is deployment cowmonitorservice stuck"),
+            "dev-cc",
+        )
+
 if __name__ == "__main__":
     unittest.main()
