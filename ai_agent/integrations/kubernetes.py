@@ -153,6 +153,23 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
                 "reason": waiting.get("reason") or terminated.get("reason") or "",
                 "message": waiting.get("message") or terminated.get("message") or "",
             })
+        init_statuses = {
+            str(item.get("name") or ""): item
+            for item in (status.get("initContainerStatuses") or [])
+        }
+        init_containers = []
+        for container in spec.get("initContainers") or []:
+            name = str(container.get("name") or "")
+            state = (init_statuses.get(name) or {}).get("state") or {}
+            waiting = state.get("waiting") or {}
+            terminated = state.get("terminated") or {}
+            init_containers.append({
+                "name": name,
+                "image": container.get("image", ""),
+                "state": "waiting" if waiting else "terminated" if terminated else "running" if state.get("running") else "unknown",
+                "reason": waiting.get("reason") or terminated.get("reason") or "",
+                "message": waiting.get("message") or terminated.get("message") or "",
+            })
         return {
             "found": True,
             "resource": "Pod",
@@ -175,30 +192,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
                 for item in status.get("conditions") or []
             ],
             "containers": containers,
-            "initContainers": [
-                {
-                    "name": item.get("name", ""),
-                    "image": item.get("image", ""),
-                    "state": (
-                        "waiting" if ((next((s for s in status.get("initContainerStatuses") or []
-                                             if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("waiting")
-                        else "terminated" if ((next((s for s in status.get("initContainerStatuses") or []
-                                                     if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("terminated")
-                        else "running" if ((next((s for s in status.get("initContainerStatuses") or []
-                                                  if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("running")
-                        else "unknown"
-                    ),
-                    "reason": (
-                        (((next((s for s in status.get("initContainerStatuses") or []
-                                 if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("waiting") or {}).get("reason", "")
-                    ),
-                    "message": (
-                        (((next((s for s in status.get("initContainerStatuses") or []
-                                 if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("waiting") or {}).get("message", "")
-                    ),
-                }
-                for item in spec.get("initContainers") or []
-            ],
+            "initContainers": init_containers,
             "volumes": [
                 {"name": item.get("name", ""),
                  "sources": [key for key in ("configMap", "secret", "persistentVolumeClaim", "projected", "emptyDir", "hostPath") if key in item]}
