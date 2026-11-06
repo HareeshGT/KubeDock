@@ -32,8 +32,19 @@ _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
 
 
 def _deployment_namespace_requested(request: str) -> str:
-    """Extract an explicitly stated namespace without mistaking status text for it."""
+    """Extract the user's explicit namespace before falling back to UI context."""
     text = str(request or "")
+    user_request = re.search(r"\\buser request\\s*:\\s*(.*)$", text, re.IGNORECASE | re.DOTALL)
+    if user_request:
+        explicit = _deployment_namespace_from_text(user_request.group(1))
+        if explicit:
+            return explicit
+    return _deployment_namespace_from_text(text)
+
+
+def _deployment_namespace_from_text(text: str) -> str:
+    """Parse namespace wording without mistaking status text for a namespace."""
+    text = str(text or "")
     namespace = r"([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)"
     patterns = (
         # Prefer an explicit UI/context namespace label when present.
