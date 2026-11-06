@@ -316,7 +316,7 @@ class AgentRuntimeTests(unittest.TestCase):
         from ai_agent.runtime import _deployment_namespace_requested
 
         request = (
-            "Selected namespace: dev-cc\\n"
+            "Selected namespace: dev-cc\n"
             "User request: why is pod api-123 stuck in namespace test-cc?"
         )
         self.assertEqual(_deployment_namespace_requested(request), "test-cc")
@@ -325,7 +325,7 @@ class AgentRuntimeTests(unittest.TestCase):
         from ai_agent.runtime import _deployment_namespace_requested
 
         request = (
-            "Selected namespace: dev-cc\\n"
+            "Selected namespace: dev-cc\n"
             "User request: why is pod api-123 in test-cc is in ContainerCreating state?"
         )
         self.assertEqual(_deployment_namespace_requested(request), "test-cc")
@@ -338,6 +338,18 @@ class AgentRuntimeTests(unittest.TestCase):
             "dev-cc",
         )
 
+
+    def test_ui_preamble_does_not_trigger_pod_diagnosis_for_pod_list_request(self):
+        """Ensure UI-injected Pod guidance cannot hijack an unrelated request."""
+        from ai_agent.runtime import _user_request_text
+
+        request = (
+            "Selected namespace: dev-cc\\n"
+            "Agent mode: read-only\\n"
+            "User request: list pods in dev-cc"
+        )
+        self.assertEqual(_user_request_text(request), "list pods in dev-cc")
+        self.assertNotIn("ContainerCreating", _user_request_text(request))
 
     def test_container_creating_diagnosis_reports_siblings_and_does_not_guess_cause(self):
         self.registry.register(ToolSpec(
@@ -381,7 +393,7 @@ class AgentRuntimeTests(unittest.TestCase):
             AssistantMessage(content="The cause is definitely an image pull failure."),
         ])
         result = AgentRuntime(self.registry).run(
-            "Selected namespace: dev-cc\\nUser request: why is pod cowgraphloader-b7ff85c76-br92r in ContainerCreating state?",
+            "Selected namespace: dev-cc\nUser request: why is pod cowgraphloader-b7ff85c76-br92r in ContainerCreating state?",
             adapter,
         )
         self.assertIn("No events matching this Pod were returned", result.answer)
@@ -414,7 +426,7 @@ class AgentRuntimeTests(unittest.TestCase):
             AssistantMessage(content="The pod has an unrelated problem."),
         ])
         result = AgentRuntime(self.registry).run(
-            "Selected namespace: dev-cc\\nUser request: why is pod api-123 in ContainerCreating state?",
+            "Selected namespace: dev-cc\nUser request: why is pod api-123 in ContainerCreating state?",
             adapter,
         )
         self.assertIn("FailedMount", result.answer)
