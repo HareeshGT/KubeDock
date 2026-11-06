@@ -337,7 +337,7 @@ class AgentRuntimeTests(unittest.TestCase):
             "k8s_get_events", "Read Pod events.",
             {"type": "object", "properties": {"namespace": {"type": "string"}, "pod": {"type": "string"}},
              "required": ["namespace", "pod"], "additionalProperties": False},
-            lambda args: [],
+            lambda args: {"namespace": args["namespace"], "filteredPod": args["pod"], "events": []},
         ))
         self.registry.register(ToolSpec(
             "k8s_list_pods", "List namespace Pods.",
@@ -385,8 +385,8 @@ class AgentRuntimeTests(unittest.TestCase):
             "k8s_get_events", "Read Pod events.",
             {"type": "object", "properties": {"namespace": {"type": "string"}, "pod": {"type": "string"}},
              "required": ["namespace", "pod"], "additionalProperties": False},
-            lambda args: [{"object": args["pod"], "objectKind": "Pod", "reason": "FailedMount",
-                           "message": "MountVolume.SetUp failed for volume \\\"config\\\": configmap not found"}],
+            lambda args: {"namespace": args["namespace"], "filteredPod": args["pod"], "events": [{"object": args["pod"], "objectKind": "Pod", "reason": "FailedMount",
+                           "message": "MountVolume.SetUp failed for volume config: configmap not found"}]},
         ))
         adapter = FakeAdapter([
             AssistantMessage(tool_calls=[
