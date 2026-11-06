@@ -162,7 +162,7 @@ class K8sAIOpsOperationsMixin:
             self._remember_conversation_turn('user', request)
             local_response = personalize_local_response(local_response, getattr(self, '_personality', 'jarvis'))
             self._remember_conversation_turn('assistant', local_response)
-            self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(local_response).replace(chr(10), '<br>')}</span>""")
+            self._append_assistant_message(local_response)
             self._speak(local_response)
             self.status_lbl.setText('Ready')
             self.request_input.setFocus()
@@ -342,7 +342,7 @@ class K8sAIOpsOperationsMixin:
         user_request = getattr(self, "_last_submitted_request", "")
         self._remember_conversation_turn("user", user_request)
         self._remember_conversation_turn("assistant", response)
-        self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+        self._append_assistant_message(response)
         self._speak(response)
         self.request_input.setFocus()
 
@@ -359,7 +359,7 @@ class K8sAIOpsOperationsMixin:
             response = action['response']
             self._remember_conversation_turn('user', user_request)
             self._remember_conversation_turn('assistant', response)
-            self.output.append(f"""<br><span style=\"color:{T['ACCENT']}; font-weight:700;\">Assistant:</span><br><span style=\"color:{T['TEXT_PRIMARY']}\">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+            self._append_assistant_message(response)
             self._speak(response)
             self.request_input.setFocus()
             return
