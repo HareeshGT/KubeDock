@@ -272,6 +272,40 @@ class AgentRuntimeTests(unittest.TestCase):
             self.registry.register(spec)
 
 
+    def test_pod_diagnosis_requires_exact_pod_status_evidence(self):
+        adapter = FakeAdapter([
+            AssistantMessage(content="The pod is stuck because its image pull failed.")
+        ])
+        result = AgentRuntime(self.registry).run(
+            "Selected namespace: dev-cc\\nUser request: why is the pod cowgraphloader-abc in ContainerCreating state?",
+            adapter,
+        )
+        self.assertIn("couldn't verify the exact Pod cowgraphloader-abc", result.answer)
+        self.assertNotIn("image pull failed", result.answer)
+
+    def test_pod_diagnosis_accepts_matching_exact_pod_status(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_pod_status", "Inspect exact Pod status.",
+            {"type": "object", "properties": {
+                "namespace": {"type": "string"}, "pod": {"type": "string"}},
+             "required": ["namespace", "pod"], "additionalProperties": False},
+            lambda args: {"found": True, "resource": "Pod", "name": args["pod"],
+                          "namespace": args["namespace"], "phase": "Pending",
+                          "containers": [{"name": "worker", "state": "waiting",
+                                          "reason": "ContainerCreating",
+                                          "message": "MountVolume.SetUp failed"}]},
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[ToolCall("c1", "k8s_get_pod_status",
+                {"namespace": "dev-cc", "pod": "cowgraphloader-abc"})]),
+            AssistantMessage(content="The exact Pod status reports ContainerCreating and MountVolume.SetUp failed."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "Selected namespace: dev-cc\\nUser request: why is the pod cowgraphloader-abc in ContainerCreating state?",
+            adapter,
+        )
+        self.assertIn("MountVolume.SetUp failed", result.answer)
+
     def test_deployment_diagnosis_cannot_claim_absence_without_exact_inspection(self):
         adapter = FakeAdapter([
             AssistantMessage(tool_calls=[ToolCall("c1", "inspect_pod", {"name": "api"})]),
