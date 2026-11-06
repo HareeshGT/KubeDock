@@ -34,7 +34,7 @@ class KubernetesToolTests(unittest.TestCase):
         command, timeout = self.commands.commands[0]
         self.assertIn("kubectl --context=dev-cluster -n dev get pods -o json", command)
         self.assertNotIn("delete", command)
-        self.assertEqual(result, [{"name": "api", "namespace": "dev", "phase": "Running", "node": "", "owners": [], "containers": [{"name": "api", "state": "unknown", "reason": "", "message": ""}]}])
+        self.assertEqual(result, [{"name": "api", "namespace": "dev", "phase": "Running", "node": "", "owners": [], "containers": [{"name": "api", "ready": false, "state": "unknown", "reason": ""}]}])
         self.assertLessEqual(timeout, 25)
 
     def test_invalid_namespace_is_rejected_before_remote_execution(self):
