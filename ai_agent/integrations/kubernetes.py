@@ -76,8 +76,8 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         namespace = _validate_namespace(args["namespace"])
         raw = _run(
             kubernetes_service,
-            _base(selected_context, namespace) + " get pods -o json",
-            20, max_chars=100000, reject_truncation=True,
+            _base(selected_context, namespace) + " get pods --chunk-size=100 -o json",
+            20, max_chars=1024 * 1024, reject_truncation=True,
         )
         try:
             payload = json.loads(raw)
@@ -124,7 +124,7 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         raw = _run(
             kubernetes_service,
             _base(selected_context, namespace) + " get pod/" + shlex.quote(pod) + " -o json",
-            20, max_chars=100000, reject_truncation=True,
+            20, max_chars=1024 * 1024, reject_truncation=True,
         )
         try:
             obj = json.loads(raw)
