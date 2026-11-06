@@ -50,7 +50,7 @@ class PromptToolAdapterTests(unittest.TestCase):
 
     def test_malformed_tool_json_is_an_error_not_user_facing_text(self):
         with self.assertRaisesRegex(ValueError, "malformed tool-call JSON"):
-            self._adapter('{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}').complete(
+            self._adapter('{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}],}').complete(
                 messages=[], tools=[]
             )
 
