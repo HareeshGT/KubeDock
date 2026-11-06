@@ -8,6 +8,13 @@ from .models import AgentEvent, AgentPolicy, AgentResult, AgentStatus, Assistant
 from .registry import ToolRegistry
 
 
+_POD_DIAGNOSIS_RE = re.compile(
+    r"\\b(?:why\\s+is|why\\s+does|diagnos(?:e|is)|troubleshoot|investigate|stuck|containercreating|container\\s+creating|failing|not\\s+ready|cause)\\b"
+    r".{0,180}?\\bpod\\s+([a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?)\\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 _DEPLOYMENT_DIAGNOSIS_RE = re.compile(
     r"\b(?:why\s+is|why\s+does|diagnos(?:e|is)|troubleshoot|investigate|stuck|containercreating|container\s+creating|failing|not\s+ready)\b"
     r".{0,160}?\bdeployment\s+([a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?)\b",
@@ -179,6 +186,31 @@ class AgentRuntime:
                                 "The ConfigMap tool returned an invalid evidence payload. "
                                 "The value is unverified; I will not guess."
                             )
+                elif not lookup and _POD_DIAGNOSIS_RE.search(request):
+                    pod_match = _POD_DIAGNOSIS_RE.search(request)
+                    requested_pod = pod_match.group(1)
+                    requested_namespace = _deployment_namespace_requested(request)
+                    exact_pod = None
+                    for item in reversed(results):
+                        if item.name != "k8s_get_pod_status" or item.status != "success":
+                            continue
+                        try:
+                            payload = json.loads(item.content)
+                        except (TypeError, ValueError):
+                            continue
+                        if (payload.get("found") is True
+                                and payload.get("resource") == "Pod"
+                                and payload.get("name") == requested_pod
+                                and (not requested_namespace or payload.get("namespace") == requested_namespace)):
+                            exact_pod = payload
+                            break
+                    if exact_pod is None:
+                        answer = (
+                            "I couldn't verify the exact Pod " + requested_pod
+                            + ((" in namespace " + requested_namespace) if requested_namespace else "")
+                            + ". A namespace-wide Pod list or unrelated events are not enough to diagnose it. "
+                            "The exact Pod status and its matching events must be inspected before identifying a cause."
+                        )
                 elif not lookup and _DEPLOYMENT_DIAGNOSIS_RE.search(request):
                     deployment_match = _DEPLOYMENT_DIAGNOSIS_RE.search(request)
                     if deployment_match:
