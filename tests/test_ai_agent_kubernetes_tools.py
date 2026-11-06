@@ -22,7 +22,7 @@ class KubernetesToolTests(unittest.TestCase):
 
     def test_registers_only_read_tools(self):
         self.assertEqual(set(self.registry.names()), {
-            "k8s_list_pods", "k8s_list_deployments", "k8s_list_nodes",
+            "k8s_list_pods", "k8s_get_pod", "k8s_list_deployments", "k8s_list_nodes",
             "k8s_get_events", "k8s_get_pod_logs", "k8s_get_configmap_key",
         })
         self.assertTrue(all(self.registry.get(name).permission == "read" for name in self.registry.names()))
