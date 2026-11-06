@@ -294,6 +294,12 @@ class K8sAIOpsOperationsMixin:
                 + "EVIDENCE RULES: Never infer a resource, owner, ConfigMap, Secret, key, or value from pod/deployment names or naming conventions. "
                 + "For an exact key lookup in a named ConfigMap, use k8s_get_configmap_key with the exact namespace, ConfigMap name, and key. "
                 + "That tool returns only the requested key. If it reports not found or errors, state that the value is unverified and ask whether the source is a Secret or another resource; do not try a similarly named object. "
+                + "For a named Pod in ContainerCreating, inspect that exact Pod with k8s_get_pod, retrieve events using k8s_get_events with the same pod filter, and list Pods in the namespace with k8s_list_pods. "
+                + "Use owner references to compare sibling Pods from the same ReplicaSet; report other namespace Pods separately. "
+                + "A waiting state alone is not a root cause. Only identify a cause when the exact Pod status message or a matching Pod event states it. "
+                + "If no matching events are returned, say the cause is unconfirmed. Do not guess image, volume, runtime, or node failures. "
+                + "Do not request logs for a container that has not started. Do not infer Pod health from Deployment readiness. "
+                + "Do not repeat a separate User-Facing Answer section. "
                 + "Do not claim to have inspected an object unless the corresponding tool succeeded. "
                 + "If no available tool can inspect the requested source, say so rather than guessing.\n"
                 + "User request: " + str(request)
