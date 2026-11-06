@@ -97,6 +97,12 @@ class PromptToolAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected a JSON array"):
             self._adapter('{"tool_calls":"not-an-array"}').complete(messages=[], tools=[])
 
+    def test_malformed_json_tool_arguments_are_rejected_not_silently_dropped(self):
+        result = self._adapter(
+            '{"tool_calls":[{"name":"k8s_list_pods","arguments":"{not-json}"}]}'
+        )
+        with self.assertRaisesRegex(ValueError, "malformed JSON in a tool's arguments"):
+            result.complete(messages=[], tools=[])
     def test_plain_text_explanation_of_tool_calls_does_not_trigger_recovery(self):
         """Preserve prose that mentions tool_calls without a JSON envelope."""
         calls = []
