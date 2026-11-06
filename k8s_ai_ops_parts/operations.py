@@ -353,6 +353,7 @@ class K8sAIOpsOperationsMixin:
         self.request_input.setFocus()
 
     def _on_ai_done(self, text: str):
+        """Render conversational replies or route validated Ops Mind actions."""
         try:
             raw_action = _extract_json(text)
             action = validate_action(raw_action)
