@@ -56,8 +56,8 @@ def _normalize_tool_call(item, index: int) -> ToolCall:
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
-        except (TypeError, ValueError):
-            arguments = None
+        except (TypeError, ValueError) as exc:
+            raise ValueError("The model returned malformed JSON in a tool's arguments.") from exc
     if isinstance(arguments, Mapping):
         arguments = dict(arguments)
 
