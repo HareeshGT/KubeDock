@@ -365,7 +365,7 @@ class K8sAIOpsOperationsMixin:
             response = action['response']
             self._remember_conversation_turn('user', user_request)
             self._remember_conversation_turn('assistant', response)
-        self._append_assistant_markdown(response)
+            self._append_assistant_markdown(response)
             self._speak(response)
             self.request_input.setFocus()
             return
