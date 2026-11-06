@@ -125,18 +125,19 @@ class PromptToolAdapter:
         # until the normal strict parser below accepts the corrected response.
         extracted_once = _extract_json_object(text)
         malformed_tool_envelope = False
-        if '"tool_calls"' in text:
-            if extracted_once is None:
+        if '"tool_calls"' in text and extracted_once is not None:
+            try:
+                first_payload = json.loads(extracted_once)
+                malformed_tool_envelope = (
+                    not isinstance(first_payload, Mapping)
+                    or not isinstance(first_payload.get("tool_calls"), list)
+                )
+            except (TypeError, ValueError):
                 malformed_tool_envelope = True
-            else:
-                try:
-                    first_payload = json.loads(extracted_once)
-                    malformed_tool_envelope = (
-                        not isinstance(first_payload, Mapping)
-                        or not isinstance(first_payload.get("tool_calls"), list)
-                    )
-                except (TypeError, ValueError):
-                    malformed_tool_envelope = True
+        elif '"tool_calls"' in text and "{" in text:
+            # A JSON-looking fragment that cannot be extracted is malformed;
+            # ordinary prose merely discussing tool_calls remains a valid answer.
+            malformed_tool_envelope = True
         if malformed_tool_envelope:
             recovery_prompt = (
                 prompt
