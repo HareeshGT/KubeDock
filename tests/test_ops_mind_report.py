@@ -49,7 +49,7 @@ The **worker** is using {tick}4.6 GiB{tick} against a {tick}5 GiB{tick} limit.
         self.assertIn("<code", html)
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
-        code_html = render_ops_mind_markdown("Run this:\\n```bash\\nkubectl get pods -n dev-cc\\n```")
+        code_html = render_ops_mind_markdown("Run this:\n```bash\nkubectl get pods -n dev-cc\n```")
         self.assertIn("<pre", code_html)
         self.assertIn("kubectl get pods -n dev-cc", code_html)
 
