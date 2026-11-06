@@ -345,4 +345,9 @@ def render_investigation_report(
     )
 
 
-__all__ = ["render_investigation_report"]
+def render_ops_mind_markdown(markdown: str) -> str:
+    """Render a model-authored Ops Mind reply as safe, readable theme-aware HTML."""
+    return _render_blocks(markdown)
+
+
+__all__ = ["render_investigation_report", "render_ops_mind_markdown"]
