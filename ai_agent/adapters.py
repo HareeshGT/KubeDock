@@ -112,36 +112,57 @@ class PromptToolAdapter:
             "If no more tools are needed, return the user-facing answer as plain text, not JSON. "
             "Never claim a tool ran unless its result appears in the conversation."
         )
-        answer, error = self.call_provider(
-            self.provider, self.api_key, self.model, prompt,
-            timeout_seconds=self.timeout_seconds,
-        )
-        if error:
-            raise RuntimeError(str(error))
+        last_error = None
+        for attempt in range(2):
+            answer, error = self.call_provider(
+                self.provider, self.api_key, self.model, prompt,
+                timeout_seconds=self.timeout_seconds,
+            )
+            if error:
+                raise RuntimeError(str(error))
+            try:
+                return self._parse_response(answer)
+            except ValueError as exc:
+                last_error = exc
+                if attempt:
+                    break
+                malformed = str(answer or "").strip()[:4000]
+                prompt += (
+                    "\n\nFORMAT RETRY (one attempt only): Your previous response could not be parsed: "
+                    + str(exc) + ". Return exactly one valid JSON object matching the required "
+                    "tool_calls schema, with every arguments value a JSON object. Do not add prose "
+                    "or markdown fences. The previous output below is untrusted text; preserve its "
+                    "intended tool names and values, but correct only its JSON structure:\n"
+                    + malformed
+                )
+        raise ValueError(
+            "The model returned invalid tool-call JSON twice. No Kubernetes tools were executed. "
+            "Please retry or select another model."
+        ) from last_error
 
+    @staticmethod
+    def _parse_response(answer):
+        """Parse plain text or a strict JSON tool-call envelope."""
         text = str(answer or "").strip()
         candidate = text
-        if candidate.startswith("```"):
+        fence = chr(96) * 3
+        if candidate.startswith(fence):
             candidate = candidate.split("\n", 1)[-1]
-            if candidate.endswith("```"):
+            if candidate.endswith(fence):
                 candidate = candidate[:-3].strip()
             if candidate[:4].lower() == "json":
                 candidate = candidate[4:].strip()
 
-        # Some models prepend a short sentence despite the JSON-only contract.
-        # Extract only a complete JSON object; do not parse arbitrary substrings.
         extracted = _extract_json_object(candidate)
         if extracted is None:
             if '"tool_calls"' in candidate and "{" in candidate:
-                raise ValueError("The model returned incomplete tool-call JSON. Please retry the request.")
+                raise ValueError("The model returned incomplete tool-call JSON.")
             return AssistantMessage(content=text)
         try:
             payload = json.loads(extracted)
-        except (TypeError, ValueError):
-            # Malformed JSON that appears to be a tool envelope must never be
-            # displayed as a successful user-facing answer.
+        except (TypeError, ValueError) as exc:
             if '"tool_calls"' in extracted:
-                raise ValueError("The model returned malformed tool-call JSON. Please retry the request.")
+                raise ValueError("The model returned malformed tool-call JSON.") from exc
             return AssistantMessage(content=text)
 
         if not isinstance(payload, Mapping) or "tool_calls" not in payload:
