@@ -341,7 +341,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def test_user_request_text_strips_ui_preamble(self):
         from ai_agent.runtime import _user_request_text
-        request = "Selected namespace: dev-cc\\nAgent mode: read-only\\nUser request: list pods"
+        request = "Selected namespace: dev-cc\nAgent mode: read-only\nUser request: list pods"
         self.assertEqual(_user_request_text(request), "list pods")
     def test_ui_preamble_does_not_trigger_pod_diagnosis_for_pod_list_request(self):
         """Keep ordinary Pod-list requests out of the ContainerCreating diagnosis guard."""
