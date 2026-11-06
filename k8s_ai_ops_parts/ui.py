@@ -19,7 +19,7 @@ import tempfile
 from collections import deque
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QKeySequence, QFont, QTextCursor, QTextDocument, QTextDocumentFragment
 from PyQt5.QtWidgets import QGraphicsBlurEffect
 
 try:
@@ -574,6 +574,41 @@ class K8sAIOpsUIMixin:
     def _update_history_label(self):
         count = len(self._history)
         self.history_lbl.setText(f"{count} saved operation{('s' if count != 1 else '')}")
+
+    def _append_assistant_markdown(self, text: str):
+        """Render model replies as safe, styled Markdown instead of escaped raw markup."""
+        document = QTextDocument()
+        document.setDefaultFont(QFont("Arial", 10))
+        document.setDefaultStyleSheet(f"""
+            body {{ color: {T['TEXT_PRIMARY']}; }}
+            p {{ margin: 3px 0 8px 0; }}
+            h1, h2, h3 {{ color: {T['TEXT_PRIMARY']}; margin-top: 12px; margin-bottom: 6px; }}
+            h1 {{ font-size: 18px; }} h2 {{ font-size: 15px; }} h3 {{ font-size: 13px; }}
+            ul, ol {{ margin-top: 3px; margin-bottom: 8px; }}
+            li {{ margin: 2px 0; }}
+            code {{ color: {T['ACCENT']}; background: {T['BG_ITEM']}; }}
+            pre {{ color: {T['TEXT_PRIMARY']}; background: {T['BG_ITEM']}; padding: 8px; }}
+            blockquote {{ color: {T['TEXT_DIM']}; border-left: 3px solid {T['ACCENT']}; margin-left: 8px; padding-left: 8px; }}
+            a {{ color: {T['ACCENT']}; }}
+            table {{ border-collapse: collapse; }}
+            th, td {{ border: 1px solid {T['BORDER']}; padding: 4px 7px; }}
+        """)
+        markdown = str(text or "").strip()
+        try:
+            document.setMarkdown(markdown)
+        except AttributeError:
+            # Older Qt builds may lack Markdown support; preserve readable text.
+            document.setPlainText(markdown)
+        cursor = self.output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertBlock()
+        cursor.insertHtml(
+            f'<p style="color:{T["ACCENT"]}; font-weight:700;">Assistant:</p>'
+        )
+        cursor.insertFragment(QTextDocumentFragment(document))
+        cursor.insertBlock()
+        self.output.setTextCursor(cursor)
+        self.output.ensureCursorVisible()
 
     def _write_info(self, text: str):
         self.output.append(f"""<span style="color:{T['TEXT_DIM']}">{self._escape_html(text).replace(chr(10), '<br>')}</span>""")
