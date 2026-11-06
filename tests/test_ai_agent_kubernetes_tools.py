@@ -28,11 +28,13 @@ class KubernetesToolTests(unittest.TestCase):
         self.assertTrue(all(self.registry.get(name).permission == "read" for name in self.registry.names()))
 
     def test_pod_listing_uses_fixed_read_only_command(self):
+        """Parse structured Pod inventory from the read-only kubectl response."""
+        self.commands.output = '{"items":[{"metadata":{"name":"api","namespace":"dev"},"status":{"phase":"Running"},"spec":{"containers":[{"name":"api"}]}}]}'
         result = self.registry.get("k8s_list_pods").handler({"namespace": "dev"})
         command, timeout = self.commands.commands[0]
-        self.assertIn("kubectl --context=dev-cluster -n dev get pods -o wide", command)
+        self.assertIn("kubectl --context=dev-cluster -n dev get pods -o json", command)
         self.assertNotIn("delete", command)
-        self.assertEqual(result, "ok")
+        self.assertEqual(result, [{"name": "api", "namespace": "dev", "phase": "Running", "node": "", "owners": [], "containers": [{"name": "api", "state": "unknown", "reason": "", "message": ""}]}])
         self.assertLessEqual(timeout, 25)
 
     def test_invalid_namespace_is_rejected_before_remote_execution(self):
@@ -61,8 +63,8 @@ class KubernetesToolTests(unittest.TestCase):
     def test_events_are_parsed_and_limited_without_shell_pipelines(self):
         self.commands.output = '{"items":[{"lastTimestamp":"t1","type":"Normal","involvedObject":{"name":"pod-a"},"reason":"Scheduled","message":"first"},{"lastTimestamp":"t2","type":"Warning","involvedObject":{"name":"pod-b"},"reason":"BackOff","message":"second"}]}'
         result = self.registry.get("k8s_get_events").handler({"namespace": "dev", "limit": 1})
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["object"], "pod-b")
+        self.assertEqual(len(result["events"]), 1)
+        self.assertEqual(result["events"][0]["object"], "pod-b")
         command, _ = self.commands.commands[-1]
         self.assertIn("get events --sort-by=.lastTimestamp -o json", command)
         self.assertNotIn("|", command)
