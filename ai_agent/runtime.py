@@ -344,8 +344,9 @@ class AgentRuntime:
                                     detail += " (count " + str(event["count"]) + ")"
                                 lines.append("- " + detail)
                         elif specific_waiting_evidence:
-                            lines.extend(["", "**Container status evidence:** " + "; ".join(specific_waiting_evidence)])
-                            lines.append("This status provides a more specific startup clue, but check the corresponding event/message before treating it as the complete root cause.")
+                            lines.extend(["", "**Cause indicated by container status:** " + "; ".join(specific_waiting_evidence)])
+                            if not events_checked:
+                                lines.append("Pod-specific events were not verified, so this status message is the available evidence and may need event corroboration.")
                         elif events_checked:
                             lines.extend(["", "**Root cause:** No events matching this Pod were returned. The cause is not confirmed by the available evidence."])
                         else:
