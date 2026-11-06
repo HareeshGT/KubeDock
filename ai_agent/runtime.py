@@ -9,8 +9,8 @@ from .registry import ToolRegistry
 
 
 _POD_DIAGNOSIS_RE = re.compile(
-    r"\\b(?:why\\s+is|why\\s+does|diagnos(?:e|is)|troubleshoot|investigate|stuck|containercreating|container\\s+creating|failing|not\\s+ready|cause)\\b"
-    r".{0,180}?\\bpod\\s+([a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?)\\b",
+    r"\b(?:why\s+is|why\s+does|diagnos(?:e|is)|troubleshoot|investigate|stuck|containercreating|container\s+creating|failing|not\s+ready|cause)\b"
+    r".{0,180}?\bpod\s+([a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
