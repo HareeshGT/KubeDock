@@ -599,6 +599,10 @@ class K8sAIOpsUIMixin:
         except AttributeError:
             # Older Qt builds may lack Markdown support; preserve readable text.
             document.setPlainText(markdown)
+        # Keep the transcript read-only: Markdown links must not navigate the
+        # QTextBrowser away from the accumulated operations conversation.
+        self.output.setOpenLinks(False)
+        self.output.setOpenExternalLinks(False)
         cursor = self.output.textCursor()
         cursor.movePosition(QTextCursor.End)
         cursor.insertBlock()
