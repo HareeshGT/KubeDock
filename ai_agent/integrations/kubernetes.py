@@ -176,7 +176,27 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
             ],
             "containers": containers,
             "initContainers": [
-                {"name": item.get("name", ""), "image": item.get("image", "")}
+                {
+                    "name": item.get("name", ""),
+                    "image": item.get("image", ""),
+                    "state": (
+                        "waiting" if ((next((s for s in status.get("initContainerStatuses") or []
+                                             if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("waiting")
+                        else "terminated" if ((next((s for s in status.get("initContainerStatuses") or []
+                                                     if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("terminated")
+                        else "running" if ((next((s for s in status.get("initContainerStatuses") or []
+                                                  if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("running")
+                        else "unknown"
+                    ),
+                    "reason": (
+                        (((next((s for s in status.get("initContainerStatuses") or []
+                                 if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("waiting") or {}).get("reason", "")
+                    ),
+                    "message": (
+                        (((next((s for s in status.get("initContainerStatuses") or []
+                                 if s.get("name") == item.get("name")), {}) or {}).get("state") or {}).get("waiting") or {}).get("message", "")
+                    ),
+                }
                 for item in spec.get("initContainers") or []
             ],
             "volumes": [
