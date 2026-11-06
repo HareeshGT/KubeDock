@@ -122,6 +122,25 @@ def _render_blocks(markdown: str) -> str:
             i += 1
             continue
 
+        if line.startswith("```"):
+            flush_paragraph()
+            flush_list()
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1
+            output.append(
+                f"<pre style='overflow-x:auto;white-space:pre-wrap;word-wrap:break-word;"
+                f"margin:8px 0 12px;padding:10px 12px;background:{T['BG_DARK']};"
+                f"border:1px solid {T['BORDER']};border-radius:7px;"
+                f"color:{T['TEXT_PRIMARY']};font-size:12px;line-height:1.5'>"
+                f"<code>{escape(chr(10).join(code_lines), quote=True)}</code></pre>"
+            )
+            continue
+
         heading = _HEADING.match(line)
         if heading:
             flush_paragraph()
