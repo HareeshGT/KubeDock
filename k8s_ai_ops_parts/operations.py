@@ -162,7 +162,7 @@ class K8sAIOpsOperationsMixin:
             self._remember_conversation_turn('user', request)
             local_response = personalize_local_response(local_response, getattr(self, '_personality', 'jarvis'))
             self._remember_conversation_turn('assistant', local_response)
-            self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(local_response).replace(chr(10), '<br>')}</span>""")
+            self._append_assistant_markdown(local_response)
             self._speak(local_response)
             self.status_lbl.setText('Ready')
             self.request_input.setFocus()
@@ -294,6 +294,12 @@ class K8sAIOpsOperationsMixin:
                 + "EVIDENCE RULES: Never infer a resource, owner, ConfigMap, Secret, key, or value from pod/deployment names or naming conventions. "
                 + "For an exact key lookup in a named ConfigMap, use k8s_get_configmap_key with the exact namespace, ConfigMap name, and key. "
                 + "That tool returns only the requested key. If it reports not found or errors, state that the value is unverified and ask whether the source is a Secret or another resource; do not try a similarly named object. "
+                + "For a named Pod in ContainerCreating, inspect that exact Pod with k8s_get_pod, retrieve events using k8s_get_events with the same pod filter, and list Pods in the namespace with k8s_list_pods. "
+                + "Use owner references to compare sibling Pods from the same ReplicaSet; report other namespace Pods separately. "
+                + "A waiting state alone is not a root cause. Only identify a cause when the exact Pod status message or a matching Pod event states it. "
+                + "If no matching events are returned, say the cause is unconfirmed. Do not guess image, volume, runtime, or node failures. "
+                + "Do not request logs for a container that has not started. Do not infer Pod health from Deployment readiness. "
+                + "Do not repeat a separate User-Facing Answer section. "
                 + "Do not claim to have inspected an object unless the corresponding tool succeeded. "
                 + "If no available tool can inspect the requested source, say so rather than guessing.\n"
                 + "User request: " + str(request)
@@ -342,11 +348,12 @@ class K8sAIOpsOperationsMixin:
         user_request = getattr(self, "_last_submitted_request", "")
         self._remember_conversation_turn("user", user_request)
         self._remember_conversation_turn("assistant", response)
-        self.output.append(f"""<br><span style="color:{T['ACCENT']}; font-weight:700;">Assistant:</span><br><span style="color:{T['TEXT_PRIMARY']}">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+        self._append_assistant_markdown(response)
         self._speak(response)
         self.request_input.setFocus()
 
     def _on_ai_done(self, text: str):
+        """Render conversational replies or route validated Ops Mind actions."""
         try:
             raw_action = _extract_json(text)
             action = validate_action(raw_action)
@@ -359,7 +366,7 @@ class K8sAIOpsOperationsMixin:
             response = action['response']
             self._remember_conversation_turn('user', user_request)
             self._remember_conversation_turn('assistant', response)
-            self.output.append(f"""<br><span style=\"color:{T['ACCENT']}; font-weight:700;\">Assistant:</span><br><span style=\"color:{T['TEXT_PRIMARY']}\">{self._escape_html(response).replace(chr(10), '<br>')}</span>""")
+            self._append_assistant_markdown(response)
             self._speak(response)
             self.request_input.setFocus()
             return

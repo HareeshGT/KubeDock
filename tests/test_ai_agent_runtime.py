@@ -312,6 +312,24 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(_deployment_namespace_requested(request), "dev-cc")
 
+    def test_explicit_user_namespace_overrides_selected_namespace_context(self):
+        from ai_agent.runtime import _deployment_namespace_requested
+
+        request = (
+            "Selected namespace: dev-cc\n"
+            "User request: why is pod api-123 stuck in namespace test-cc?"
+        )
+        self.assertEqual(_deployment_namespace_requested(request), "test-cc")
+
+    def test_spoken_pod_question_namespace_overrides_selected_namespace(self):
+        from ai_agent.runtime import _deployment_namespace_requested
+
+        request = (
+            "Selected namespace: dev-cc\n"
+            "User request: why is pod api-123 in test-cc is in ContainerCreating state?"
+        )
+        self.assertEqual(_deployment_namespace_requested(request), "test-cc")
+
     def test_deployment_namespace_parser_supports_explicit_namespace_label(self):
         from ai_agent.runtime import _deployment_namespace_requested
 
@@ -319,6 +337,99 @@ class AgentRuntimeTests(unittest.TestCase):
             _deployment_namespace_requested("Namespace: dev-cc; why is deployment cowmonitorservice stuck"),
             "dev-cc",
         )
+
+
+    def test_ui_preamble_does_not_trigger_pod_diagnosis_for_pod_list_request(self):
+        """Keep ordinary Pod-list requests out of the ContainerCreating diagnosis guard."""
+        request = (
+            "Selected namespace: dev-cc\n"
+            "Agent mode: read-only\n"
+            "User request: list pods in dev-cc"
+        )
+        adapter = FakeAdapter([AssistantMessage(content="Here are the Pods in dev-cc.")])
+        result = AgentRuntime(self.registry).run(request, adapter)
+        self.assertEqual(result.answer, "Here are the Pods in dev-cc.")
+
+    def test_container_creating_diagnosis_reports_siblings_and_does_not_guess_cause(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_pod", "Inspect exact Pod.",
+            {"type": "object", "properties": {"namespace": {"type": "string"}, "pod": {"type": "string"}},
+             "required": ["namespace", "pod"], "additionalProperties": False},
+            lambda args: {"found": True, "resource": "Pod", "name": args["pod"],
+                          "namespace": args["namespace"], "phase": "Pending", "node": "node-1",
+                          "owners": [{"kind": "ReplicaSet", "name": "cowgraphloader-b7ff85c76"}],
+                          "containers": [{"name": "cowgraphloader", "state": "waiting",
+                                          "reason": "ContainerCreating", "message": ""}],
+                          "conditions": []},
+        ))
+        self.registry.register(ToolSpec(
+            "k8s_get_events", "Read Pod events.",
+            {"type": "object", "properties": {"namespace": {"type": "string"}, "pod": {"type": "string"}},
+             "required": ["namespace", "pod"], "additionalProperties": False},
+            lambda args: {"namespace": args["namespace"], "filteredPod": args["pod"], "events": []},
+        ))
+        self.registry.register(ToolSpec(
+            "k8s_list_pods", "List namespace Pods.",
+            {"type": "object", "properties": {"namespace": {"type": "string"}},
+             "required": ["namespace"], "additionalProperties": False},
+            lambda args: [
+                {"name": "cowgraphloader-b7ff85c76-br92r", "phase": "Pending",
+                 "owners": [{"kind": "ReplicaSet", "name": "cowgraphloader-b7ff85c76"}],
+                 "containers": [{"name": "cowgraphloader", "state": "waiting", "reason": "ContainerCreating"}]},
+                {"name": "cowgraphloader-b7ff85c76-z9x2p", "phase": "Running",
+                 "owners": [{"kind": "ReplicaSet", "name": "cowgraphloader-b7ff85c76"}],
+                 "containers": [{"name": "cowgraphloader", "state": "running", "reason": ""}]},
+                {"name": "unrelated-api-123", "phase": "Running", "owners": [],
+                 "containers": [{"name": "api", "state": "running", "reason": ""}]},
+            ],
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[
+                ToolCall("p1", "k8s_get_pod", {"namespace": "dev-cc", "pod": "cowgraphloader-b7ff85c76-br92r"}),
+                ToolCall("e1", "k8s_get_events", {"namespace": "dev-cc", "pod": "cowgraphloader-b7ff85c76-br92r"}),
+                ToolCall("l1", "k8s_list_pods", {"namespace": "dev-cc"}),
+            ]),
+            AssistantMessage(content="The cause is definitely an image pull failure."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "Selected namespace: dev-cc\nUser request: why is pod cowgraphloader-b7ff85c76-br92r in ContainerCreating state?",
+            adapter,
+        )
+        self.assertIn("No events matching this Pod were returned", result.answer)
+        self.assertIn("cowgraphloader-b7ff85c76-z9x2p", result.answer)
+        self.assertIn("Running", result.answer)
+        self.assertNotIn("image pull failure", result.answer)
+
+    def test_container_creating_diagnosis_uses_matching_event_as_evidence(self):
+        self.registry.register(ToolSpec(
+            "k8s_get_pod", "Inspect exact Pod.",
+            {"type": "object", "properties": {"namespace": {"type": "string"}, "pod": {"type": "string"}},
+             "required": ["namespace", "pod"], "additionalProperties": False},
+            lambda args: {"found": True, "resource": "Pod", "name": args["pod"],
+                          "namespace": args["namespace"], "phase": "Pending", "node": "node-1",
+                          "owners": [], "containers": [{"name": "api", "state": "waiting",
+                          "reason": "ContainerCreating", "message": ""}], "conditions": []},
+        ))
+        self.registry.register(ToolSpec(
+            "k8s_get_events", "Read Pod events.",
+            {"type": "object", "properties": {"namespace": {"type": "string"}, "pod": {"type": "string"}},
+             "required": ["namespace", "pod"], "additionalProperties": False},
+            lambda args: {"namespace": args["namespace"], "filteredPod": args["pod"], "events": [{"object": args["pod"], "objectKind": "Pod", "reason": "FailedMount",
+                           "message": "MountVolume.SetUp failed for volume config: configmap not found"}]},
+        ))
+        adapter = FakeAdapter([
+            AssistantMessage(tool_calls=[
+                ToolCall("p1", "k8s_get_pod", {"namespace": "dev-cc", "pod": "api-123"}),
+                ToolCall("e1", "k8s_get_events", {"namespace": "dev-cc", "pod": "api-123"}),
+            ]),
+            AssistantMessage(content="The pod has an unrelated problem."),
+        ])
+        result = AgentRuntime(self.registry).run(
+            "Selected namespace: dev-cc\nUser request: why is pod api-123 in ContainerCreating state?",
+            adapter,
+        )
+        self.assertIn("FailedMount", result.answer)
+        self.assertIn("configmap not found", result.answer)
 
 if __name__ == "__main__":
     unittest.main()

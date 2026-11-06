@@ -15,6 +15,13 @@ _DEPLOYMENT_DIAGNOSIS_RE = re.compile(
 )
 
 
+_POD_DIAGNOSIS_RE = re.compile(
+    r"\bpod\s+([a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?)\b",
+    re.IGNORECASE,
+)
+_CONTAINER_CREATING_RE = re.compile(r"container\s*creating|containercreating", re.IGNORECASE)
+
+
 _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
     r"\b(?:get|show|read|fetch|retrieve)\s+(?:the\s+)?"
     r"(?:value\s+of\s+)?(?:key\s+)?"
@@ -24,13 +31,33 @@ _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
 )
 
 
-def _deployment_namespace_requested(request: str) -> str:
-    """Extract an explicitly stated namespace without mistaking status text for it."""
+def _user_request_text(request: str) -> str:
+    """Return the user's request without UI-injected context or instructions."""
     text = str(request or "")
+    match = re.search(r"\\buser request\\s*:\\s*(.*)$", text, re.IGNORECASE | re.DOTALL)
+    return match.group(1) if match else text
+
+
+def _deployment_namespace_requested(request: str) -> str:
+    """Extract the user's explicit namespace before falling back to UI context."""
+    text = str(request or "")
+    user_request = re.search(r"\buser request\s*:\s*(.*)$", text, re.IGNORECASE | re.DOTALL)
+    if user_request:
+        explicit = _deployment_namespace_from_text(user_request.group(1))
+        if explicit:
+            return explicit
+    return _deployment_namespace_from_text(text)
+
+
+def _deployment_namespace_from_text(text: str) -> str:
+    """Parse namespace wording without mistaking status text for a namespace."""
+    text = str(text or "")
     namespace = r"([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)"
     patterns = (
         # Prefer an explicit UI/context namespace label when present.
         rf"\bnamespace\s*[:=]\s*{namespace}\b",
+        # Slightly ungrammatical speech form: "pod X in dev-cc is in ContainerCreating".
+        rf"\b(?:in|within)\s+{namespace}\s+(?:is|has|where)\b",
         # Common natural-language form: "in dev-cc ns" / "in dev-cc namespace".
         rf"\b(?:in|within)\s+{namespace}\s+(?:ns|namespace)\b",
         # Explicit form: "in namespace dev-cc".
@@ -67,7 +94,12 @@ class AgentRuntime:
         "say so and ask for the missing detail or explain the limitation. "
         "For a question about the live state or failure of a specifically named Deployment, inspect that exact Deployment with k8s_get_deployment before stating whether it exists or describing its rollout. "
         "A successful list of other Deployments does not prove the requested Deployment is absent. If exact inspection fails, report the failure as unknown, not as absence. "
-        "For ContainerCreating, diagnose Pods and their events; Deployment availability alone does not establish the current Pod state. "
+        "For a named Pod in ContainerCreating, first call k8s_get_pod for that exact Pod and namespace, then k8s_get_events with the same namespace and pod filter, and k8s_list_pods to compare the other Pods. "
+        "Use Pod owner references to identify sibling Pods from the same ReplicaSet/workload; distinguish those from unrelated Pods in the namespace. "
+        "A ContainerCreating/waiting state alone is not a root cause. Report a cause only when an exact Pod waiting reason/message or a matching Pod event explicitly identifies it. "
+        "If no matching events are returned, say that no matching events were returned and the cause remains unconfirmed; do not guess image pull, volume mount, runtime, network, or node problems. "
+        "Do not request logs for a container that has not started; logs are not expected to be available in ContainerCreating. "
+        "Never infer Pod health from Deployment ready/available counts alone. Do not add a duplicate User-Facing Answer section or repeat the same conclusion. "
         "Distinguish observed facts from inference, and label any inference explicitly. "
         "Do not claim an operation succeeded unless a tool result confirms it. Prefer read-only checks. Explain uncertainty and impact."
     )
@@ -202,6 +234,153 @@ class AgentRuntime:
                                 "and failed event or log reads do not establish a root cause. "
                                 "Please retry the exact Deployment inspection and Pod-specific event checks."
                             )
+                elif (_CONTAINER_CREATING_RE.search(_user_request_text(request))
+                      and _POD_DIAGNOSIS_RE.search(_user_request_text(request))):
+                    user_request = _user_request_text(request)
+                    pod_match = _POD_DIAGNOSIS_RE.search(user_request)
+                    requested_name = pod_match.group(1)
+                    requested_namespace = _deployment_namespace_requested(request)
+                    pod_evidence = None
+                    for item in reversed(results):
+                        if item.name != "k8s_get_pod" or item.status != "success":
+                            continue
+                        try:
+                            payload = json.loads(item.content)
+                        except (TypeError, ValueError):
+                            continue
+                        if (payload.get("found") is True
+                                and payload.get("resource") == "Pod"
+                                and payload.get("name") == requested_name
+                                and (not requested_namespace or payload.get("namespace") == requested_namespace)):
+                            pod_evidence = payload
+                            break
+                    if pod_evidence is None:
+                        answer = (
+                            "I couldn't verify the exact Pod " + requested_name
+                            + ((" in namespace " + requested_namespace) if requested_namespace else "")
+                            + ". A namespace-wide Pod list or failed log/event request is not enough to establish its state or cause. "
+                            "Please retry the exact Pod inspection and Pod-filtered event check."
+                        )
+                    else:
+                        namespace = str(pod_evidence.get("namespace") or requested_namespace or "")
+                        phase = str(pod_evidence.get("phase") or "Unknown")
+                        node = str(pod_evidence.get("node") or "")
+                        container_rows = []
+                        specific_waiting_evidence = []
+                        for container in (pod_evidence.get("initContainers") or []) + (pod_evidence.get("containers") or []):
+                            name = str(container.get("name") or "container")
+                            state = str(container.get("state") or "unknown")
+                            reason = str(container.get("reason") or "")
+                            message = str(container.get("message") or "")
+                            detail = name + ": " + state
+                            if reason:
+                                detail += " (" + reason + ")"
+                            if message:
+                                detail += " — " + message
+                            container_rows.append(detail)
+                            if message or (reason and reason.lower() not in {"containercreating", "podinitializing"}):
+                                specific_waiting_evidence.append(detail)
+                        event_rows = []
+                        events_checked = False
+                        for item in reversed(results):
+                            if item.name != "k8s_get_events" or item.status != "success":
+                                continue
+                            try:
+                                event_payload = json.loads(item.content)
+                            except (TypeError, ValueError):
+                                continue
+                            if (isinstance(event_payload, dict)
+                                    and event_payload.get("filteredPod") == requested_name
+                                    and (not requested_namespace or event_payload.get("namespace") == requested_namespace)):
+                                events_checked = True
+                                event_rows = [
+                                    event for event in (event_payload.get("events") or [])
+                                    if str(event.get("object") or "") == requested_name
+                                    and (not event.get("objectKind") or str(event.get("objectKind")).lower() == "pod")
+                                ]
+                                break
+                        pod_list = []
+                        for item in reversed(results):
+                            if item.name != "k8s_list_pods" or item.status != "success":
+                                continue
+                            try:
+                                candidate = json.loads(item.content)
+                            except (TypeError, ValueError):
+                                continue
+                            if isinstance(candidate, list):
+                                pod_list = candidate
+                                break
+                        owner_refs = pod_evidence.get("owners") or []
+                        owner_names = {
+                            str(owner.get("name") or "")
+                            for owner in owner_refs
+                            if owner.get("name")
+                        }
+                        other_pods = [
+                            row for row in pod_list
+                            if str(row.get("name") or "") != requested_name
+                        ]
+                        siblings = [
+                            row for row in other_pods
+                            if owner_names and any(
+                                str(owner.get("name") or "") in owner_names
+                                for owner in (row.get("owners") or [])
+                            )
+                        ]
+                        lines = [
+                            "**Verified Pod:** " + requested_name + " in namespace " + namespace,
+                            "- Phase: **" + phase + "**",
+                            "- Node: " + (node or "not assigned"),
+                        ]
+                        if container_rows:
+                            lines.append("- Containers: " + "; ".join(container_rows))
+                        for condition in pod_evidence.get("conditions") or []:
+                            if str(condition.get("status") or "").lower() == "false":
+                                detail = str(condition.get("type") or "Condition") + " is False"
+                                if condition.get("reason"):
+                                    detail += " (" + str(condition["reason"]) + ")"
+                                if condition.get("message"):
+                                    detail += " — " + str(condition["message"])
+                                lines.append("- " + detail)
+                        if event_rows:
+                            lines.append("")
+                            lines.append("**Events for this Pod:**")
+                            for event in event_rows[-8:]:
+                                detail = str(event.get("reason") or "Event")
+                                if event.get("message"):
+                                    detail += ": " + str(event["message"])
+                                if event.get("count"):
+                                    detail += " (count " + str(event["count"]) + ")"
+                                lines.append("- " + detail)
+                        elif specific_waiting_evidence:
+                            lines.extend(["", "**Cause indicated by container status:** " + "; ".join(specific_waiting_evidence)])
+                            if not events_checked:
+                                lines.append("Pod-specific events were not verified, so this status message is the available evidence and may need event corroboration.")
+                        elif events_checked:
+                            lines.extend(["", "**Root cause:** No events matching this Pod were returned. The cause is not confirmed by the available evidence."])
+                        else:
+                            lines.extend(["", "**Root cause:** Pod-specific events were not successfully retrieved, so the cause is unverified."])
+                        lines.extend(["", "**Other Pods in " + namespace + ":**"])
+                        if siblings:
+                            lines.append("Same owner/workload:")
+                            for row in siblings[:8]:
+                                states = ", ".join(
+                                    str(container.get("name") or "container") + "="
+                                    + str(container.get("state") or "unknown")
+                                    + ((" (" + str(container.get("reason")) + ")") if container.get("reason") else "")
+                                    for container in (row.get("containers") or [])
+                                ) or "no container status"
+                                lines.append("- " + str(row.get("name") or "") + ": "
+                                             + str(row.get("phase") or "Unknown") + "; " + states)
+                        unrelated = [row for row in other_pods if row not in siblings]
+                        if unrelated:
+                            lines.append("Other workloads (not siblings):")
+                            for row in unrelated[:8]:
+                                lines.append("- " + str(row.get("name") or "") + ": "
+                                             + str(row.get("phase") or "Unknown"))
+                        if not pod_list:
+                            lines.append("The Pod inventory was not successfully retrieved, so other running Pods cannot be confirmed.")
+                        answer = "\n".join(lines)
                 elif results and not any(item.status == "success" for item in results):
                     answer = (
                         "I couldn't verify the requested cluster information because none of the "
