@@ -136,8 +136,8 @@ class PromptToolAdapter:
                     + malformed
                 )
         raise ValueError(
-            "The model returned invalid tool-call JSON twice. No Kubernetes tools were executed. "
-            "Please retry or select another model."
+            "The model returned invalid tool-call JSON twice (" + str(last_error) + "). "
+            "No Kubernetes tools were executed. Please retry or select another model."
         ) from last_error
 
     @staticmethod
