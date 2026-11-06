@@ -70,6 +70,11 @@ class KubernetesToolTests(unittest.TestCase):
         self.assertNotIn("|", command)
 
 
+    def test_pod_filtered_events_exclude_unrelated_objects_even_if_api_returns_them(self):
+        self.commands.output = '{"items":[{"involvedObject":{"name":"target-pod"},"reason":"FailedMount"},{"involvedObject":{"name":"sibling-pod"},"reason":"BackOff"}]}'
+        result = self.registry.get("k8s_get_events").handler({"namespace": "dev-cc", "pod": "target-pod"})
+        self.assertEqual([event["object"] for event in result["events"]], ["target-pod"])
+        self.assertEqual(result["events"][0]["reason"], "FailedMount")
     def test_success_with_empty_stdout_and_stderr_is_unverified(self):
         self.commands.output = "  "
         self.commands.error = "Warning: unable to retrieve optional metadata"
