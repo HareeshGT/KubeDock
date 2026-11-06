@@ -82,8 +82,10 @@ class KubernetesPodToolTests(unittest.TestCase):
         result = self.registry.get("k8s_get_events").handler({
             "namespace": "dev-cc", "pod": POD_NAME,
         })
-        self.assertEqual(result[0]["object"], POD_NAME)
-        self.assertEqual(result[0]["reason"], "FailedMount")
+        self.assertEqual(result["filteredPod"], POD_NAME)
+        self.assertEqual(result["namespace"], "dev-cc")
+        self.assertEqual(result["events"][0]["object"], POD_NAME)
+        self.assertEqual(result["events"][0]["reason"], "FailedMount")
         self.assertIn("--field-selector=", self.commands.commands[-1])
         self.assertIn("involvedObject.name=" + POD_NAME, self.commands.commands[-1])
 
