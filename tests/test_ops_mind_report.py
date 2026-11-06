@@ -1,6 +1,6 @@
 import unittest
 
-from ops_mind_report import render_investigation_report
+from ops_mind_report import render_investigation_report, render_ops_mind_markdown
 
 
 class OpsMindReportRenderingTests(unittest.TestCase):
@@ -38,6 +38,17 @@ The **worker** is using {tick}4.6 GiB{tick} against a {tick}5 GiB{tick} limit.
         self.assertIn("<ol", html)
         self.assertNotIn("| Current |", html)
         self.assertNotIn("**worker**", html)
+
+    def test_assistant_reply_markdown_is_readable_and_escapes_model_html(self):
+        html = render_ops_mind_markdown(
+            "## Confirmed findings\n- **PodScheduled:** True\n- `ContainerCreating` is a waiting reason.\n\n<script>alert(1)</script>"
+        )
+        self.assertIn("<div", html)
+        self.assertIn("<ul", html)
+        self.assertIn("<strong>PodScheduled:</strong>", html)
+        self.assertIn("<code", html)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
 
     def test_placeholder_one_column_tables_are_removed(self):
         malformed = """## Risk assessment
