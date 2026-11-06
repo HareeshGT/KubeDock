@@ -31,6 +31,13 @@ _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
 )
 
 
+def _user_request_text(request: str) -> str:
+    """Return the user's request without UI-injected context or instructions."""
+    text = str(request or "")
+    match = re.search(r"\\buser request\\s*:\\s*(.*)$", text, re.IGNORECASE | re.DOTALL)
+    return match.group(1) if match else text
+
+
 def _deployment_namespace_requested(request: str) -> str:
     """Extract the user's explicit namespace before falling back to UI context."""
     text = str(request or "")
@@ -227,8 +234,10 @@ class AgentRuntime:
                                 "and failed event or log reads do not establish a root cause. "
                                 "Please retry the exact Deployment inspection and Pod-specific event checks."
                             )
-                elif _CONTAINER_CREATING_RE.search(request) and _POD_DIAGNOSIS_RE.search(request):
-                    pod_match = _POD_DIAGNOSIS_RE.search(request)
+                elif (_CONTAINER_CREATING_RE.search(_user_request_text(request))
+                      and _POD_DIAGNOSIS_RE.search(_user_request_text(request))):
+                    user_request = _user_request_text(request)
+                    pod_match = _POD_DIAGNOSIS_RE.search(user_request)
                     requested_name = pod_match.group(1)
                     requested_namespace = _deployment_namespace_requested(request)
                     pod_evidence = None
