@@ -97,6 +97,19 @@ class PromptToolAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected a JSON array"):
             self._adapter('{"tool_calls":"not-an-array"}').complete(messages=[], tools=[])
 
+    def test_plain_text_explanation_of_tool_calls_does_not_trigger_recovery(self):
+        """Preserve prose that mentions tool_calls without a JSON envelope."""
+        calls = []
+        def provider(*args, **kwargs):
+            calls.append(args[3])
+            return 'The "tool_calls" field is used for structured model requests.', None
+        result = PromptToolAdapter("embedded", "", "test-model", provider).complete(
+            messages=[], tools=[]
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result.content, 'The "tool_calls" field is used for structured model requests.')
+        self.assertEqual(result.tool_calls, [])
+
     def test_plain_text_answer_is_preserved(self):
         result = self._adapter("The deployment is healthy based on the supplied evidence.").complete(
             messages=[], tools=[]
