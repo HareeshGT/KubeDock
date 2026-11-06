@@ -228,6 +228,13 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         except (TypeError, ValueError) as exc:
             raise RuntimeError("Kubernetes returned an invalid events JSON response.") from exc
         items = payload.get("items") or []
+        if pod:
+            # Keep the result exact even if a proxy/API implementation ignores
+            # the field selector; unrelated namespace events are never evidence.
+            items = [
+                item for item in items
+                if (item.get("involvedObject") or {}).get("name") == pod
+            ]
         return [{
             "time": item.get("lastTimestamp") or item.get("eventTime") or item.get("metadata", {}).get("creationTimestamp", ""),
             "type": item.get("type", ""),
