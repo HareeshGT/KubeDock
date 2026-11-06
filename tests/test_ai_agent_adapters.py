@@ -48,11 +48,23 @@ class PromptToolAdapterTests(unittest.TestCase):
         self.assertEqual(result.tool_calls[0].name, "k8s_get_pod_logs")
         self.assertEqual(result.content, "Inspect {pod} logs.")
 
-    def test_malformed_tool_json_is_an_error_not_user_facing_text(self):
-        with self.assertRaisesRegex(ValueError, "malformed tool-call JSON"):
-            self._adapter('{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}').complete(
-                messages=[], tools=[]
-            )
+    def test_recovers_once_from_malformed_tool_json(self):
+        responses = iter([
+            '{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}',
+            '{"tool_calls":[{"name":"k8s_list_pods","arguments":{"namespace":"dev-cc"}}]}',
+        ])
+        calls = []
+        def provider(*args, **kwargs):
+            calls.append(args[3])
+            return next(responses), None
+        result = PromptToolAdapter("embedded", "", "test-model", provider).complete(
+            messages=[], tools=[]
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.tool_calls[0].name, "k8s_list_pods")
+        self.assertEqual(result.tool_calls[0].arguments, {"namespace": "dev-cc"})
+        self.assertIn("FORMAT RECOVERY", calls[1])
+
 
     def test_incomplete_tool_call_json_is_an_error_not_raw_text(self):
         with self.assertRaisesRegex(ValueError, "incomplete tool-call JSON"):
