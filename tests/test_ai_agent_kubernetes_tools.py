@@ -23,7 +23,7 @@ class KubernetesToolTests(unittest.TestCase):
     def test_registers_only_read_tools(self):
         self.assertEqual(set(self.registry.names()), {
             "k8s_list_pods", "k8s_list_deployments", "k8s_list_nodes",
-            "k8s_get_events", "k8s_get_pod_logs", "k8s_get_configmap_key",
+            "k8s_get_events", "k8s_get_pod_logs", "k8s_get_pod_status", "k8s_get_configmap_key",
         })
         self.assertTrue(all(self.registry.get(name).permission == "read" for name in self.registry.names()))
 
@@ -67,6 +67,49 @@ class KubernetesToolTests(unittest.TestCase):
         self.assertIn("get events --sort-by=.lastTimestamp -o json", command)
         self.assertNotIn("|", command)
 
+
+    def test_exact_pod_status_exposes_waiting_reason_and_owner(self):
+        self.commands.output = json.dumps({
+            "metadata": {"name": "cowgraphloader-abc", "namespace": "dev-cc",
+                        "uid": "pod-uid", "ownerReferences": [
+                            {"kind": "ReplicaSet", "name": "cowgraphloader-abc"}]},
+            "spec": {"nodeName": "aks-node-1",
+                     "containers": [{"name": "cowgraphloader", "image": "registry/image:tag"}],
+                     "volumes": [{"name": "config", "configMap": {"name": "app-config"}}]},
+            "status": {"phase": "Pending", "conditions": [
+                {"type": "PodScheduled", "status": "True"}],
+                "containerStatuses": [{"name": "cowgraphloader", "ready": False,
+                    "restartCount": 0, "image": "registry/image:tag",
+                    "state": {"waiting": {"reason": "ContainerCreating",
+                                           "message": "MountVolume.SetUp failed"}}}]}
+        })
+        result = self.registry.get("k8s_get_pod_status").handler({
+            "namespace": "dev-cc", "pod": "cowgraphloader-abc",
+        })
+        self.assertEqual(result["phase"], "Pending")
+        self.assertEqual(result["nodeName"], "aks-node-1")
+        self.assertEqual(result["containers"][0]["reason"], "ContainerCreating")
+        self.assertIn("MountVolume.SetUp failed", result["containers"][0]["message"])
+        self.assertEqual(result["ownerReferences"][0]["kind"], "ReplicaSet")
+        command, _ = self.commands.commands[-1]
+        self.assertIn("get pod/cowgraphloader-abc -o json", command)
+
+    def test_events_can_be_scoped_to_one_exact_pod(self):
+        self.commands.output = json.dumps({"items": [
+            {"lastTimestamp": "t1", "type": "Warning",
+             "involvedObject": {"name": "cowgraphloader-abc", "kind": "Pod"},
+             "reason": "FailedMount", "message": "volume is not ready"},
+            {"lastTimestamp": "t2", "type": "Warning",
+             "involvedObject": {"name": "unrelated-pod", "kind": "Pod"},
+             "reason": "BackOff", "message": "unrelated"},
+        ]})
+        result = self.registry.get("k8s_get_events").handler({
+            "namespace": "dev-cc", "pod": "cowgraphloader-abc",
+        })
+        self.assertEqual([event["object"] for event in result], ["cowgraphloader-abc"])
+        self.assertEqual(result[0]["reason"], "FailedMount")
+        command, _ = self.commands.commands[-1]
+        self.assertIn("involvedObject.name=cowgraphloader-abc", command)
 
     def test_success_with_empty_stdout_and_stderr_is_unverified(self):
         self.commands.output = "  "
