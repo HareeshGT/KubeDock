@@ -74,7 +74,48 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
     def list_pods(args):
         """List a bounded set of pods in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
-        return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide", 20)
+        raw = _run(
+            kubernetes_service,
+            _base(selected_context, namespace) + " get pods -o json",
+            20, max_chars=100000, reject_truncation=True,
+        )
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Kubernetes returned invalid Pod-list JSON; sibling Pod states are unverified.") from exc
+        rows = []
+        for item in payload.get("items") or []:
+            metadata = item.get("metadata") or {}
+            spec = item.get("spec") or {}
+            status = item.get("status") or {}
+            container_statuses = {
+                str(value.get("name") or ""): value
+                for value in (status.get("containerStatuses") or [])
+            }
+            containers = []
+            for container in spec.get("containers") or []:
+                name = str(container.get("name") or "")
+                state = (container_statuses.get(name) or {}).get("state") or {}
+                waiting = state.get("waiting") or {}
+                terminated = state.get("terminated") or {}
+                containers.append({
+                    "name": name,
+                    "ready": bool((container_statuses.get(name) or {}).get("ready", False)),
+                    "state": "waiting" if waiting else "terminated" if terminated else "running" if state.get("running") else "unknown",
+                    "reason": waiting.get("reason") or terminated.get("reason") or "",
+                })
+            rows.append({
+                "name": metadata.get("name", ""),
+                "namespace": metadata.get("namespace", ""),
+                "phase": status.get("phase", "Unknown"),
+                "node": spec.get("nodeName", ""),
+                "owners": [
+                    {"kind": owner.get("kind", ""), "name": owner.get("name", "")}
+                    for owner in metadata.get("ownerReferences") or []
+                ],
+                "containers": containers,
+            })
+        return rows
 
     def get_pod(args):
         """Inspect one exact Pod, including waiting-state reasons and owner metadata."""
