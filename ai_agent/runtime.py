@@ -34,7 +34,7 @@ _CONFIGMAP_KEY_LOOKUP_RE = re.compile(
 def _user_request_text(request: str) -> str:
     """Return the user's request without UI-injected context or instructions."""
     text = str(request or "")
-    match = re.search(r"\\buser request\\s*:\\s*(.*)$", text, re.IGNORECASE | re.DOTALL)
+    match = re.search(r"\buser request\s*:\s*(.*)$", text, re.IGNORECASE | re.DOTALL)
     return match.group(1) if match else text
 
 
