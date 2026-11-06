@@ -286,15 +286,19 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         except (TypeError, ValueError) as exc:
             raise RuntimeError("Kubernetes returned an invalid events JSON response.") from exc
         items = payload.get("items") or []
-        return [{
-            "time": item.get("lastTimestamp") or item.get("eventTime") or item.get("metadata", {}).get("creationTimestamp", ""),
-            "type": item.get("type", ""),
-            "object": (item.get("involvedObject") or {}).get("name", ""),
-            "objectKind": (item.get("involvedObject") or {}).get("kind", ""),
-            "reason": item.get("reason", ""),
-            "count": item.get("count", 1),
-            "message": item.get("message", ""),
-        } for item in items[-limit:]]
+        return {
+            "namespace": namespace,
+            "filteredPod": pod or None,
+            "events": [{
+                "time": item.get("lastTimestamp") or item.get("eventTime") or item.get("metadata", {}).get("creationTimestamp", ""),
+                "type": item.get("type", ""),
+                "object": (item.get("involvedObject") or {}).get("name", ""),
+                "objectKind": (item.get("involvedObject") or {}).get("kind", ""),
+                "reason": item.get("reason", ""),
+                "count": item.get("count", 1),
+                "message": item.get("message", ""),
+            } for item in items[-limit:]],
+        }
 
     def get_pod_logs(args):
         """Return a byte- and line-bounded pod log tail after redaction."""
