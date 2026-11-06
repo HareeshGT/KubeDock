@@ -312,6 +312,15 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(_deployment_namespace_requested(request), "dev-cc")
 
+    def test_explicit_user_namespace_overrides_selected_namespace_context(self):
+        from ai_agent.runtime import _deployment_namespace_requested
+
+        request = (
+            "Selected namespace: dev-cc\\n"
+            "User request: why is pod api-123 stuck in namespace test-cc?"
+        )
+        self.assertEqual(_deployment_namespace_requested(request), "test-cc")
+
     def test_deployment_namespace_parser_supports_explicit_namespace_label(self):
         from ai_agent.runtime import _deployment_namespace_requested
 
