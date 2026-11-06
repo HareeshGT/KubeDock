@@ -342,8 +342,8 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_ui_preamble_does_not_trigger_pod_diagnosis_for_pod_list_request(self):
         """Keep ordinary Pod-list requests out of the ContainerCreating diagnosis guard."""
         request = (
-            "Selected namespace: dev-cc\\n"
-            "Agent mode: read-only\\n"
+            "Selected namespace: dev-cc\n"
+            "Agent mode: read-only\n"
             "User request: list pods in dev-cc"
         )
         adapter = FakeAdapter([AssistantMessage(content="Here are the Pods in dev-cc.")])
