@@ -49,6 +49,9 @@ The **worker** is using {tick}4.6 GiB{tick} against a {tick}5 GiB{tick} limit.
         self.assertIn("<code", html)
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
+        code_html = render_ops_mind_markdown("Run this:\\n```bash\\nkubectl get pods -n dev-cc\\n```")
+        self.assertIn("<pre", code_html)
+        self.assertIn("kubectl get pods -n dev-cc", code_html)
 
     def test_placeholder_one_column_tables_are_removed(self):
         malformed = """## Risk assessment
