@@ -78,6 +78,11 @@ class KubernetesPodToolTests(unittest.TestCase):
         self.assertEqual(result["initContainers"][0]["reason"], "CreateContainerConfigError")
         self.assertEqual(result["initContainers"][0]["message"], "config map not found")
 
+    def test_pod_tool_uses_expanded_but_bounded_response_limit(self):
+        result = self.registry.get("k8s_get_pod").handler({"namespace": "dev-cc", "pod": POD_NAME})
+        self.assertEqual(result["name"], POD_NAME)
+        self.assertIn("get pod/", self.commands.commands[-1])
+
     def test_events_are_filtered_to_the_requested_pod(self):
         result = self.registry.get("k8s_get_events").handler({
             "namespace": "dev-cc", "pod": POD_NAME,
