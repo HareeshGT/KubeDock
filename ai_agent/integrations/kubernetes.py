@@ -76,6 +76,75 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         namespace = _validate_namespace(args["namespace"])
         return _run(kubernetes_service, _base(selected_context, namespace) + " get pods -o wide", 20)
 
+    def get_pod(args):
+        """Inspect one exact Pod, including waiting-state reasons and owner metadata."""
+        namespace = _validate_namespace(args["namespace"])
+        pod = _validate_name(args["pod"], "pod")
+        raw = _run(
+            kubernetes_service,
+            _base(selected_context, namespace) + " get pod/" + shlex.quote(pod) + " -o json",
+            20, max_chars=100000, reject_truncation=True,
+        )
+        try:
+            obj = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Kubernetes returned invalid Pod JSON; its state is unverified.") from exc
+        metadata = obj.get("metadata") or {}
+        spec = obj.get("spec") or {}
+        status = obj.get("status") or {}
+        containers = []
+        statuses = {
+            str(item.get("name") or ""): item
+            for item in (status.get("containerStatuses") or [])
+        }
+        for container in spec.get("containers") or []:
+            name = str(container.get("name") or "")
+            state = (statuses.get(name) or {}).get("state") or {}
+            waiting = state.get("waiting") or {}
+            terminated = state.get("terminated") or {}
+            running = state.get("running") or {}
+            containers.append({
+                "name": name,
+                "image": container.get("image", ""),
+                "ready": bool((statuses.get(name) or {}).get("ready", False)),
+                "restartCount": (statuses.get(name) or {}).get("restartCount", 0),
+                "state": ("waiting" if waiting else "terminated" if terminated else "running" if running else "unknown"),
+                "reason": waiting.get("reason") or terminated.get("reason") or "",
+                "message": waiting.get("message") or terminated.get("message") or "",
+            })
+        return {
+            "found": True,
+            "resource": "Pod",
+            "name": metadata.get("name", ""),
+            "namespace": metadata.get("namespace", ""),
+            "uid": metadata.get("uid", ""),
+            "phase": status.get("phase", "Unknown"),
+            "reason": status.get("reason", ""),
+            "message": status.get("message", ""),
+            "node": spec.get("nodeName", ""),
+            "startTime": status.get("startTime", ""),
+            "labels": metadata.get("labels") or {},
+            "owners": [
+                {"kind": owner.get("kind", ""), "name": owner.get("name", ""), "uid": owner.get("uid", "")}
+                for owner in metadata.get("ownerReferences") or []
+            ],
+            "conditions": [
+                {"type": item.get("type", ""), "status": item.get("status", ""),
+                 "reason": item.get("reason", ""), "message": item.get("message", "")}
+                for item in status.get("conditions") or []
+            ],
+            "containers": containers,
+            "initContainers": [
+                {"name": item.get("name", ""), "image": item.get("image", "")}
+                for item in spec.get("initContainers") or []
+            ],
+            "volumes": [
+                {"name": item.get("name", ""),
+                 "sources": [key for key in ("configMap", "secret", "persistentVolumeClaim", "projected", "emptyDir", "hostPath") if key in item]}
+                for item in spec.get("volumes") or []
+            ],
+        }
+
     def list_deployments(args):
         """List a bounded set of deployments in the requested namespace."""
         namespace = _validate_namespace(args["namespace"])
@@ -151,7 +220,11 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         limit = int(args.get("limit", 30))
         if not 1 <= limit <= 50:
             raise ValueError("Event limit must be between 1 and 50.")
-        command = _base(selected_context, namespace) + " get events --sort-by=.lastTimestamp -o json"
+        pod = _validate_name(args["pod"], "pod") if args.get("pod") else ""
+        command = _base(selected_context, namespace) + " get events"
+        if pod:
+            command += " --field-selector=" + shlex.quote("involvedObject.name=" + pod)
+        command += " --sort-by=.lastTimestamp -o json"
         raw = _run(kubernetes_service, command, 20, max_chars=100000, reject_truncation=True)
         try:
             payload = json.loads(raw)
@@ -162,7 +235,9 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
             "time": item.get("lastTimestamp") or item.get("eventTime") or item.get("metadata", {}).get("creationTimestamp", ""),
             "type": item.get("type", ""),
             "object": (item.get("involvedObject") or {}).get("name", ""),
+            "objectKind": (item.get("involvedObject") or {}).get("kind", ""),
             "reason": item.get("reason", ""),
+            "count": item.get("count", 1),
             "message": item.get("message", ""),
         } for item in items[-limit:]]
 
@@ -181,6 +256,15 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         {"type": "object", "properties": {"namespace": {"type": "string", "minLength": 1, "maxLength": 63}},
          "required": ["namespace"], "additionalProperties": False},
         list_pods,
+    ))
+    registry.register(ToolSpec(
+        "k8s_get_pod",
+        "Inspect exactly one named Pod in one namespace. Returns actual phase, node, owner references, conditions, container waiting/terminated reasons and messages, images, and volume source types. Use this before diagnosing a Pod. Read-only.",
+        {"type": "object", "properties": {
+            "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
+            "pod": {"type": "string", "minLength": 1, "maxLength": 253}},
+         "required": ["namespace", "pod"], "additionalProperties": False},
+        get_pod,
     ))
     registry.register(ToolSpec(
         "k8s_list_deployments", "List deployments in one namespace. Read-only.",
@@ -213,9 +297,10 @@ def register_kubernetes_read_tools(registry, kubernetes_service, context="", inc
         list_nodes,
     ))
     registry.register(ToolSpec(
-        "k8s_get_events", "Read the latest events from one namespace. Read-only.",
+        "k8s_get_events", "Read recent events in one namespace, optionally filtered to one exact Pod via involvedObject.name. Read-only.",
         {"type": "object", "properties": {
             "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
+            "pod": {"type": "string", "minLength": 1, "maxLength": 253},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
          "required": ["namespace"], "additionalProperties": False},
         get_events,
