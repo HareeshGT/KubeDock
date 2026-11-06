@@ -60,6 +60,23 @@ class PromptToolAdapterTests(unittest.TestCase):
                 messages=[], tools=[]
             )
 
+    def test_retries_once_when_model_returns_malformed_tool_call_json(self):
+        responses = iter([
+            ('{"tool_calls":[{"name":"k8s_list_pods","arguments":{}}', None),
+            ('{"tool_calls":[{"name":"k8s_list_pods","arguments":{"namespace":"dev-cc"}}]}', None),
+        ])
+        prompts = []
+        def provider(_provider, _key, _model, prompt, **kwargs):
+            prompts.append(prompt)
+            return next(responses)
+        adapter = PromptToolAdapter("embedded", "", "test-model", provider)
+
+        result = adapter.complete(messages=[], tools=[])
+
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("FORMAT RETRY", prompts[1])
+        self.assertEqual(result.tool_calls[0].arguments, {"namespace": "dev-cc"})
+
     def test_tool_calls_are_dispatched_and_results_return_to_the_model(self):
         responses = iter([
             '{"tool_calls":[{"id":"call_1","name":"read_cluster","arguments":{}}],"content":"Checking cluster state."}',
