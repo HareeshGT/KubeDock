@@ -575,6 +575,23 @@ class K8sAIOpsUIMixin:
         count = len(self._history)
         self.history_lbl.setText(f"{count} saved operation{('s' if count != 1 else '')}")
 
+    def _append_assistant_message(self, text: str):
+        """Render assistant replies as readable, safely escaped Markdown cards."""
+        from ops_mind_report import render_ops_mind_markdown
+
+        body = render_ops_mind_markdown(str(text or ""))
+        self.output.append(
+            f"<div style='margin:12px 0 16px;padding:13px 16px;"
+            f"background:{T['BG_PANEL']};border:1px solid {T['BORDER']};"
+            f"border-left:3px solid {T['ACCENT']};border-radius:10px;"
+            "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "white-space:normal;word-wrap:break-word'>"
+            f"<div style='margin-bottom:8px;color:{T['ACCENT']};"
+            "font-size:12px;font-weight:750;letter-spacing:.2px'>ASSISTANT</div>"
+            f"<div style='color:{T['TEXT_PRIMARY']};font-size:13px;line-height:1.6'>"
+            f"{body}</div></div>"
+        )
+
     def _write_info(self, text: str):
         self.output.append(f"""<span style="color:{T['TEXT_DIM']}">{self._escape_html(text).replace(chr(10), '<br>')}</span>""")
 
