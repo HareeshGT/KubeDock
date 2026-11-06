@@ -49,6 +49,8 @@ def _deployment_namespace_from_text(text: str) -> str:
     patterns = (
         # Prefer an explicit UI/context namespace label when present.
         rf"\bnamespace\s*[:=]\s*{namespace}\b",
+        # Slightly ungrammatical speech form: "pod X in dev-cc is in ContainerCreating".
+        rf"\\b(?:in|within)\\s+{namespace}\\s+(?:is|has|where)\\b",
         # Common natural-language form: "in dev-cc ns" / "in dev-cc namespace".
         rf"\b(?:in|within)\s+{namespace}\s+(?:ns|namespace)\b",
         # Explicit form: "in namespace dev-cc".
