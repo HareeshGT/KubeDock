@@ -267,10 +267,12 @@ class AgentRuntime:
                                 event_payload = json.loads(item.content)
                             except (TypeError, ValueError):
                                 continue
-                            if isinstance(event_payload, list):
+                            if (isinstance(event_payload, dict)
+                                    and event_payload.get("filteredPod") == requested_name
+                                    and (not requested_namespace or event_payload.get("namespace") == requested_namespace)):
                                 events_checked = True
                                 event_rows = [
-                                    event for event in event_payload
+                                    event for event in (event_payload.get("events") or [])
                                     if str(event.get("object") or "") == requested_name
                                     and (not event.get("objectKind") or str(event.get("objectKind")).lower() == "pod")
                                 ]
