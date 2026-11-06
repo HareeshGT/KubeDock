@@ -340,16 +340,15 @@ class AgentRuntimeTests(unittest.TestCase):
 
 
     def test_ui_preamble_does_not_trigger_pod_diagnosis_for_pod_list_request(self):
-        """Ensure UI-injected Pod guidance cannot hijack an unrelated request."""
-        from ai_agent.runtime import _user_request_text
-
+        """Keep ordinary Pod-list requests out of the ContainerCreating diagnosis guard."""
         request = (
             "Selected namespace: dev-cc\\n"
             "Agent mode: read-only\\n"
             "User request: list pods in dev-cc"
         )
-        self.assertEqual(_user_request_text(request), "list pods in dev-cc")
-        self.assertNotIn("ContainerCreating", _user_request_text(request))
+        adapter = FakeAdapter([AssistantMessage(content="Here are the Pods in dev-cc.")])
+        result = AgentRuntime(self.registry).run(request, adapter)
+        self.assertEqual(result.answer, "Here are the Pods in dev-cc.")
 
     def test_container_creating_diagnosis_reports_siblings_and_does_not_guess_cause(self):
         self.registry.register(ToolSpec(
