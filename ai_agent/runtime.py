@@ -244,7 +244,8 @@ class AgentRuntime:
                         phase = str(pod_evidence.get("phase") or "Unknown")
                         node = str(pod_evidence.get("node") or "")
                         container_rows = []
-                        for container in pod_evidence.get("containers") or []:
+                        specific_waiting_evidence = []
+                        for container in (pod_evidence.get("initContainers") or []) + (pod_evidence.get("containers") or []):
                             name = str(container.get("name") or "container")
                             state = str(container.get("state") or "unknown")
                             reason = str(container.get("reason") or "")
@@ -255,6 +256,8 @@ class AgentRuntime:
                             if message:
                                 detail += " — " + message
                             container_rows.append(detail)
+                            if message or (reason and reason.lower() not in {"containercreating", "podinitializing"}):
+                                specific_waiting_evidence.append(detail)
                         event_rows = []
                         events_checked = False
                         for item in reversed(results):
@@ -325,6 +328,9 @@ class AgentRuntime:
                                 if event.get("count"):
                                     detail += " (count " + str(event["count"]) + ")"
                                 lines.append("- " + detail)
+                        elif specific_waiting_evidence:
+                            lines.extend(["", "**Container status evidence:** " + "; ".join(specific_waiting_evidence)])
+                            lines.append("This status provides a more specific startup clue, but check the corresponding event/message before treating it as the complete root cause.")
                         elif events_checked:
                             lines.extend(["", "**Root cause:** No events matching this Pod were returned. The cause is not confirmed by the available evidence."])
                         else:
