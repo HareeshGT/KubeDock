@@ -18,7 +18,7 @@ class DashboardUIMixin:
   
       self.ctrl_bar = QWidget()
       self.ctrl_bar.setObjectName("dash_ctrl")
-      self.ctrl_bar.setFixedHeight(68)
+      self.ctrl_bar.setFixedHeight(76)
       cb = QHBoxLayout(self.ctrl_bar)
       cb.setContentsMargins(16, 8, 16, 8)
       cb.setSpacing(10)
@@ -827,8 +827,8 @@ class DashboardUIMixin:
       frame = QFrame()
       frame.setObjectName("dash_card")
       outer = QVBoxLayout(frame)
-      outer.setContentsMargins(14, 10, 14, 14)
-      outer.setSpacing(8)
+      outer.setContentsMargins(17, 14, 17, 16)
+      outer.setSpacing(11)
       lbl = QLabel()
       name, cleaned = split_icon_text(title)
       if icon:
@@ -1085,7 +1085,7 @@ class DashboardUIMixin:
       self.context_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 10px;")
       self.overview_card.setStyleSheet(
         f"QFrame#dash_overview {{ background: {T['BG_ITEM']}; "
-        f"border: 1px solid {T['BORDER']}; border-left: 3px solid {T['ACCENT']}; border-radius: 7px; }}"
+        f"border: 1px solid {T['BORDER']}; border-left: 3px solid {T['ACCENT']}; border-radius: 11px; }}"
       )
       self.overview_scope_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 9px; font-weight: 700;")
       self.overview_detail_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 11px;")
@@ -1100,7 +1100,7 @@ class DashboardUIMixin:
               self.service_activity_card["frame"]):
         frame.setStyleSheet(
           f"QFrame#dash_card {{ background: {T['BG_PANEL']}; "
-          f"border: 1px solid {T['BORDER']}; border-radius: 8px; }}"
+          f"border: 1px solid {T['BORDER']}; border-radius: 12px; }}"
         )
       self.disk_tree.setStyleSheet(f"QTreeWidget {{ font-size: 12px; }}")
       # Card headers and a few static labels bake their colors into inline
@@ -1189,6 +1189,7 @@ class DashboardUIMixin:
   
   
   def _show_connected_placeholder(self):
+      self.dashboard_sections.setCurrentIndex(0)
       self._set_cluster_overview(
         "Collecting cluster snapshot",
         "Waiting for fresh Kubernetes data from the connected host and selected context.",
