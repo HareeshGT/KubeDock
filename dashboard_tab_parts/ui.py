@@ -1,5 +1,5 @@
 from dashboard_tab import *
-from PyQt5.QtWidgets import QStackedWidget
+from PyQt5.QtWidgets import QStackedWidget, QTabWidget
 from dashboard_tab import (
   _dashboard_text, _pct_color, _NodeGridContainer,
 )
@@ -464,7 +464,94 @@ class DashboardUIMixin:
       self._content_layout.addWidget(self.history_card["frame"])
   
       self._render_history()
-      self._content_layout.addStretch()
+
+      # Recompose the dashboard from the existing, data-bound widgets.
+      # This is intentionally a presentation-only change: the cards, tables,
+      # charts and their update targets are the same instances used by the
+      # existing refresh/render mixins.
+      while self._content_layout.count():
+        item = self._content_layout.takeAt(0)
+        # Do not delete widgets here; they are reparented into the new pages.
+
+      self._content_layout.setContentsMargins(22, 18, 22, 24)
+      self._content_layout.setSpacing(14)
+
+      intro = QWidget()
+      intro_layout = QVBoxLayout(intro)
+      intro_layout.setContentsMargins(2, 0, 2, 2)
+      intro_layout.setSpacing(3)
+      intro_title = QLabel("Infrastructure overview")
+      intro_title.setObjectName("dashboard_section_title")
+      intro_subtitle = QLabel(
+        "A live operational view of your connected machine and Kubernetes environment."
+      )
+      intro_subtitle.setObjectName("dashboard_section_subtitle")
+      intro_layout.addWidget(intro_title)
+      intro_layout.addWidget(intro_subtitle)
+      self._content_layout.addWidget(intro)
+
+      self._content_layout.addWidget(self.disconnected_lbl)
+      self._content_layout.addWidget(self.overview_card)
+
+      self.dashboard_sections = QTabWidget()
+      self.dashboard_sections.setObjectName("dashboard_sections")
+      self.dashboard_sections.setDocumentMode(True)
+      self.dashboard_sections.setMovable(False)
+      self.dashboard_sections.setUsesScrollButtons(True)
+
+      def make_dashboard_page(title, description, widgets):
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(4, 14, 4, 10)
+        page_layout.setSpacing(14)
+        heading = QLabel(title)
+        heading.setObjectName("dashboard_page_title")
+        subheading = QLabel(description)
+        subheading.setObjectName("dashboard_page_subtitle")
+        subheading.setWordWrap(True)
+        page_layout.addWidget(heading)
+        page_layout.addWidget(subheading)
+        for widget in widgets:
+          page_layout.addWidget(widget)
+        page_layout.addStretch(1)
+        return page
+
+      self.dashboard_sections.addTab(
+        make_dashboard_page(
+          "At a glance",
+          "Key cluster signals and host capacity, without digging through individual resources.",
+          [self.k8s_summary_card["frame"], self.vm_card["frame"]],
+        ),
+        "Overview",
+      )
+      self.dashboard_sections.addTab(
+        make_dashboard_page(
+          "Kubernetes",
+          "Inspect nodes, workloads, services and recent cluster events.",
+          [
+            self.k8s_card["frame"], self.workloads_card["frame"],
+            self.services_card["frame"], self.events_card["frame"],
+          ],
+        ),
+        "Kubernetes",
+      )
+      self.dashboard_sections.addTab(
+        make_dashboard_page(
+          "Host activity",
+          "Review live processes and remote file-server session details.",
+          [self.process_card["frame"], self.ftp_card["frame"]],
+        ),
+        "Host & activity",
+      )
+      self.dashboard_sections.addTab(
+        make_dashboard_page(
+          "Historical trends",
+          "Explore persisted resource samples and recent alert history for this connection.",
+          [self.history_card["frame"]],
+        ),
+        "History",
+      )
+      self._content_layout.addWidget(self.dashboard_sections, 1)
       scroll.setWidget(content)
       # Dashboard now has two focused views: the shared application
       # connection/runtime view and the connected machine view. Keep the
@@ -962,7 +1049,39 @@ class DashboardUIMixin:
 
 
   def _apply_styles(self):
-      self.ctrl_bar.setStyleSheet(f"QWidget#dash_ctrl {{ background: {T['BG_DARK']}; }}")
+      self.ctrl_bar.setStyleSheet(
+        f"QWidget#dash_ctrl {{ background: {T['BG_DARK']}; border-bottom: 1px solid {T['BORDER']}; }}"
+      )
+      self.dashboard_sections.setStyleSheet(
+        f"QTabWidget#dashboard_sections::pane {{ border: 1px solid {T['BORDER']}; "
+        f"border-radius: 10px; background: {T['BG_DARK']}; top: -1px; }}"
+        f"QTabWidget#dashboard_sections QTabBar::tab {{ background: {T['BG_PANEL']}; "
+        f"color: {_dashboard_text('muted')}; border: 1px solid {T['BORDER']}; "
+        f"border-bottom: 2px solid transparent; border-top-left-radius: 7px; "
+        f"border-top-right-radius: 7px; padding: 10px 18px; margin-right: 5px; "
+        f"font-size: 11px; font-weight: 600; }}"
+        f"QTabWidget#dashboard_sections QTabBar::tab:selected {{ color: {T['TEXT_PRIMARY']}; "
+        f"background: {T['BG_DARK']}; border-bottom: 2px solid {T['ACCENT']}; }}"
+        f"QTabWidget#dashboard_sections QTabBar::tab:hover:!selected {{ "
+        f"background: {T['BG_HOVER']}; color: {T['TEXT_PRIMARY']}; }}"
+      )
+      for label in self.findChildren(QLabel):
+        if label.objectName() == "dashboard_section_title":
+          label.setStyleSheet(
+            f"color: {T['TEXT_PRIMARY']}; font-size: 20px; font-weight: 750;"
+          )
+        elif label.objectName() == "dashboard_section_subtitle":
+          label.setStyleSheet(
+            f"color: {_dashboard_text('muted')}; font-size: 11px;"
+          )
+        elif label.objectName() == "dashboard_page_title":
+          label.setStyleSheet(
+            f"color: {T['TEXT_PRIMARY']}; font-size: 16px; font-weight: 700;"
+          )
+        elif label.objectName() == "dashboard_page_subtitle":
+          label.setStyleSheet(
+            f"color: {_dashboard_text('muted')}; font-size: 11px;"
+          )
       self.context_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 10px;")
       self.overview_card.setStyleSheet(
         f"QFrame#dash_overview {{ background: {T['BG_ITEM']}; "
@@ -976,6 +1095,7 @@ class DashboardUIMixin:
       for frame in (self.vm_card["frame"], self.k8s_summary_card["frame"],
               self.workloads_card["frame"], self.services_card["frame"],
               self.events_card["frame"], self.k8s_card["frame"], self.process_card["frame"],
+              self.ftp_card["frame"], self.history_card["frame"],
               self.app_connection_card["frame"], self.ssh_pool_card["frame"],
               self.service_activity_card["frame"]):
         frame.setStyleSheet(
@@ -1056,6 +1176,7 @@ class DashboardUIMixin:
       self.overview_card.hide()
       self.disconnected_lbl.show()
       self.vm_card["frame"].hide()
+      self.process_card["frame"].hide()
       self.k8s_summary_card["frame"].hide()
       self.workloads_card["frame"].hide()
       self.services_card["frame"].hide()
