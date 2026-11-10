@@ -80,6 +80,7 @@ class DashboardConnectionMixin:
   
   
   def _show_ftp_placeholder(self):
+      self.overview_card.hide()
       self.disconnected_lbl.hide()
       self.vm_card["frame"].hide()
       self.k8s_summary_card["frame"].hide()
