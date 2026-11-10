@@ -29,6 +29,7 @@ class DashboardConnectionMixin:
       if context == self._kube_context:
         return
       self._kube_context = context
+      self._update_live_label()
       if self._active and self.ssh:
         self._refresh()
   
