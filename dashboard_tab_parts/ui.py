@@ -31,6 +31,12 @@ class DashboardUIMixin:
       title_col.addWidget(self.page_title_lbl)
       title_col.addWidget(self.page_sub_lbl)
       cb.addLayout(title_col)
+
+      self.context_lbl = QLabel("Host —  ·  Kubernetes context: not explicitly selected")
+      self.context_lbl.setMaximumWidth(420)
+      self.context_lbl.setToolTip("Connected host and the Kubernetes context used by dashboard collection")
+      self.context_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 10px;")
+      cb.addWidget(self.context_lbl)
       cb.addStretch()
   
       self.updated_lbl = QLabel("")
@@ -60,6 +66,29 @@ class DashboardUIMixin:
       self.disconnected_lbl.setAlignment(Qt.AlignCenter)
       self.disconnected_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; padding: 40px; font-size: 13px;")
       self._content_layout.addWidget(self.disconnected_lbl)
+
+      # Compact operational summary: this is driven by the same Kubernetes
+      # snapshot as the detailed sections below, never by synthetic values.
+      self.overview_card = QFrame()
+      self.overview_card.setObjectName("dash_overview")
+      overview_layout = QVBoxLayout(self.overview_card)
+      overview_layout.setContentsMargins(14, 11, 14, 11)
+      overview_layout.setSpacing(4)
+      overview_head = QHBoxLayout()
+      overview_head.setSpacing(10)
+      self.overview_health_lbl = QLabel("Waiting for first cluster snapshot")
+      self.overview_health_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 15px; font-weight: 700;")
+      overview_head.addWidget(self.overview_health_lbl)
+      overview_head.addStretch(1)
+      self.overview_scope_lbl = QLabel("KUBERNETES OVERVIEW")
+      self.overview_scope_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 9px; font-weight: 700; letter-spacing: 1px;")
+      overview_head.addWidget(self.overview_scope_lbl)
+      overview_layout.addLayout(overview_head)
+      self.overview_detail_lbl = QLabel("Cluster readiness, workload health and node pressure will appear after collection.")
+      self.overview_detail_lbl.setWordWrap(True)
+      self.overview_detail_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 11px;")
+      overview_layout.addWidget(self.overview_detail_lbl)
+      self._content_layout.addWidget(self.overview_card)
   
       # ── Instance card ──────────────────────────────────
       self.vm_card = self._make_card(" Instance")
@@ -934,6 +963,13 @@ class DashboardUIMixin:
 
   def _apply_styles(self):
       self.ctrl_bar.setStyleSheet(f"QWidget#dash_ctrl {{ background: {T['BG_DARK']}; }}")
+      self.context_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 10px;")
+      self.overview_card.setStyleSheet(
+        f"QFrame#dash_overview {{ background: {T['BG_ITEM']}; "
+        f"border: 1px solid {T['BORDER']}; border-left: 3px solid {T['ACCENT']}; border-radius: 7px; }}"
+      )
+      self.overview_scope_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 9px; font-weight: 700;")
+      self.overview_detail_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 11px;")
       self.page_title_lbl.setStyleSheet(
         f"color: {T['TEXT_PRIMARY']}; font-size: 22px; font-weight: 700;")
       self.page_sub_lbl.setStyleSheet(f"color: {T['TEXT_DIM']}; font-size: 11px;")
@@ -990,7 +1026,21 @@ class DashboardUIMixin:
       self._update_live_label()
   
   
+  def _set_cluster_overview(self, state: str, detail: str, color: str = None):
+      """Render the compact health summary from the latest collected snapshot."""
+      if not hasattr(self, "overview_health_lbl"):
+        return
+      self.overview_health_lbl.setText(str(state or "Unavailable"))
+      self.overview_health_lbl.setStyleSheet(
+        f"color: {color or _dashboard_text('muted')}; font-size: 15px; font-weight: 700;"
+      )
+      self.overview_detail_lbl.setText(str(detail or "No cluster details are available."))
+
+
   def _update_live_label(self):
+      host = str(getattr(self, "_connection_host", "") or "").strip() or "Connected host"
+      context = str(getattr(self, "_kube_context", "") or "").strip() or "kubectl current context"
+      self.context_lbl.setText(f"Host: {host}  ·  Context: {context}")
       if not self.ssh and not self.ftp:
         self.live_lbl.setText("Not connected")
         self.live_lbl.setStyleSheet(f"color: {_dashboard_text('muted')}; font-size: 12px;")
@@ -1003,6 +1053,7 @@ class DashboardUIMixin:
   
   
   def _show_disconnected(self):
+      self.overview_card.hide()
       self.disconnected_lbl.show()
       self.vm_card["frame"].hide()
       self.k8s_summary_card["frame"].hide()
@@ -1017,6 +1068,7 @@ class DashboardUIMixin:
   
   
   def _show_connected_placeholder(self):
+      self.overview_card.show()
       self.disconnected_lbl.hide()
       self.vm_card["frame"].show()
       self.process_card["frame"].show()
