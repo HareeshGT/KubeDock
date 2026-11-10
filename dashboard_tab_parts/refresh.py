@@ -360,6 +360,11 @@ class DashboardRefreshMixin:
       self._clear_node_grid()
       self.k8s_note.setText(f"Kubernetes data unavailable: {err}")
       self.k8s_note.show()
+      self._set_cluster_overview(
+        "Cluster data unavailable",
+        f"Collection failed: {str(err or 'unknown error')[:220]}",
+        T["WARNING"],
+      )
   
   
   def _on_host_stats(self, out: str):
@@ -597,6 +602,11 @@ class DashboardRefreshMixin:
           msg = "No Kubernetes cluster detected on this instance (kubectl unavailable or no nodes)."
         self.k8s_note.setText(msg)
         self.k8s_note.show()
+        self._set_cluster_overview(
+          "No Kubernetes cluster detected",
+          "Host monitoring remains available. Kubernetes metrics and workload health cannot be assessed until a cluster is reachable.",
+          T["WARNING"],
+        )
         self.k8s_summary_card["frame"].hide()
         self.workloads_card["frame"].hide()
         self.services_card["frame"].hide()
@@ -934,6 +944,53 @@ class DashboardRefreshMixin:
       self._k8s_summary["metrics"].setStyleSheet(
         f"color: {metrics_color}; font-size: 17px; font-weight: 700;"
       )
+
+      # Surface actionable signals near the top of the dashboard. Every
+      # count comes from this same snapshot; missing metrics remain explicitly
+      # unavailable and are never interpreted as zero utilization.
+      not_ready_nodes = max(0, len(node_lines) - ready_nodes)
+      warning_events = sum(1 for event in events if event["type"].lower() == "warning")
+      total_restarts = sum(int(p.get("restarts") or 0) for p in all_pods)
+      unready_workloads = 0
+      for workload in workloads:
+        try:
+          desired_count = int(workload.get("desired") or 0)
+          ready_count = int(workload.get("ready") or 0)
+          if desired_count > 0 and ready_count < desired_count:
+            unready_workloads += 1
+        except (TypeError, ValueError):
+          continue
+      attention = []
+      if not_ready_nodes:
+        attention.append(f"{not_ready_nodes} node(s) not ready")
+      if pending_pods:
+        attention.append(f"{pending_pods} pending pod(s)")
+      if failed_pods:
+        attention.append(f"{failed_pods} failed pod(s)")
+      if unready_workloads:
+        attention.append(f"{unready_workloads} workload(s) below desired readiness")
+      if pressure_nodes:
+        attention.append(f"{pressure_nodes} node(s) under pressure")
+      if warning_events:
+        attention.append(f"{warning_events} warning event(s)")
+      if total_restarts:
+        attention.append(f"{total_restarts} container restart(s)")
+      if failed_pods or not_ready_nodes:
+        overview_state, overview_color = ("Degraded", T["DANGER"])
+      elif attention:
+        overview_state, overview_color = ("Needs attention", T["WARNING"])
+      else:
+        overview_state, overview_color = ("Healthy", T["SUCCESS"])
+      overview_detail = (
+        f"Nodes {ready_nodes}/{len(node_lines)} ready  ·  "
+        f"Pods {running_pods} running / {total_pods} total  ·  "
+        f"Metrics {metrics_state.lower()}"
+      )
+      if attention:
+        overview_detail += "  ·  " + "  ·  ".join(attention)
+      else:
+        overview_detail += "  ·  No pending, failed, pressured or warning signals in this snapshot"
+      self._set_cluster_overview(overview_state, overview_detail, overview_color)
   
       # Render workloads.
       self.workloads_tree.clear()
