@@ -1068,6 +1068,11 @@ class DashboardUIMixin:
   
   
   def _show_connected_placeholder(self):
+      self._set_cluster_overview(
+        "Collecting cluster snapshot",
+        "Waiting for fresh Kubernetes data from the connected host and selected context.",
+        _dashboard_text("muted"),
+      )
       self.overview_card.show()
       self.disconnected_lbl.hide()
       self.vm_card["frame"].show()
